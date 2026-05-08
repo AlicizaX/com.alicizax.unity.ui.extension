@@ -15,13 +15,17 @@ public sealed class InputGlyphEditor : Editor
     private const float RowHeight = 24f;
     private const float RowLabelWidth = 132f;
     private const float RefreshButtonWidth = 142f;
+    private const float EventToolbarHeight = 26f;
+    private const float EventActionButtonSize = 20f;
 
     private static readonly List<InputActionAsset> CachedActionAssets = new(16);
     private static bool _actionAssetCacheDirty = true;
 
     private readonly List<string> _compositePartBuffer = new List<string>(8);
     private readonly List<string> _compositeOptionBuffer = new List<string>(9);
+    private readonly Dictionary<int, bool> _eventFoldouts = new Dictionary<int, bool>();
     private string[] _compositeOptionArray = Array.Empty<string>();
+    private int _selectedEventIndex = -1;
     private SerializedProperty _actionSourceMode;
     private SerializedProperty _actionReference;
     private SerializedProperty _hotkeyTrigger;
@@ -37,7 +41,14 @@ public sealed class InputGlyphEditor : Editor
     private GUIStyle _fieldLabelStyle;
     private GUIStyle _rowLabelStyle;
     private GUIStyle _mutedLabelStyle;
+    private GUIStyle _mutedMiniLabelStyle;
     private GUIStyle _warningLabelStyle;
+    private GUIStyle _entryKindStyle;
+    private GUIStyle _entryHandleStyle;
+    private GUIStyle _emptyStateStyle;
+    private GUIContent _addEventContent;
+    private GUIContent _expandEventsContent;
+    private GUIContent _collapseEventsContent;
 
     private void OnEnable()
     {
@@ -50,6 +61,9 @@ public sealed class InputGlyphEditor : Editor
         _targetImage = serializedObject.FindProperty("targetImage");
         _targetText = serializedObject.FindProperty("targetText");
         _categoryEvents = serializedObject.FindProperty("categoryEvents");
+        _addEventContent = EditorGUIUtility.IconContent("Toolbar Plus", "Add category event");
+        _expandEventsContent = EditorGUIUtility.IconContent("d_scrollup", "Expand all category events");
+        _collapseEventsContent = EditorGUIUtility.IconContent("d_scrolldown", "Collapse all category events");
     }
 
     public override void OnInspectorGUI()
@@ -81,7 +95,11 @@ public sealed class InputGlyphEditor : Editor
         _fieldLabelStyle = AlicizaEditorGUI.Styles.FieldLabel;
         _rowLabelStyle = AlicizaEditorGUI.Styles.RowLabel;
         _mutedLabelStyle = AlicizaEditorGUI.Styles.MutedLabel;
+        _mutedMiniLabelStyle = AlicizaEditorGUI.Styles.MutedMiniLabel;
         _warningLabelStyle = AlicizaEditorGUI.Styles.WarningLabel;
+        _entryKindStyle = AlicizaEditorGUI.Styles.KindBadge;
+        _entryHandleStyle = AlicizaEditorGUI.Styles.Glyph;
+        _emptyStateStyle = AlicizaEditorGUI.Styles.EmptyState;
     }
 
     private void DrawToolbar(string title)
@@ -178,8 +196,143 @@ public sealed class InputGlyphEditor : Editor
     private void DrawEventsSection()
     {
         DrawSectionBegin("Platform Events");
-        DrawPropertyBlock("Category Events", _categoryEvents);
+        DrawCategoryEventList();
         DrawSectionEnd();
+    }
+
+    private void DrawCategoryEventList()
+    {
+        int count = _categoryEvents.arraySize;
+        if (_selectedEventIndex >= count)
+        {
+            _selectedEventIndex = count - 1;
+        }
+
+        DrawCategoryEventToolbar(count);
+        if (count == 0)
+        {
+            DrawEmptyEventList();
+            return;
+        }
+
+        for (int i = 0; i < count; i++)
+        {
+            DrawCategoryEvent(i);
+        }
+    }
+
+    private void DrawCategoryEventToolbar(int count)
+    {
+        Rect toolbarRect = GUILayoutUtility.GetRect(1f, EventToolbarHeight, GUILayout.ExpandWidth(true));
+        AlicizaEditorGUI.DrawToolbarBackground(toolbarRect);
+
+        Rect addRect = new Rect(toolbarRect.xMax - EventActionButtonSize - 5f, toolbarRect.y + 3f, EventActionButtonSize, EventActionButtonSize);
+        Rect expandRect = new Rect(addRect.x - EventActionButtonSize - 4f, addRect.y, EventActionButtonSize, EventActionButtonSize);
+        Rect collapseRect = new Rect(expandRect.x - EventActionButtonSize - 4f, addRect.y, EventActionButtonSize, EventActionButtonSize);
+        Rect titleRect = new Rect(toolbarRect.x + 8f, toolbarRect.y + 4f, Mathf.Max(40f, collapseRect.x - toolbarRect.x - 12f), 18f);
+
+        GUI.Label(titleRect, $"Category Events    {count}", _rowLabelStyle);
+
+        if (AlicizaEditorGUI.DrawToolbarButton(collapseRect, _collapseEventsContent))
+        {
+            SetAllEventFoldouts(false);
+        }
+
+        if (AlicizaEditorGUI.DrawToolbarButton(expandRect, _expandEventsContent))
+        {
+            SetAllEventFoldouts(true);
+        }
+
+        if (AlicizaEditorGUI.DrawToolbarButton(addRect, _addEventContent))
+        {
+            AddCategoryEvent();
+        }
+    }
+
+    private void DrawEmptyEventList()
+    {
+        Rect rect = GUILayoutUtility.GetRect(1f, 42f, GUILayout.ExpandWidth(true));
+        AlicizaEditorGUI.DrawBodyBackground(rect);
+        GUI.Label(rect, "No category events. Click + to add a device category rule.", _emptyStateStyle);
+    }
+
+    private void DrawCategoryEvent(int index)
+    {
+        SerializedProperty eventProp = _categoryEvents.GetArrayElementAtIndex(index);
+        SerializedProperty categoryProp = eventProp.FindPropertyRelative("category");
+        SerializedProperty onMatchedProp = eventProp.FindPropertyRelative("onMatched");
+        SerializedProperty onNotMatchedProp = eventProp.FindPropertyRelative("onNotMatched");
+
+        bool expanded = IsEventExpanded(index);
+        string categoryName = GetEnumDisplayName(categoryProp);
+        string title = $"[{index}] {categoryName}";
+        string summary = BuildEventSummary(onMatchedProp, onNotMatchedProp);
+
+        expanded = DrawCategoryEventHeader(index, expanded, title, summary, categoryName);
+        _eventFoldouts[index] = expanded;
+
+        if (expanded)
+        {
+            DrawCategoryEventBody(categoryProp, onMatchedProp, onNotMatchedProp);
+        }
+    }
+
+    private bool DrawCategoryEventHeader(int index, bool expanded, string title, string summary, string categoryName)
+    {
+        Rect rowRect = GUILayoutUtility.GetRect(1f, RowHeight, GUILayout.ExpandWidth(true));
+        Event currentEvent = Event.current;
+        bool selected = _selectedEventIndex == index;
+        bool hovered = rowRect.Contains(currentEvent.mousePosition);
+        AlicizaEditorGUI.DrawListItemBackground(rowRect, expanded || selected, hovered);
+
+        Rect deleteRect = new Rect(rowRect.xMax - EventActionButtonSize - 1f, rowRect.y + 1f, EventActionButtonSize, rowRect.height - 2f);
+        Rect clickRect = new Rect(rowRect.x, rowRect.y, deleteRect.x - rowRect.x, rowRect.height);
+        if (currentEvent.type == EventType.MouseDown && currentEvent.button == 0 && clickRect.Contains(currentEvent.mousePosition))
+        {
+            _selectedEventIndex = index;
+            _eventFoldouts[index] = !expanded;
+            GUI.FocusControl(string.Empty);
+            currentEvent.Use();
+            return !expanded;
+        }
+
+        Rect handleRect = new Rect(rowRect.x + 7f, rowRect.y + 3f, 16f, rowRect.height - 6f);
+        Rect foldRect = new Rect(handleRect.xMax + 2f, rowRect.y + 3f, 16f, rowRect.height - 6f);
+        Rect badgeRect = new Rect(foldRect.xMax + 4f, rowRect.y + 3f, 74f, rowRect.height - 6f);
+        Rect titleRect = new Rect(badgeRect.xMax + 6f, rowRect.y + 3f, Mathf.Max(92f, rowRect.width * 0.36f), rowRect.height - 6f);
+        Rect summaryRect = new Rect(titleRect.xMax + 8f, rowRect.y + 3f, Mathf.Max(40f, deleteRect.x - titleRect.xMax - 12f), rowRect.height - 6f);
+
+        GUI.Label(handleRect, "=", _entryHandleStyle);
+        AlicizaEditorGUI.DrawFoldoutIcon(foldRect, expanded);
+        GUI.Label(badgeRect, categoryName, _entryKindStyle);
+        GUI.Label(titleRect, title, _rowLabelStyle);
+        GUI.Label(summaryRect, summary, _mutedMiniLabelStyle);
+
+        if (AlicizaEditorGUI.DrawSymbolButton(deleteRect, "-"))
+        {
+            DeleteCategoryEvent(index);
+        }
+
+        return expanded;
+    }
+
+    private void DrawCategoryEventBody(
+        SerializedProperty categoryProp,
+        SerializedProperty onMatchedProp,
+        SerializedProperty onNotMatchedProp)
+    {
+        EditorGUILayout.BeginVertical(_entryBodyStyle);
+        DrawEnumPropertyRow("Category", categoryProp);
+        DrawUnityEventRow("On Matched", onMatchedProp);
+        DrawUnityEventRow("On Not Matched", onNotMatchedProp);
+        EditorGUILayout.EndVertical();
+    }
+
+    private void DrawUnityEventRow(string label, SerializedProperty property)
+    {
+        EditorGUILayout.BeginVertical(_fieldRowStyle);
+        EditorGUILayout.PropertyField(property, new GUIContent(label), true);
+        EditorGUILayout.EndVertical();
     }
 
     private void DrawResolvedActionInfo(InputAction action)
@@ -273,20 +426,118 @@ public sealed class InputGlyphEditor : Editor
         EditorGUILayout.EndHorizontal();
     }
 
-    private void DrawPropertyBlock(string label, SerializedProperty property)
-    {
-        EditorGUILayout.BeginVertical(_fieldRowStyle);
-        EditorGUILayout.LabelField(label, _fieldLabelStyle);
-        EditorGUILayout.PropertyField(property, GUIContent.none, true);
-        EditorGUILayout.EndVertical();
-    }
-
     private void DrawReadOnlyRow(string label, string value, GUIStyle valueStyle)
     {
         EditorGUILayout.BeginHorizontal(_fieldRowStyle);
         EditorGUILayout.LabelField(label, _fieldLabelStyle, GUILayout.Width(RowLabelWidth));
         EditorGUILayout.LabelField(value, valueStyle);
         EditorGUILayout.EndHorizontal();
+    }
+
+    private void AddCategoryEvent()
+    {
+        Undo.RecordObjects(targets, "Add Input Glyph Category Event");
+        int index = _categoryEvents.arraySize;
+        _categoryEvents.InsertArrayElementAtIndex(index);
+
+        SerializedProperty eventProp = _categoryEvents.GetArrayElementAtIndex(index);
+        eventProp.FindPropertyRelative("category").enumValueIndex = 0;
+        ClearUnityEvent(eventProp.FindPropertyRelative("onMatched"));
+        ClearUnityEvent(eventProp.FindPropertyRelative("onNotMatched"));
+
+        _selectedEventIndex = index;
+        _eventFoldouts[index] = true;
+        serializedObject.ApplyModifiedProperties();
+        MarkTargetsDirty();
+    }
+
+    private void DeleteCategoryEvent(int index)
+    {
+        if (index < 0 || index >= _categoryEvents.arraySize)
+        {
+            return;
+        }
+
+        Undo.RecordObjects(targets, "Delete Input Glyph Category Event");
+        _categoryEvents.DeleteArrayElementAtIndex(index);
+        CleanupEventFoldouts(index);
+        _selectedEventIndex = Mathf.Min(index, _categoryEvents.arraySize - 1);
+        serializedObject.ApplyModifiedProperties();
+        MarkTargetsDirty();
+        GUIUtility.ExitGUI();
+    }
+
+    private void MarkTargetsDirty()
+    {
+        for (int i = 0; i < targets.Length; i++)
+        {
+            EditorUtility.SetDirty(targets[i]);
+        }
+    }
+
+    private bool IsEventExpanded(int index)
+    {
+        return _eventFoldouts.TryGetValue(index, out bool expanded) && expanded;
+    }
+
+    private void SetAllEventFoldouts(bool expanded)
+    {
+        _eventFoldouts.Clear();
+        for (int i = 0; i < _categoryEvents.arraySize; i++)
+        {
+            _eventFoldouts[i] = expanded;
+        }
+    }
+
+    private void CleanupEventFoldouts(int removedIndex)
+    {
+        _eventFoldouts.Remove(removedIndex);
+        RemapBoolDictionary(_eventFoldouts, removedIndex);
+    }
+
+    private static void ClearUnityEvent(SerializedProperty property)
+    {
+        SerializedProperty calls = property.FindPropertyRelative("m_PersistentCalls.m_Calls");
+        if (calls != null)
+        {
+            calls.ClearArray();
+        }
+    }
+
+    private static string BuildEventSummary(SerializedProperty onMatchedProp, SerializedProperty onNotMatchedProp)
+    {
+        int matchedCount = GetPersistentCallCount(onMatchedProp);
+        int notMatchedCount = GetPersistentCallCount(onNotMatchedProp);
+        return $"matched {matchedCount}    not matched {notMatchedCount}";
+    }
+
+    private static int GetPersistentCallCount(SerializedProperty eventProp)
+    {
+        SerializedProperty calls = eventProp.FindPropertyRelative("m_PersistentCalls.m_Calls");
+        return calls != null ? calls.arraySize : 0;
+    }
+
+    private static string GetEnumDisplayName(SerializedProperty property)
+    {
+        string[] names = property.enumDisplayNames;
+        int index = property.enumValueIndex;
+        return names != null && index >= 0 && index < names.Length ? names[index] : "Unknown";
+    }
+
+    private static void RemapBoolDictionary(Dictionary<int, bool> dictionary, int removedIndex)
+    {
+        Dictionary<int, bool> remapped = new Dictionary<int, bool>();
+        foreach (KeyValuePair<int, bool> pair in dictionary)
+        {
+            int nextIndex = pair.Key > removedIndex ? pair.Key - 1 : pair.Key;
+            remapped[nextIndex] = pair.Value;
+        }
+
+        dictionary.Clear();
+        foreach (KeyValuePair<int, bool> pair in remapped)
+        {
+            dictionary[pair.Key] = pair.Value;
+        }
     }
 
     private InputAction ResolveSelectedAction()
