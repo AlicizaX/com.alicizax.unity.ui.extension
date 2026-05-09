@@ -18,12 +18,17 @@ namespace UnityEngine.UI
         private const float ApplyButtonWidth = 78f;
 
         private readonly Dictionary<int, bool> _foldouts = new Dictionary<int, bool>();
-        private readonly HashSet<int> _pendingApplyIndices = new HashSet<int>();
+        private readonly Dictionary<string, int> _pendingLengths = new Dictionary<string, int>();
         private SerializedProperty _controllersProp;
 
         private void OnEnable()
         {
             _controllersProp = serializedObject.FindProperty("_controllers");
+        }
+
+        private void OnDisable()
+        {
+            _pendingLengths.Clear();
         }
 
         public override void OnInspectorGUI()
@@ -85,7 +90,7 @@ namespace UnityEngine.UI
 
             if (expanded)
             {
-                DrawControllerBody(controller, index, nameProp, lengthProp, defaultIndexProp);
+                DrawControllerBody(controller, index, idProp, nameProp, lengthProp, defaultIndexProp);
             }
         }
 
@@ -130,9 +135,11 @@ namespace UnityEngine.UI
             }
         }
 
-        private void DrawControllerBody(UXController controller, int index, SerializedProperty nameProp, SerializedProperty lengthProp, SerializedProperty defaultIndexProp)
+        private void DrawControllerBody(UXController controller, int index, SerializedProperty idProp, SerializedProperty nameProp, SerializedProperty lengthProp, SerializedProperty defaultIndexProp)
         {
-            bool pendingApply = _pendingApplyIndices.Contains(index);
+            string controllerId = idProp.stringValue;
+            int savedLength = Mathf.Clamp(lengthProp.intValue, MinControllerLength, MaxControllerLength);
+            bool pendingApply = HasPendingLength(controllerId, savedLength);
             float bodyHeight = BodyRowHeight * (pendingApply ? 3 : 2) + 8f;
             Rect bodyRect = EditorGUILayout.GetControlRect(false, bodyHeight);
             if (Event.current.type == EventType.Repaint)
@@ -148,12 +155,16 @@ namespace UnityEngine.UI
 
             EditorGUI.BeginChangeCheck();
             DrawNameField(nameRect, nameProp);
-            int length = DrawLengthSlider(lengthRect, lengthProp.intValue);
             if (EditorGUI.EndChangeCheck())
             {
-                lengthProp.intValue = length;
-                defaultIndexProp.intValue = Mathf.Clamp(defaultIndexProp.intValue, 0, length - 1);
-                _pendingApplyIndices.Add(index);
+                EditorUtility.SetDirty(controller);
+            }
+
+            EditorGUI.BeginChangeCheck();
+            int length = DrawLengthSlider(lengthRect, GetDisplayLength(controllerId, savedLength));
+            if (EditorGUI.EndChangeCheck())
+            {
+                SetPendingLength(controllerId, savedLength, length);
             }
 
             if (pendingApply)
@@ -203,7 +214,6 @@ namespace UnityEngine.UI
             entryProp.FindPropertyRelative("_description").stringValue = string.Empty;
 
             _foldouts[index] = true;
-            _pendingApplyIndices.Add(index);
         }
 
         private void DeleteController(UXController controller, int index)
@@ -228,7 +238,7 @@ namespace UnityEngine.UI
             Undo.RecordObject(controller, "Delete UX Controller");
             _controllersProp.DeleteArrayElementAtIndex(index);
             CleanupFoldouts(index);
-            CleanupPendingApply(index);
+            CleanupPendingLength(deletedControllerId);
             serializedObject.ApplyModifiedProperties();
             ClearBindingReferences(controller, deletedControllerId);
             EditorUtility.SetDirty(controller);
@@ -248,9 +258,13 @@ namespace UnityEngine.UI
             SerializedProperty defaultIndexProp = entryProp.FindPropertyRelative("_defaultIndex");
             EnsureControllerSerializedState(idProp, lengthProp, defaultIndexProp);
 
+            string controllerId = idProp.stringValue;
+            int length = GetDisplayLength(controllerId, lengthProp.intValue);
+            lengthProp.intValue = length;
+            defaultIndexProp.intValue = Mathf.Clamp(defaultIndexProp.intValue, 0, length - 1);
             serializedObject.ApplyModifiedProperties();
-            ClampBindingReferences(controller, idProp.stringValue, lengthProp.intValue);
-            _pendingApplyIndices.Remove(index);
+            ClampBindingReferences(controller, controllerId, length);
+            CleanupPendingLength(controllerId);
             EditorUtility.SetDirty(controller);
             SceneView.RepaintAll();
         }
@@ -272,20 +286,53 @@ namespace UnityEngine.UI
             RemapBoolDictionary(_foldouts, removedIndex);
         }
 
-        private void CleanupPendingApply(int removedIndex)
+        private void CleanupPendingLength(string controllerId)
         {
-            _pendingApplyIndices.Remove(removedIndex);
-            HashSet<int> remapped = new HashSet<int>();
-            foreach (int index in _pendingApplyIndices)
+            if (!string.IsNullOrEmpty(controllerId))
             {
-                remapped.Add(index > removedIndex ? index - 1 : index);
+                _pendingLengths.Remove(controllerId);
+            }
+        }
+
+        private int GetDisplayLength(string controllerId, int savedLength)
+        {
+            savedLength = Mathf.Clamp(savedLength, MinControllerLength, MaxControllerLength);
+            if (string.IsNullOrEmpty(controllerId) || !_pendingLengths.TryGetValue(controllerId, out int pendingLength))
+            {
+                return savedLength;
             }
 
-            _pendingApplyIndices.Clear();
-            foreach (int index in remapped)
+            pendingLength = Mathf.Clamp(pendingLength, MinControllerLength, MaxControllerLength);
+            if (pendingLength == savedLength)
             {
-                _pendingApplyIndices.Add(index);
+                _pendingLengths.Remove(controllerId);
+                return savedLength;
             }
+
+            return pendingLength;
+        }
+
+        private bool HasPendingLength(string controllerId, int savedLength)
+        {
+            return GetDisplayLength(controllerId, savedLength) != Mathf.Clamp(savedLength, MinControllerLength, MaxControllerLength);
+        }
+
+        private void SetPendingLength(string controllerId, int savedLength, int length)
+        {
+            if (string.IsNullOrEmpty(controllerId))
+            {
+                return;
+            }
+
+            savedLength = Mathf.Clamp(savedLength, MinControllerLength, MaxControllerLength);
+            length = Mathf.Clamp(length, MinControllerLength, MaxControllerLength);
+            if (length == savedLength)
+            {
+                _pendingLengths.Remove(controllerId);
+                return;
+            }
+
+            _pendingLengths[controllerId] = length;
         }
 
         private static void RemapBoolDictionary(Dictionary<int, bool> dictionary, int removedIndex)
