@@ -15,12 +15,6 @@ namespace UnityEngine.UI
             UpdateLocalizationReferences();
         }
 
-        [MenuItem("AlicizaX/Localization/Update UXTextMeshPro Localization Refrencee")]
-        private static void UpdateUXTextMeshProLocalizationReferenceLegacy()
-        {
-            UpdateLocalizationReferences();
-        }
-
         private static void UpdateLocalizationReferences()
         {
             var selectionById = new Dictionary<int, TableSelectionData>();
