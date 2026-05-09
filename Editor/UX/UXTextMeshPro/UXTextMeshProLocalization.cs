@@ -1,88 +1,132 @@
 #if TEXTMESHPRO_SUPPORT
-using System;
 using System.Collections.Generic;
-using System.Reflection;
-using AlicizaX.Localization;
 using UnityEditor;
 
 namespace UnityEngine.UI
 {
     internal static class UXTextMeshProLocalization
     {
-        [MenuItem("AlicizaX/Localization/Update UXTextMeshPro Localization Refrencee")]
-        static void UpdateUXTextMeshProLocalizationRefrence()
+        private const string LocalizationIdPropertyName = "m_localizationID";
+        private const string LocalizationKeyPropertyName = "m_localizationKey";
+
+        [MenuItem("AlicizaX/Localization/Update UXTextMeshPro Localization Reference")]
+        private static void UpdateUXTextMeshProLocalizationReference()
         {
-            List<GameLocaizationTable> allTables = new();
-            Dictionary<int, TableSelectionData> allTableNames = new();
+            UpdateLocalizationReferences();
+        }
 
-            string[] tablesGuids = AssetDatabase.FindAssets("t:GameLocaizationTable");
-            foreach (string guid in tablesGuids)
-            {
-                string assetPath = AssetDatabase.GUIDToAssetPath(guid);
-                GameLocaizationTable table = AssetDatabase.LoadAssetAtPath<GameLocaizationTable>(assetPath);
-                if (table != null)
-                {
-                    allTables.Add(table);
-                }
-            }
+        [MenuItem("AlicizaX/Localization/Update UXTextMeshPro Localization Refrencee")]
+        private static void UpdateUXTextMeshProLocalizationReferenceLegacy()
+        {
+            UpdateLocalizationReferences();
+        }
 
-            foreach (var table in allTables)
-            {
-                foreach (var sheet in table.TableSheet)
-                {
-                    foreach (var selection in sheet.SectionSheet)
-                    {
-                        string combineKey = $"{table.name}/{sheet.SectionName}/{selection.Key}";
-                        string combineValue = $"{sheet.SectionName}.{selection.Key}";
-                        int id = selection.Id;
-                        allTableNames.TryAdd(id, new TableSelectionData(id, combineKey, combineValue));
-                    }
-                }
-            }
+        private static void UpdateLocalizationReferences()
+        {
+            var selectionById = new Dictionary<int, TableSelectionData>();
+            UXTextMeshProLocalizationTableUtility.RebuildSelectionData(
+                selectionById,
+                includeNone: false);
+
+            int checkedPrefabs = 0;
+            int updatedPrefabs = 0;
+            int updatedComponents = 0;
 
             string[] guids = AssetDatabase.FindAssets("t:Prefab");
-            foreach (string guid in guids)
+            try
             {
-                string assetPath = AssetDatabase.GUIDToAssetPath(guid);
-                GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
-
-                GameObject prefabInstance = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
-                if (prefabInstance == null) continue;
-
-
-                UXTextMeshPro[] components = prefabInstance.GetComponentsInChildren<UXTextMeshPro>(true);
-                bool updated = false;
-
-                foreach (UXTextMeshPro component in components)
+                AssetDatabase.StartAssetEditing();
+                for (int i = 0; i < guids.Length; i++)
                 {
-                    if (component == null)
-                        continue;
-
-                    FieldInfo localizationId = component.GetType().GetField("m_localizationID", BindingFlags.NonPublic | BindingFlags.Instance);
-                    FieldInfo localizationKey = component.GetType().GetField("m_localizationKey", BindingFlags.NonPublic | BindingFlags.Instance);
-
-                    int localizationIDValue = (int)localizationId.GetValue(component);
-                    string localizationKeyValue = (string)localizationKey.GetValue(component);
-                    if (allTableNames.TryGetValue(localizationIDValue, out TableSelectionData data))
+                    string assetPath = AssetDatabase.GUIDToAssetPath(guids[i]);
+                    checkedPrefabs++;
+                    try
                     {
-                        if (!localizationKeyValue.Equals(data.CombineValue))
+                        if (UpdatePrefab(assetPath, selectionById, out int componentCount))
                         {
-                            updated = true;
-                            component.GetType().GetField("m_localizationKey", BindingFlags.NonPublic | BindingFlags.Instance)?.SetValue(component, data.CombineValue);
+                            updatedPrefabs++;
+                            updatedComponents += componentCount;
                         }
                     }
+                    catch (System.Exception exception)
+                    {
+                        Debug.LogError($"Failed to update UXTextMeshPro localization references in '{assetPath}'.\n{exception}");
+                    }
                 }
-
-                if (updated)
-                {
-                    PrefabUtility.SaveAsPrefabAsset(prefabInstance, assetPath);
-                    Debug.Log($"Updated Refrence in '{prefab.name}' ({assetPath})");
-                }
-
-                Object.DestroyImmediate(prefabInstance);
+            }
+            finally
+            {
+                AssetDatabase.StopAssetEditing();
+                AssetDatabase.SaveAssets();
             }
 
-            Debug.Log("Update Localization Refrencee Compeleted");
+            Debug.Log($"Update UXTextMeshPro localization references completed. Checked {checkedPrefabs} prefabs, updated {updatedComponents} components in {updatedPrefabs} prefabs.");
+        }
+
+        private static bool UpdatePrefab(
+            string assetPath,
+            IReadOnlyDictionary<int, TableSelectionData> selectionById,
+            out int updatedComponents)
+        {
+            updatedComponents = 0;
+
+            if (string.IsNullOrEmpty(assetPath))
+            {
+                return false;
+            }
+
+            GameObject prefabContents = PrefabUtility.LoadPrefabContents(assetPath);
+            try
+            {
+                if (prefabContents == null)
+                {
+                    return false;
+                }
+
+                UXTextMeshPro[] components = prefabContents.GetComponentsInChildren<UXTextMeshPro>(true);
+                for (int i = 0; i < components.Length; i++)
+                {
+                    UXTextMeshPro component = components[i];
+                    if (component == null)
+                    {
+                        continue;
+                    }
+
+                    var serializedObject = new SerializedObject(component);
+                    SerializedProperty localizationId = serializedObject.FindProperty(LocalizationIdPropertyName);
+                    SerializedProperty localizationKey = serializedObject.FindProperty(LocalizationKeyPropertyName);
+                    if (localizationId == null || localizationKey == null)
+                    {
+                        continue;
+                    }
+
+                    if (!selectionById.TryGetValue(localizationId.intValue, out TableSelectionData data) ||
+                        localizationKey.stringValue == data.CombineValue)
+                    {
+                        continue;
+                    }
+
+                    localizationKey.stringValue = data.CombineValue;
+                    serializedObject.ApplyModifiedPropertiesWithoutUndo();
+                    updatedComponents++;
+                }
+
+                if (updatedComponents <= 0)
+                {
+                    return false;
+                }
+
+                PrefabUtility.SaveAsPrefabAsset(prefabContents, assetPath);
+                Debug.Log($"Updated UXTextMeshPro localization references in '{prefabContents.name}' ({assetPath})");
+                return true;
+            }
+            finally
+            {
+                if (prefabContents != null)
+                {
+                    PrefabUtility.UnloadPrefabContents(prefabContents);
+                }
+            }
         }
     }
 }

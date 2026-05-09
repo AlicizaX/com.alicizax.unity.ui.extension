@@ -1,49 +1,88 @@
 #if UNITY_EDITOR
 using System.Collections.Generic;
-using System.Linq;
 using AlicizaX.Localization;
 using AlicizaX.Localization.Runtime;
 using UnityEditor;
 
 namespace UnityEngine.UI
 {
+    [InitializeOnLoad]
     internal static class LocalizationRefreshHelper
     {
-        private static Dictionary<string, string> previewLabelDic = new();
+        private const string DefaultLanguage = "None";
+
+        private static readonly Dictionary<string, string> PreviewLabelByKey = new();
+        private static bool isCacheDirty = true;
+        private static string cachedLanguage;
+
+        static LocalizationRefreshHelper()
+        {
+            EditorApplication.projectChanged += InvalidateCache;
+        }
 
         internal static string GetPreviewLabel(string key)
         {
-            Init();
-            if (previewLabelDic.ContainsKey(key))
+            if (string.IsNullOrEmpty(key))
             {
-                return previewLabelDic[key];
+                return key;
             }
 
-            return key;
+            RefreshCacheIfNeeded();
+            return PreviewLabelByKey.TryGetValue(key, out string label) ? label : key;
         }
 
-        static void Init()
+        private static void InvalidateCache()
         {
-            previewLabelDic.Clear();
-            List<GameLocaizationTable> allTables = new();
-            string[] guids = AssetDatabase.FindAssets("t:GameLocaizationTable");
-            foreach (string guid in guids)
+            isCacheDirty = true;
+        }
+
+        private static void RefreshCacheIfNeeded()
+        {
+            string language = EditorPrefs.GetString(LocalizationComponent.PrefsKey, DefaultLanguage);
+            if (!isCacheDirty && cachedLanguage == language)
             {
-                string assetPath = AssetDatabase.GUIDToAssetPath(guid);
-                GameLocaizationTable table = AssetDatabase.LoadAssetAtPath<GameLocaizationTable>(assetPath);
-                if (table != null)
-                {
-                    allTables.Add(table);
-                }
+                return;
             }
 
-            string language = EditorPrefs.GetString(LocalizationComponent.PrefsKey, "None");
-            var localizationLanguage = allTables.Select(e => e.Languages.Find(t => t.LanguageName == language)).ToList();
-            foreach (var localization in localizationLanguage)
+            RebuildPreviewLabels(language);
+        }
+
+        private static void RebuildPreviewLabels(string language)
+        {
+            PreviewLabelByKey.Clear();
+            cachedLanguage = language;
+            isCacheDirty = false;
+
+            if (string.IsNullOrEmpty(language) || language == DefaultLanguage)
             {
-                foreach (var item in localization.Strings)
+                return;
+            }
+
+            string[] guids = AssetDatabase.FindAssets("t:GameLocaizationTable");
+            for (int i = 0; i < guids.Length; i++)
+            {
+                string assetPath = AssetDatabase.GUIDToAssetPath(guids[i]);
+                GameLocaizationTable table = AssetDatabase.LoadAssetAtPath<GameLocaizationTable>(assetPath);
+                if (table?.Languages == null)
                 {
-                    previewLabelDic.TryAdd(item.Key, item.Value);
+                    continue;
+                }
+
+                LocalizationLanguage localization = table.Languages.Find(t => t != null && t.LanguageName == language);
+                if (localization?.Strings == null)
+                {
+                    continue;
+                }
+
+                for (int j = 0; j < localization.Strings.Count; j++)
+                {
+                    LocalizationLanguage.LocalizationString item = localization.Strings[j];
+                    if (item == null || string.IsNullOrEmpty(item.Key))
+                    {
+                        continue;
+                    }
+
+                    PreviewLabelByKey.TryAdd(item.Key, item.Value);
                 }
             }
         }
