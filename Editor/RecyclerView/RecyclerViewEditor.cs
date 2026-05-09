@@ -177,8 +177,7 @@ namespace AlicizaX.UI.Editor
             bool missingScrollbarEx = recyclerView != null &&
                                       recyclerView.Scrollbar != null &&
                                       recyclerView.Scrollbar.GetComponent<ScrollbarEx>() == null;
-            bool templatesNeedRecyclerSelectable = TemplatesNeedRecyclerItemSelectable();
-            if (!missingLayout && !missingScroller && !missingScrollbarEx && !templatesNeedRecyclerSelectable)
+            if (!missingLayout && !missingScroller && !missingScrollbarEx)
             {
                 return;
             }
@@ -201,11 +200,6 @@ namespace AlicizaX.UI.Editor
             {
                 Undo.AddComponent<ScrollbarEx>(recyclerView.Scrollbar.gameObject);
                 EditorUtility.SetDirty(recyclerView.Scrollbar);
-            }
-
-            if (templatesNeedRecyclerSelectable && DrawActionRow("Templates", "Add RecyclerItemSelectable To Templates", 252f))
-            {
-                AddComponentToTemplates<RecyclerItemSelectable>();
             }
 
             EditorGUILayout.EndVertical();
@@ -750,48 +744,6 @@ namespace AlicizaX.UI.Editor
             }
 
             return false;
-        }
-
-        private bool TemplatesNeedRecyclerItemSelectable()
-        {
-#if UX_NAVIGATION
-            if (_templates == null || !_templates.isArray)
-            {
-                return false;
-            }
-
-            for (int i = 0; i < _templates.arraySize; i++)
-            {
-                SerializedProperty item = _templates.GetArrayElementAtIndex(i);
-                GameObject template = GetTemplateGameObject(item.objectReferenceValue);
-                if (template == null)
-                {
-                    continue;
-                }
-
-                ViewHolder holder = template.GetComponent<ViewHolder>();
-                if (holder != null && RequiresSelection(holder.ItemInteractionFlags) && template.GetComponent<RecyclerItemSelectable>() == null)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-#else
-            return false;
-#endif
-        }
-
-        private static bool RequiresSelection(ItemInteractionFlags interactionFlags)
-        {
-            const ItemInteractionFlags selectionFlags =
-                ItemInteractionFlags.Select |
-                ItemInteractionFlags.Deselect |
-                ItemInteractionFlags.Move |
-                ItemInteractionFlags.Submit |
-                ItemInteractionFlags.Cancel;
-
-            return (interactionFlags & selectionFlags) != 0;
         }
 
         private void AddComponentToTemplates<TComponent>() where TComponent : Component

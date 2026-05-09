@@ -79,6 +79,7 @@ public static class InputDeviceWatcher
     private const float SameCategoryDebounceWindow = 0.15f;
     private const float AxisActivationThreshold = 0.5f;
     private const float StickActivationThreshold = 0.25f;
+    private const int InitialDeviceProbeFrames = 30;
     private const string DefaultKeyboardDeviceName = "Keyboard&Mouse";
 
     public static InputDeviceCategory CurrentCategory { get; private set; } = InputDeviceCategory.Keyboard;
@@ -95,6 +96,7 @@ public static class InputDeviceWatcher
     private static DeviceContext[] DeviceContextCache = new DeviceContext[InitialDeviceCacheCapacity];
     private static int DeviceContextCacheCount;
     private static bool _initialized;
+    private static int _initialDeviceProbeFramesRemaining;
 
     public static event Action<InputDeviceCategory> OnDeviceChanged;
     public static event Action<DeviceContext> OnDeviceContextChanged;
@@ -108,8 +110,7 @@ public static class InputDeviceWatcher
         }
 
         _initialized = true;
-        ApplyContext(CreateDefaultContext(), false);
-        _lastEmittedContext = CurrentContext;
+        SetCurrentContext(ResolveInitialContext());
 
         _anyInputAction = new InputAction("AnyDevice", InputActionType.PassThrough);
         _anyInputAction.AddBinding("<Keyboard>/anyKey");
@@ -121,8 +122,8 @@ public static class InputDeviceWatcher
         _anyInputAction.AddBinding("<Gamepad>/buttonNorth");
         _anyInputAction.AddBinding("<Gamepad>/buttonEast");
         _anyInputAction.AddBinding("<Gamepad>/buttonWest");
-        _anyInputAction.AddBinding("<Gamepad>/start");
-        _anyInputAction.AddBinding("<Gamepad>/select");
+        _anyInputAction.AddBinding("<Gamepad>/startButton");
+        _anyInputAction.AddBinding("<Gamepad>/selectButton");
         _anyInputAction.AddBinding("<Gamepad>/leftStick");
         _anyInputAction.AddBinding("<Gamepad>/rightStick");
         _anyInputAction.AddBinding("<Gamepad>/dpad");
@@ -134,6 +135,8 @@ public static class InputDeviceWatcher
         _anyInputAction.Enable();
 
         InputSystem.onDeviceChange += OnDeviceChange;
+        _initialDeviceProbeFramesRemaining = InitialDeviceProbeFrames;
+        InputSystem.onAfterUpdate += OnAfterInputUpdate;
 #if UNITY_EDITOR
         UnityEditor.EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
 #endif
@@ -166,15 +169,39 @@ public static class InputDeviceWatcher
         }
 
         InputSystem.onDeviceChange -= OnDeviceChange;
+        InputSystem.onAfterUpdate -= OnAfterInputUpdate;
         Array.Clear(DeviceContextCache, 0, DeviceContextCacheCount);
         DeviceContextCacheCount = 0;
 
         ApplyContext(CreateDefaultContext(), false);
         _lastEmittedContext = CurrentContext;
         _lastSwitchTime = -Mathf.Infinity;
+        _initialDeviceProbeFramesRemaining = 0;
         OnDeviceChanged = null;
         OnDeviceContextChanged = null;
         _initialized = false;
+    }
+
+    private static void OnAfterInputUpdate()
+    {
+        if (_initialDeviceProbeFramesRemaining <= 0)
+        {
+            InputSystem.onAfterUpdate -= OnAfterInputUpdate;
+            return;
+        }
+
+        _initialDeviceProbeFramesRemaining--;
+        DeviceContext initialContext = ResolveInitialContext();
+        if (ShouldPromoteInitialContext(initialContext))
+        {
+            SetCurrentContext(initialContext);
+        }
+
+        if (CurrentCategory != InputDeviceCategory.Keyboard || _initialDeviceProbeFramesRemaining <= 0)
+        {
+            _initialDeviceProbeFramesRemaining = 0;
+            InputSystem.onAfterUpdate -= OnAfterInputUpdate;
+        }
     }
 
     private static void OnAnyInputPerformed(InputAction.CallbackContext context)
@@ -186,6 +213,11 @@ public static class InputDeviceWatcher
         }
 
         InputDevice device = control.device;
+        if (IsInitialProbeActive() && !IsGamepadLike(device))
+        {
+            return;
+        }
+
         if (device == null || device.deviceId == CurrentDeviceId)
         {
             return;
@@ -228,13 +260,48 @@ public static class InputDeviceWatcher
             case InputDeviceChange.Reconnected:
             case InputDeviceChange.Added:
                 RemoveCachedContext(device.deviceId);
-                if (CurrentDeviceId < 0 && IsRelevantDevice(device))
+                if (IsRelevantDevice(device) && ShouldPromoteAddedDevice(device))
                 {
                     SetCurrentContext(BuildContext(device));
                 }
 
                 break;
         }
+    }
+
+    private static bool ShouldPromoteAddedDevice(InputDevice device)
+    {
+        if (device == null)
+        {
+            return false;
+        }
+
+        if (CurrentDeviceId < 0)
+        {
+            return true;
+        }
+
+        return IsGamepadLike(device) && CurrentCategory == InputDeviceCategory.Keyboard;
+    }
+
+    private static bool ShouldPromoteInitialContext(DeviceContext context)
+    {
+        if (context.DeviceId < 0)
+        {
+            return false;
+        }
+
+        if (context.Category != InputDeviceCategory.Keyboard && CurrentCategory == InputDeviceCategory.Keyboard)
+        {
+            return true;
+        }
+
+        return CurrentDeviceId < 0 && context.Category == InputDeviceCategory.Keyboard;
+    }
+
+    private static bool IsInitialProbeActive()
+    {
+        return _initialDeviceProbeFramesRemaining > 0;
     }
 
     private static void PromoteFallbackDevice(int removedDeviceId)
@@ -361,6 +428,52 @@ public static class InputDeviceWatcher
     private static DeviceContext CreateDefaultContext()
     {
         return new DeviceContext(InputDeviceCategory.Keyboard, -1, 0, 0, DefaultKeyboardDeviceName, Keyboard.current != null ? Keyboard.current.layout : string.Empty);
+    }
+
+    private static DeviceContext ResolveInitialContext()
+    {
+        if (TryFindInitialDevice(IsGamepadLike, out InputDevice gamepad))
+        {
+            return BuildContext(gamepad);
+        }
+
+        if (Keyboard.current != null && Keyboard.current.added)
+        {
+            return BuildContext(Keyboard.current);
+        }
+
+        if (TryFindInitialDevice(device => device is Keyboard, out InputDevice keyboard))
+        {
+            return BuildContext(keyboard);
+        }
+
+        if (Mouse.current != null && Mouse.current.added)
+        {
+            return BuildContext(Mouse.current);
+        }
+
+        if (TryFindInitialDevice(device => device is Mouse, out InputDevice mouse))
+        {
+            return BuildContext(mouse);
+        }
+
+        return CreateDefaultContext();
+    }
+
+    private static bool TryFindInitialDevice(Predicate<InputDevice> predicate, out InputDevice device)
+    {
+        for (int i = 0; i < InputSystem.devices.Count; i++)
+        {
+            InputDevice candidate = InputSystem.devices[i];
+            if (candidate != null && candidate.added && predicate(candidate))
+            {
+                device = candidate;
+                return true;
+            }
+        }
+
+        device = null;
+        return false;
     }
 
     private static InputDeviceCategory DetermineCategoryFromDevice(InputDevice device, int vendorId = 0)

@@ -9,6 +9,7 @@ namespace UnityEngine.UI
     {
         private const float StickThresholdSqr = 0.04f;
         private const float AxisThreshold = 0.2f;
+        private const int InitialDeviceProbeFrames = 30;
 
         private const string PointerActionName = "UXPointerInput";
         private const string KeyboardActionName = "UXKeyboardInput";
@@ -40,6 +41,7 @@ namespace UnityEngine.UI
         private InputAction _keyboardAction;
         private InputAction _gamepadAction;
         private InputAction _touchAction;
+        private int _initialDeviceProbeFramesRemaining;
 
         public static UXInputMode CurrentMode { get; private set; } = UXInputMode.Pointer;
 
@@ -71,16 +73,22 @@ namespace UnityEngine.UI
             DontDestroyOnLoad(gameObject);
             hideFlags = HideFlags.HideAndDontSave;
             CreateActions();
+            SetMode(ResolveInitialMode());
         }
 
         private void OnEnable()
         {
             SetActionsEnabled(true);
+            global::UnityEngine.InputSystem.InputSystem.onDeviceChange += OnDeviceChange;
+            _initialDeviceProbeFramesRemaining = InitialDeviceProbeFrames;
+            global::UnityEngine.InputSystem.InputSystem.onAfterUpdate += OnAfterInputUpdate;
         }
 
         private void OnDisable()
         {
             SetActionsEnabled(false);
+            global::UnityEngine.InputSystem.InputSystem.onDeviceChange -= OnDeviceChange;
+            global::UnityEngine.InputSystem.InputSystem.onAfterUpdate -= OnAfterInputUpdate;
         }
 
         private void OnDestroy()
@@ -89,6 +97,61 @@ namespace UnityEngine.UI
             if (_instance == this)
             {
                 _instance = null;
+            }
+        }
+
+        private void OnAfterInputUpdate()
+        {
+            if (_initialDeviceProbeFramesRemaining <= 0)
+            {
+                global::UnityEngine.InputSystem.InputSystem.onAfterUpdate -= OnAfterInputUpdate;
+                return;
+            }
+
+            _initialDeviceProbeFramesRemaining--;
+            UXInputMode initialMode = ResolveInitialMode();
+            if (CurrentMode != UXInputMode.Gamepad && initialMode == UXInputMode.Gamepad)
+            {
+                SetMode(UXInputMode.Gamepad);
+            }
+
+            if (CurrentMode == UXInputMode.Gamepad || _initialDeviceProbeFramesRemaining <= 0)
+            {
+                _initialDeviceProbeFramesRemaining = 0;
+                global::UnityEngine.InputSystem.InputSystem.onAfterUpdate -= OnAfterInputUpdate;
+            }
+        }
+
+        private static void OnDeviceChange(InputDevice device, InputDeviceChange change)
+        {
+            if (device == null)
+            {
+                return;
+            }
+
+            switch (change)
+            {
+                case InputDeviceChange.Added:
+                case InputDeviceChange.Reconnected:
+                    if (IsGamepadLike(device) && CurrentMode != UXInputMode.Gamepad)
+                    {
+                        SetMode(UXInputMode.Gamepad);
+                    }
+                    else if ((device is Keyboard || device is Mouse) && CurrentMode == UXInputMode.Pointer)
+                    {
+                        SetMode(UXInputMode.Keyboard);
+                    }
+
+                    break;
+                case InputDeviceChange.Removed:
+                case InputDeviceChange.Disconnected:
+                    if ((CurrentMode == UXInputMode.Gamepad && !HasGamepadLikeDevice()) ||
+                        (CurrentMode == UXInputMode.Keyboard && !HasKeyboardOrMouseDevice()))
+                    {
+                        SetMode(ResolveInitialMode());
+                    }
+
+                    break;
             }
         }
 
@@ -236,6 +299,59 @@ namespace UnityEngine.UI
                 default:
                     return !control.noisy;
             }
+        }
+
+        private static UXInputMode ResolveInitialMode()
+        {
+            if (HasGamepadLikeDevice())
+            {
+                return UXInputMode.Gamepad;
+            }
+
+            if (HasKeyboardOrMouseDevice())
+            {
+                return UXInputMode.Keyboard;
+            }
+
+            return UXInputMode.Pointer;
+        }
+
+        private static bool HasGamepadLikeDevice()
+        {
+            for (int i = 0; i < global::UnityEngine.InputSystem.InputSystem.devices.Count; i++)
+            {
+                InputDevice device = global::UnityEngine.InputSystem.InputSystem.devices[i];
+                if (device != null && device.added && IsGamepadLike(device))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool HasKeyboardOrMouseDevice()
+        {
+            return (Keyboard.current != null && Keyboard.current.added) ||
+                   (Mouse.current != null && Mouse.current.added);
+        }
+
+        private static bool IsGamepadLike(InputDevice device)
+        {
+            if (device == null)
+            {
+                return false;
+            }
+
+            if (device is Gamepad || device is Joystick)
+            {
+                return true;
+            }
+
+            string layout = device.layout ?? string.Empty;
+            return layout.IndexOf("Gamepad", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   layout.IndexOf("Controller", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   layout.IndexOf("Joystick", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         internal static void SetMode(UXInputMode mode)

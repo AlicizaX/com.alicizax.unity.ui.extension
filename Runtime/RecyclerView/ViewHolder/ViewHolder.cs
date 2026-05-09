@@ -1,15 +1,12 @@
-using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 namespace AlicizaX.UI
 {
-    public abstract partial class ViewHolder : MonoBehaviour
+    public abstract partial class ViewHolder : UXSelectable
     {
         private RectTransform rectTransform;
         private Selectable focusAnchor;
-        private readonly List<Selectable> selectableCache = new();
         private bool interactionCacheReady;
 
         internal IItemRender CachedItemRender;
@@ -40,6 +37,15 @@ namespace AlicizaX.UI
 
         public Vector2 SizeDelta => RectTransform.sizeDelta;
 
+        protected override void Awake()
+        {
+            base.Awake();
+
+            Navigation disabledNavigation = navigation;
+            disabledNavigation.mode = Navigation.Mode.None;
+            navigation = disabledNavigation;
+        }
+
         internal uint AdvanceBindingVersion()
         {
             BindingVersion = BindingVersion == uint.MaxValue ? 1u : BindingVersion + 1u;
@@ -54,57 +60,23 @@ namespace AlicizaX.UI
             }
 
             focusAnchor = GetComponent<Selectable>();
-            selectableCache.Clear();
-            GetComponentsInChildren(true, selectableCache);
             interactionCacheReady = true;
         }
 
         internal bool TryGetFocusTarget(out GameObject target)
         {
-            if (TryGetInteractionFocusTarget(out target))
-            {
-                return true;
-            }
-
-            Selectable selectable = IsSelectableFocusable(focusAnchor) ? focusAnchor : null;
-            if (selectable == null)
-            {
-                for (int i = 0; i < selectableCache.Count; i++)
-                {
-                    if (IsSelectableFocusable(selectableCache[i]))
-                    {
-                        selectable = selectableCache[i];
-                        break;
-                    }
-                }
-            }
-
-            if (selectable != null)
-            {
-                target = selectable.gameObject;
-                return true;
-            }
-
             if (!SupportsNavigationFocus())
             {
                 target = null;
                 return false;
             }
 
-            if (ExecuteEvents.CanHandleEvent<IMoveHandler>(gameObject) ||
-                ExecuteEvents.CanHandleEvent<ISelectHandler>(gameObject) ||
-                ExecuteEvents.CanHandleEvent<ISubmitHandler>(gameObject))
-            {
-                target = gameObject;
-                return true;
-            }
-
-            target = null;
-            return false;
+            return TryGetInteractionFocusTarget(out target);
         }
 
         protected internal virtual void OnRecycled()
         {
+            UnregisterNavigationScope();
             AdvanceBindingVersion();
             Name = string.Empty;
             Index = -1;
@@ -118,6 +90,5 @@ namespace AlicizaX.UI
                    selectable.IsActive() &&
                    selectable.IsInteractable();
         }
-
     }
 }

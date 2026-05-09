@@ -6,6 +6,7 @@ using UnityEditor.Animations;
 using UnityEditor.DrawUtils;
 using UnityEditor.Utils;
 using UnityEditorInternal;
+using AlicizaX.UI;
 using UnityEngine;
 using UnityEngine.UI;
 using AnimatorController = UnityEditor.Animations.AnimatorController;
@@ -41,6 +42,18 @@ namespace UnityEditor.UI
 
         private static Color darkZebraEven = new Color(0.22f, 0.22f, 0.22f);
         private static Color darkZebraOdd = new Color(0.27f, 0.27f, 0.27f);
+        private static readonly HashSet<string> s_BasePropertyPaths = new()
+        {
+            "m_Script",
+            "m_Interactable",
+            "m_TargetGraphic",
+            "m_Transition",
+            "m_Colors",
+            "m_SpriteState",
+            "m_AnimationTriggers",
+            "m_Navigation",
+            "m_ChildTransitions"
+        };
 
         protected override void OnEnable()
         {
@@ -69,6 +82,10 @@ namespace UnityEditor.UI
 
             _tabs = new TabbedInspector(typeof(UXSelectable).FullName + ".TabbedIndex");
             _tabs.EnsureDefaultTab("Image", "d_Texture Icon", DrawBaseButtonInspector);
+            if (ShouldDrawDerivedProperties())
+            {
+                _tabs.RegisterTab("Fields", "d_cs Script Icon", DrawDerivedPropertiesTab);
+            }
 
             customSkin = AssetDatabase.LoadAssetAtPath<GUISkin>("Packages/com.alicizax.unity.ui.extension/Editor/Res/GUISkin/UIExtensionGUISkin.guiskin");
         }
@@ -79,11 +96,13 @@ namespace UnityEditor.UI
             m_ChildShowColorTint.valueChanged.RemoveListener(Repaint);
             m_ChildShowSpriteTrasition.valueChanged.RemoveListener(Repaint);
             _tabs.UnregisterTab("Image");
+            _tabs.UnregisterTab("Fields");
         }
 
         public override void OnInspectorGUI()
         {
             serializedObject.Update();
+            EnsureViewHolderNavigationDisabled();
             _tabs.DrawTabs();
             serializedObject.ApplyModifiedProperties();
         }
@@ -91,6 +110,7 @@ namespace UnityEditor.UI
         void DrawBaseButtonInspector()
         {
             serializedObject.Update();
+            EnsureViewHolderNavigationDisabled();
 
             var interactable = GUILayoutHelper.DrawToggle(m_ChildInteractableProperty.boolValue, customSkin, "Interactable");
             if (interactable != m_ChildInteractableProperty.boolValue)
@@ -99,16 +119,19 @@ namespace UnityEditor.UI
             }
 
 
-            EditorGUILayout.PropertyField(m_ChildNavigationProperty);
-
-            EditorGUI.BeginChangeCheck();
-            Rect toggleRect = EditorGUILayout.GetControlRect();
-            toggleRect.xMin += EditorGUIUtility.labelWidth;
-            s_ChildShowNavigation = GUI.Toggle(toggleRect, s_ChildShowNavigation, m_ChildVisualizeNavigation, EditorStyles.miniButton);
-            if (EditorGUI.EndChangeCheck())
+            if (!IsViewHolderSelectable())
             {
-                EditorPrefs.SetBool(s_ChildShowNavigationKey, s_ChildShowNavigation);
-                SceneView.RepaintAll();
+                EditorGUILayout.PropertyField(m_ChildNavigationProperty);
+
+                EditorGUI.BeginChangeCheck();
+                Rect toggleRect = EditorGUILayout.GetControlRect();
+                toggleRect.xMin += EditorGUIUtility.labelWidth;
+                s_ChildShowNavigation = GUI.Toggle(toggleRect, s_ChildShowNavigation, m_ChildVisualizeNavigation, EditorStyles.miniButton);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    EditorPrefs.SetBool(s_ChildShowNavigationKey, s_ChildShowNavigation);
+                    SceneView.RepaintAll();
+                }
             }
 
             GUILayout.Space(1);
@@ -195,6 +218,60 @@ namespace UnityEditor.UI
             m_ChildTransitionList.DoLayoutList();
 
             GUILayout.Space(1);
+            serializedObject.ApplyModifiedProperties();
+        }
+
+        private bool ShouldDrawDerivedProperties()
+        {
+            return GetType() == typeof(UXSelectableEditor) &&
+                   target != null &&
+                   target.GetType() != typeof(UXSelectable);
+        }
+
+        private bool IsViewHolderSelectable()
+        {
+            return target is ViewHolder;
+        }
+
+        private void EnsureViewHolderNavigationDisabled()
+        {
+            if (!IsViewHolderSelectable() || m_ChildNavigationProperty == null)
+            {
+                return;
+            }
+
+            SerializedProperty mode = m_ChildNavigationProperty.FindPropertyRelative("m_Mode");
+            if (mode != null && mode.enumValueIndex != (int)Navigation.Mode.None)
+            {
+                mode.enumValueIndex = (int)Navigation.Mode.None;
+            }
+        }
+
+        private void DrawDerivedPropertiesTab()
+        {
+            serializedObject.Update();
+            EnsureViewHolderNavigationDisabled();
+
+            bool hasDerivedProperties = false;
+            SerializedProperty property = serializedObject.GetIterator();
+            bool enterChildren = true;
+            while (property.NextVisible(enterChildren))
+            {
+                enterChildren = false;
+                if (s_BasePropertyPaths.Contains(property.propertyPath))
+                {
+                    continue;
+                }
+
+                hasDerivedProperties = true;
+                EditorGUILayout.PropertyField(property, true);
+            }
+
+            if (!hasDerivedProperties)
+            {
+                EditorGUILayout.HelpBox("No additional serialized fields.", MessageType.Info);
+            }
+
             serializedObject.ApplyModifiedProperties();
         }
 
