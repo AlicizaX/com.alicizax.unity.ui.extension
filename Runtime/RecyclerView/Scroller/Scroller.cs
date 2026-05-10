@@ -11,6 +11,7 @@ namespace AlicizaX.UI
         private const float MaxInertiaDuration = 0.24f;
         private const float MinInertiaDistanceFactor = 1.5f;
         private const float MaxInertiaDistanceFactor = 6f;
+        private const float LegacyMouseWheelStep = 120f;
 
         protected enum MotionState
         {
@@ -239,7 +240,8 @@ namespace AlicizaX.UI
             StopMovement();
 
             float rate = GetScrollRate() * wheelSpeed;
-            velocity = direction == Direction.Vertical ? -eventData.scrollDelta.y * rate : eventData.scrollDelta.x * rate;
+            Vector2 normalizedDelta = NormalizeScrollDelta(eventData.scrollDelta);
+            velocity = direction == Direction.Vertical ? -normalizedDelta.y * rate : normalizedDelta.x * rate;
             position += velocity;
 
             OnValueChanged?.Invoke(position);
@@ -250,6 +252,29 @@ namespace AlicizaX.UI
         {
             float rate = GetScrollRate();
             return direction == Direction.Vertical ? eventData.delta.y * rate : -eventData.delta.x * rate;
+        }
+
+        private static Vector2 NormalizeScrollDelta(Vector2 delta)
+        {
+            return new Vector2(NormalizeScrollAxis(delta.x), NormalizeScrollAxis(delta.y));
+        }
+
+        private static float NormalizeScrollAxis(float value)
+        {
+            float magnitude = Mathf.Abs(value);
+            if (magnitude <= 0f)
+            {
+                return 0f;
+            }
+
+            // Legacy input modules can emit +/-120 per wheel notch, while newer input paths
+            // usually emit +/-1. Normalize both to a stable per-notch scale for WheelSpeed.
+            if (magnitude > 10f)
+            {
+                value /= LegacyMouseWheelStep;
+            }
+
+            return value;
         }
 
         protected float GetScrollRate()

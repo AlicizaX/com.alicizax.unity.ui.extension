@@ -31,7 +31,7 @@ namespace UnityEngine.UI
             return PreviewLabelByKey.TryGetValue(key, out string label) ? label : key;
         }
 
-        private static void InvalidateCache()
+        internal static void InvalidateCache()
         {
             isCacheDirty = true;
         }

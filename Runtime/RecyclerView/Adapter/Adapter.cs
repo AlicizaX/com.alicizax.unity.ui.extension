@@ -439,6 +439,15 @@ namespace AlicizaX.UI
                 return definition != null;
             }
 
+            if (string.IsNullOrEmpty(viewName) && defaultItemRenderDefinition == null && itemRenderDefinitions.Count == 1)
+            {
+                foreach (var pair in itemRenderDefinitions)
+                {
+                    definition = pair.Value;
+                    return definition != null;
+                }
+            }
+
             definition = defaultItemRenderDefinition;
             return definition != null;
         }

@@ -166,6 +166,7 @@ namespace UnityEngine.UI
 
         public override VisualElement CreateInspectorGUI()
         {
+            LocalizationRefreshHelper.InvalidateCache();
             RefreshLocalizationData();
             return base.CreateInspectorGUI();
         }

@@ -272,10 +272,7 @@ namespace AlicizaX.UI
         {
             if (visibleCount == visibleHolders.Length)
             {
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-                Log.Error("RecyclerView visible holder capacity exceeded. Increase warm count.");
-#endif
-                return false;
+                EnsureVisibleHolderCapacity(visibleCount + 1);
             }
 
             visibleHolders[GetVisibleSlot(visibleCount)] = viewHolder;
@@ -311,6 +308,29 @@ namespace AlicizaX.UI
             return (visibleHead + index) % visibleHolders.Length;
         }
 
+        private void EnsureVisibleHolderCapacity(int required)
+        {
+            if (required <= visibleHolders.Length)
+            {
+                return;
+            }
+
+            int capacity = visibleHolders.Length;
+            while (capacity < required)
+            {
+                capacity <<= 1;
+            }
+
+            ViewHolder[] next = new ViewHolder[capacity];
+            for (int i = 0; i < visibleCount; i++)
+            {
+                next[i] = visibleHolders[GetVisibleSlot(i)];
+            }
+
+            visibleHolders = next;
+            visibleHead = 0;
+        }
+
         private void EnsureRemoveBufferCapacity(int required)
         {
             if (required <= removeBuffer.Length)
@@ -318,9 +338,13 @@ namespace AlicizaX.UI
                 return;
             }
 
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-            Log.Error("RecyclerView remove buffer capacity exceeded. Increase warm count.");
-#endif
+            int capacity = removeBuffer.Length;
+            while (capacity < required)
+            {
+                capacity <<= 1;
+            }
+
+            removeBuffer = new ViewHolder[capacity];
         }
 
         private static void ClearSelectedState(ViewHolder viewHolder)
@@ -365,10 +389,7 @@ namespace AlicizaX.UI
                 return bucket;
             }
 
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-            Log.Error("ViewHolderBucket pool is empty. Increase RecyclerView warm count.");
-#endif
-            return null;
+            return new ViewHolderBucket(GetBucketCapacity());
         }
 
         private void ReleaseBucket(ViewHolderBucket bucket)
@@ -408,7 +429,7 @@ namespace AlicizaX.UI
 
         public sealed class ViewHolderBucket
         {
-            private readonly ViewHolder[] holders;
+            private ViewHolder[] holders;
 
             public ViewHolderBucket(int capacity)
             {
@@ -434,10 +455,7 @@ namespace AlicizaX.UI
             {
                 if (Count == holders.Length)
                 {
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-                    Log.Error("ViewHolderBucket capacity exceeded.");
-#endif
-                    return;
+                    EnsureCapacity(Count + 1);
                 }
 
                 holders[Count++] = holder;
@@ -467,6 +485,24 @@ namespace AlicizaX.UI
                 }
 
                 Count = 0;
+            }
+
+            private void EnsureCapacity(int required)
+            {
+                if (required <= holders.Length)
+                {
+                    return;
+                }
+
+                int capacity = holders.Length;
+                while (capacity < required)
+                {
+                    capacity <<= 1;
+                }
+
+                ViewHolder[] next = new ViewHolder[capacity];
+                System.Array.Copy(holders, next, Count);
+                holders = next;
             }
         }
     }

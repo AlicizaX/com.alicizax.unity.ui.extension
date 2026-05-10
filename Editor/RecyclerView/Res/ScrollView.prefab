@@ -96,8 +96,8 @@ MonoBehaviour:
   padding: {x: 0, y: 0}
   scroll: 1
   snap: 0
-  scrollSpeed: 10
-  wheelSpeed: 30
+  scrollSpeed: 1
+  wheelSpeed: 5
   templates: []
   content: {fileID: 7227160576944475251}
   scrollbarVisibility: 0
@@ -125,7 +125,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7b7de4cb3a1546e4a9ade6b8dbf8af92, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  dragStopTime: 0
 --- !u!1 &9220717789715235424
 GameObject:
   m_ObjectHideFlags: 0

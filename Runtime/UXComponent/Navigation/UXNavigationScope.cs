@@ -164,8 +164,7 @@ namespace UnityEngine.UI
             EnsureRuntimeBuffers(true);
             if (_runtimeSelectableCount >= _runtimeSelectables.Length)
             {
-                ReportCapacityExceeded();
-                return false;
+                EnsureRuntimeCapacity(_runtimeSelectableCount + 1);
             }
 
             int index = _runtimeSelectableCount++;
@@ -419,6 +418,28 @@ namespace UnityEngine.UI
                 CreateBakedHash(bakedCount);
                 MarkSelectableSetDirty();
             }
+        }
+
+        private void EnsureRuntimeCapacity(int required)
+        {
+            if (_runtimeSelectables != null && required <= _runtimeSelectables.Length)
+            {
+                return;
+            }
+
+            int capacity = _runtimeSelectables != null ? _runtimeSelectables.Length : 0;
+            if (capacity <= 0)
+            {
+                capacity = _runtimeSelectableCapacity > 0 ? _runtimeSelectableCapacity : DefaultRuntimeSelectableCapacity;
+            }
+
+            while (capacity < required)
+            {
+                capacity <<= 1;
+            }
+
+            _runtimeSelectableCapacity = capacity;
+            EnsureRuntimeBuffers(true);
         }
 
         private void CaptureBaselineBeforeSuppress()
