@@ -93,15 +93,20 @@ namespace UnityEngine.UI
                 }
             }
 
-            private static bool IsMatch(AddRuleOption option, string search)
+            private static bool IsMatch(AddRuleOption option, string search, bool includeControllerName)
             {
                 if (string.IsNullOrEmpty(search))
                 {
                     return true;
                 }
 
-                return option.ControllerName.IndexOf(search, System.StringComparison.OrdinalIgnoreCase) >= 0 ||
-                       option.PropertyName.IndexOf(search, System.StringComparison.OrdinalIgnoreCase) >= 0;
+                if (option.PropertyName.IndexOf(search, System.StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+
+                return includeControllerName &&
+                       option.ControllerName.IndexOf(search, System.StringComparison.OrdinalIgnoreCase) >= 0;
             }
 
             private void DrawSearchField(Rect rect)
@@ -115,7 +120,7 @@ namespace UnityEngine.UI
                 for (int i = 0; i < _options.Count; i++)
                 {
                     AddRuleOption option = _options[i];
-                    if (!IsMatch(option, _search))
+                    if (!IsMatch(option, _search, _showControllerName))
                     {
                         continue;
                     }
@@ -229,7 +234,7 @@ namespace UnityEngine.UI
                 int count = 0;
                 for (int i = 0; i < _options.Count; i++)
                 {
-                    if (IsMatch(_options[i], _search))
+                    if (IsMatch(_options[i], _search, _showControllerName))
                     {
                         count++;
                     }
@@ -369,7 +374,7 @@ namespace UnityEngine.UI
 
             if (_entriesProp.arraySize == 0)
             {
-                DrawEmptyState("No properties. Click + and choose a controller/property pair.");
+                DrawEmptyState("No properties. Click + and choose a property.");
                 EditorGUILayout.EndVertical();
                 return;
             }
@@ -918,25 +923,23 @@ namespace UnityEngine.UI
             UXBindingPropertyUtility.GetSupportedProperties(binding.gameObject, _supportedProperties);
             _addRuleOptions.Clear();
 
-            for (int controllerIndex = 0; controllerIndex < binding.Controller.Controllers.Count; controllerIndex++)
+            UXController.ControllerDefinition defaultController = binding.Controller.Controllers[0];
+            if (defaultController == null)
             {
-                UXController.ControllerDefinition controller = binding.Controller.Controllers[controllerIndex];
-                if (controller == null)
+                EditorUtility.DisplayDialog("Add UX Binding Rule", "Create a controller definition before adding rules.", "OK");
+                return;
+            }
+
+            for (int propertyIndex = 0; propertyIndex < _supportedProperties.Count; propertyIndex++)
+            {
+                UXBindingProperty property = _supportedProperties[propertyIndex];
+                if (HasRule(property))
                 {
                     continue;
                 }
 
-                for (int propertyIndex = 0; propertyIndex < _supportedProperties.Count; propertyIndex++)
-                {
-                    UXBindingProperty property = _supportedProperties[propertyIndex];
-                    if (HasRule(controller.Id, property))
-                    {
-                        continue;
-                    }
-
-                    UXBindingPropertyMetadata metadata = UXBindingPropertyUtility.GetMetadata(property);
-                    _addRuleOptions.Add(new AddRuleOption(controller.Id, controller.Name, property, metadata.DisplayName));
-                }
+                UXBindingPropertyMetadata metadata = UXBindingPropertyUtility.GetMetadata(property);
+                _addRuleOptions.Add(new AddRuleOption(defaultController.Id, defaultController.Name, property, metadata.DisplayName));
             }
 
             if (_addRuleOptions.Count == 0)
@@ -945,7 +948,7 @@ namespace UnityEngine.UI
                 return;
             }
 
-            PopupWindow.Show(activatorRect, new AddRulePopup(this, binding, _addRuleOptions, binding.Controller.Controllers.Count > 1));
+            PopupWindow.Show(activatorRect, new AddRulePopup(this, binding, _addRuleOptions, false));
         }
 
         private static void ResetValue(SerializedProperty valueProp)
@@ -1173,13 +1176,12 @@ namespace UnityEngine.UI
             fallbackValueProp.FindPropertyRelative("_boolValue").boolValue = false;
         }
 
-        private bool HasRule(string controllerId, UXBindingProperty property)
+        private bool HasRule(UXBindingProperty property)
         {
             for (int i = 0; i < _entriesProp.arraySize; i++)
             {
                 SerializedProperty entry = _entriesProp.GetArrayElementAtIndex(i);
-                if (entry.FindPropertyRelative("_controllerId").stringValue == controllerId &&
-                    entry.FindPropertyRelative("_property").enumValueIndex == (int)property)
+                if (entry.FindPropertyRelative("_property").enumValueIndex == (int)property)
                 {
                     return true;
                 }
