@@ -11,7 +11,8 @@ public static class InputDeviceWatcher
         Keyboard,
         Xbox,
         PlayStation,
-        Other
+        Other,
+        Switch
     }
 
     public readonly struct DeviceContext : IEquatable<DeviceContext>
@@ -505,6 +506,14 @@ public static class InputDeviceWatcher
             return InputDeviceCategory.PlayStation;
         }
 
+        if (DescriptionContains(device, "switch")
+            || DescriptionContains(device, "nintendo")
+            || DescriptionContains(device, "joy-con")
+            || DescriptionContains(device, "joycon"))
+        {
+            return InputDeviceCategory.Switch;
+        }
+
         return InputDeviceCategory.Other;
     }
 
@@ -562,15 +571,28 @@ public static class InputDeviceWatcher
             return InputDeviceCategory.Other;
         }
 
+        if (vendorId == 0 && TryParseVendorProductIds(device.description.capabilities, out int parsedVendorId, out _))
+        {
+            vendorId = parsedVendorId;
+        }
+
+        if (vendorId == 0x057E || vendorId == 1406)
+        {
+            return InputDeviceCategory.Switch;
+        }
+
+        if (DescriptionContains(device, "switch")
+            || DescriptionContains(device, "nintendo")
+            || DescriptionContains(device, "joy-con")
+            || DescriptionContains(device, "joycon"))
+        {
+            return InputDeviceCategory.Switch;
+        }
+
         string interfaceName = device.description.interfaceName ?? string.Empty;
         if (ContainsIgnoreCase(interfaceName, "xinput"))
         {
             return InputDeviceCategory.Xbox;
-        }
-
-        if (vendorId == 0 && TryParseVendorProductIds(device.description.capabilities, out int parsedVendorId, out _))
-        {
-            vendorId = parsedVendorId;
         }
 
         if (vendorId == 0x045E || vendorId == 1118)

@@ -12,6 +12,7 @@ public static class GlyphService
     private static readonly string[] KeyboardGroupHints = { "keyboard", "mouse", "keyboard&mouse", "keyboardmouse", "kbm" };
     private static readonly string[] XboxGroupHints = { "xbox", "xinput", "gamepad", "controller" };
     private static readonly string[] PlayStationGroupHints = { "playstation", "dualshock", "dualsense", "gamepad", "controller" };
+    private static readonly string[] SwitchGroupHints = { "switch", "nintendo", "joy-con", "joycon", "gamepad", "controller" };
     private static readonly string[] OtherGamepadGroupHints = { "gamepad", "controller", "joystick" };
     private static readonly char[] TrimChars = { '{', '}', '<', '>', '\'', '"' };
     private const int InitialCacheCapacity = 64;
@@ -475,6 +476,8 @@ public static class GlyphService
                 return XboxGroupHints;
             case InputDeviceWatcher.InputDeviceCategory.PlayStation:
                 return PlayStationGroupHints;
+            case InputDeviceWatcher.InputDeviceCategory.Switch:
+                return SwitchGroupHints;
             default:
                 return OtherGamepadGroupHints;
         }
@@ -500,6 +503,8 @@ public static class GlyphService
                 return StartsWithDevice(path, "<Gamepad>") || StartsWithDevice(path, "<Joystick>") || ContainsAny(path, XboxGroupHints);
             case InputDeviceWatcher.InputDeviceCategory.PlayStation:
                 return StartsWithDevice(path, "<Gamepad>") || StartsWithDevice(path, "<Joystick>") || ContainsAny(path, PlayStationGroupHints);
+            case InputDeviceWatcher.InputDeviceCategory.Switch:
+                return StartsWithDevice(path, "<Gamepad>") || StartsWithDevice(path, "<Joystick>") || ContainsAny(path, SwitchGroupHints);
             default:
                 return StartsWithDevice(path, "<Gamepad>") || StartsWithDevice(path, "<Joystick>") || ContainsAny(path, OtherGamepadGroupHints);
         }

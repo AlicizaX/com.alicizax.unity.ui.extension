@@ -19,15 +19,23 @@ public sealed class DeviceGlyphTable
     public List<GlyphEntry> entries = new List<GlyphEntry>();
 }
 
-[CreateAssetMenu(fileName = "InputGlyphDatabase", menuName = "GameplaySystem/Input/InputGlyphDatabase", order = 400)]
 public sealed class InputGlyphDatabase : ScriptableObject
 {
     private const string DeviceKeyboard = "Keyboard";
     private const string DeviceXbox = "Xbox";
     private const string DevicePlayStation = "PlayStation";
+    private const string DeviceSwitch = "Switch";
     private const string DeviceOther = "Other";
-    private const int CategoryCount = 4;
+    private const int CategoryCount = 5;
     private const int InitialPathCapacity = 128;
+    private static readonly string[] DefaultDeviceNames =
+    {
+        DevicePlayStation,
+        DeviceXbox,
+        DeviceSwitch,
+        DeviceKeyboard,
+    };
+
     private static readonly InputDeviceWatcher.InputDeviceCategory[] KeyboardLookupOrder = { InputDeviceWatcher.InputDeviceCategory.Keyboard };
     private static readonly InputDeviceWatcher.InputDeviceCategory[] XboxLookupOrder =
     {
@@ -35,16 +43,27 @@ public sealed class InputGlyphDatabase : ScriptableObject
         InputDeviceWatcher.InputDeviceCategory.Other,
         InputDeviceWatcher.InputDeviceCategory.Keyboard,
     };
+
     private static readonly InputDeviceWatcher.InputDeviceCategory[] PlayStationLookupOrder =
     {
         InputDeviceWatcher.InputDeviceCategory.PlayStation,
         InputDeviceWatcher.InputDeviceCategory.Other,
         InputDeviceWatcher.InputDeviceCategory.Keyboard,
     };
+
+    private static readonly InputDeviceWatcher.InputDeviceCategory[] SwitchLookupOrder =
+    {
+        InputDeviceWatcher.InputDeviceCategory.Switch,
+        InputDeviceWatcher.InputDeviceCategory.Other,
+        InputDeviceWatcher.InputDeviceCategory.Xbox,
+        InputDeviceWatcher.InputDeviceCategory.Keyboard,
+    };
+
     private static readonly InputDeviceWatcher.InputDeviceCategory[] OtherLookupOrder =
     {
         InputDeviceWatcher.InputDeviceCategory.Other,
         InputDeviceWatcher.InputDeviceCategory.Xbox,
+        InputDeviceWatcher.InputDeviceCategory.Switch,
         InputDeviceWatcher.InputDeviceCategory.Keyboard,
     };
 
@@ -68,9 +87,21 @@ public sealed class InputGlyphDatabase : ScriptableObject
     }
 
 #if UNITY_EDITOR
+    private void Reset()
+    {
+        EditorEnsureDefaultTables();
+    }
+
     private void OnValidate()
     {
+        EditorEnsureDefaultTables();
+    }
+
+    public bool EditorEnsureDefaultTables()
+    {
+        bool changed = EnsureDefaultTables();
         BuildCache();
+        return changed;
     }
 #endif
 
@@ -95,7 +126,17 @@ public sealed class InputGlyphDatabase : ScriptableObject
             return table;
         }
 
-        return device == InputDeviceWatcher.InputDeviceCategory.Other ? _tableByCategory[CategoryIndex(InputDeviceWatcher.InputDeviceCategory.Xbox)] : null;
+        if (device == InputDeviceWatcher.InputDeviceCategory.Other)
+        {
+            return FirstAvailableTable(InputDeviceWatcher.InputDeviceCategory.Xbox, InputDeviceWatcher.InputDeviceCategory.Switch);
+        }
+
+        if (device == InputDeviceWatcher.InputDeviceCategory.Switch)
+        {
+            return FirstAvailableTable(InputDeviceWatcher.InputDeviceCategory.Xbox, InputDeviceWatcher.InputDeviceCategory.Other);
+        }
+
+        return null;
     }
 
     public Sprite GetPlatformIcon(InputDeviceWatcher.InputDeviceCategory device)
@@ -206,6 +247,11 @@ public sealed class InputGlyphDatabase : ScriptableObject
 
             InputDeviceWatcher.InputDeviceCategory category = ParseCategory(table.deviceName);
             int categoryIndex = CategoryIndex(category);
+            if (_tableByCategory[categoryIndex] != null)
+            {
+                continue;
+            }
+
             _tableByCategory[categoryIndex] = table;
             RegisterEntries(table, ref _pathLookupByCategory[categoryIndex]);
         }
@@ -222,6 +268,25 @@ public sealed class InputGlyphDatabase : ScriptableObject
         return NormalizeControlPath(controlPath);
     }
 #endif
+
+    private DeviceGlyphTable FirstAvailableTable(params InputDeviceWatcher.InputDeviceCategory[] categories)
+    {
+        if (categories == null)
+        {
+            return null;
+        }
+
+        for (int i = 0; i < categories.Length; i++)
+        {
+            DeviceGlyphTable table = _tableByCategory[CategoryIndex(categories[i])];
+            if (table != null)
+            {
+                return table;
+            }
+        }
+
+        return null;
+    }
 
     private static void ResetLookup(ref PathLookup lookup)
     {
@@ -363,7 +428,11 @@ public sealed class InputGlyphDatabase : ScriptableObject
             || layout.IndexOf("controller", StringComparison.OrdinalIgnoreCase) >= 0
             || layout.IndexOf("xinput", StringComparison.OrdinalIgnoreCase) >= 0
             || layout.IndexOf("dualshock", StringComparison.OrdinalIgnoreCase) >= 0
-            || layout.IndexOf("dualsense", StringComparison.OrdinalIgnoreCase) >= 0)
+            || layout.IndexOf("dualsense", StringComparison.OrdinalIgnoreCase) >= 0
+            || layout.IndexOf("switch", StringComparison.OrdinalIgnoreCase) >= 0
+            || layout.IndexOf("nintendo", StringComparison.OrdinalIgnoreCase) >= 0
+            || layout.IndexOf("joy-con", StringComparison.OrdinalIgnoreCase) >= 0
+            || layout.IndexOf("joycon", StringComparison.OrdinalIgnoreCase) >= 0)
         {
             return "gamepad";
         }
@@ -393,6 +462,16 @@ public sealed class InputGlyphDatabase : ScriptableObject
             return InputDeviceWatcher.InputDeviceCategory.PlayStation;
         }
 
+        if (deviceName.Equals(DeviceSwitch, StringComparison.OrdinalIgnoreCase))
+        {
+            return InputDeviceWatcher.InputDeviceCategory.Switch;
+        }
+
+        if (deviceName.Equals(DeviceOther, StringComparison.OrdinalIgnoreCase))
+        {
+            return InputDeviceWatcher.InputDeviceCategory.Other;
+        }
+
         return InputDeviceWatcher.InputDeviceCategory.Other;
     }
 
@@ -406,8 +485,10 @@ public sealed class InputGlyphDatabase : ScriptableObject
                 return 1;
             case InputDeviceWatcher.InputDeviceCategory.PlayStation:
                 return 2;
-            default:
+            case InputDeviceWatcher.InputDeviceCategory.Switch:
                 return 3;
+            default:
+                return 4;
         }
     }
 
@@ -421,8 +502,131 @@ public sealed class InputGlyphDatabase : ScriptableObject
                 return XboxLookupOrder;
             case InputDeviceWatcher.InputDeviceCategory.PlayStation:
                 return PlayStationLookupOrder;
+            case InputDeviceWatcher.InputDeviceCategory.Switch:
+                return SwitchLookupOrder;
             default:
                 return OtherLookupOrder;
         }
     }
+
+#if UNITY_EDITOR
+    private bool EnsureDefaultTables()
+    {
+        bool changed = false;
+        tables ??= new List<DeviceGlyphTable>();
+
+        for (int i = 0; i < DefaultDeviceNames.Length; i++)
+        {
+            string tableName = DefaultDeviceNames[i];
+            DeviceGlyphTable table = FindTable(tableName);
+            if (table == null)
+            {
+                tables.Add(new DeviceGlyphTable
+                {
+                    deviceName = tableName,
+                    entries = new List<GlyphEntry>(),
+                });
+                changed = true;
+                continue;
+            }
+
+            if (!string.Equals(table.deviceName, tableName, StringComparison.Ordinal))
+            {
+                table.deviceName = tableName;
+                changed = true;
+            }
+
+            if (table.entries == null)
+            {
+                table.entries = new List<GlyphEntry>();
+                changed = true;
+            }
+        }
+
+        changed |= SortDefaultTablesFirst();
+        return changed;
+    }
+
+    private DeviceGlyphTable FindTable(string tableName)
+    {
+        if (tables == null)
+        {
+            return null;
+        }
+
+        for (int i = 0; i < tables.Count; i++)
+        {
+            DeviceGlyphTable table = tables[i];
+            if (table != null && string.Equals(table.deviceName, tableName, StringComparison.OrdinalIgnoreCase))
+            {
+                return table;
+            }
+        }
+
+        return null;
+    }
+
+    private bool SortDefaultTablesFirst()
+    {
+        if (tables == null || tables.Count <= 1)
+        {
+            return false;
+        }
+
+        List<DeviceGlyphTable> ordered = new List<DeviceGlyphTable>(tables.Count);
+        for (int i = 0; i < DefaultDeviceNames.Length; i++)
+        {
+            DeviceGlyphTable table = FindTable(DefaultDeviceNames[i]);
+            if (table != null && !ContainsReference(ordered, table))
+            {
+                ordered.Add(table);
+            }
+        }
+
+        for (int i = 0; i < tables.Count; i++)
+        {
+            DeviceGlyphTable table = tables[i];
+            if (table != null && !ContainsReference(ordered, table))
+            {
+                ordered.Add(table);
+            }
+        }
+
+        if (ordered.Count != tables.Count)
+        {
+            return false;
+        }
+
+        bool changed = false;
+        for (int i = 0; i < tables.Count; i++)
+        {
+            if (!ReferenceEquals(tables[i], ordered[i]))
+            {
+                changed = true;
+                break;
+            }
+        }
+
+        if (changed)
+        {
+            tables.Clear();
+            tables.AddRange(ordered);
+        }
+
+        return changed;
+    }
+
+    private static bool ContainsReference(List<DeviceGlyphTable> list, DeviceGlyphTable table)
+    {
+        for (int i = 0; i < list.Count; i++)
+        {
+            if (ReferenceEquals(list[i], table))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+#endif
 }
