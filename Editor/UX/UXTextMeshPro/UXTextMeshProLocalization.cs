@@ -9,7 +9,7 @@ namespace UnityEngine.UI
         private const string LocalizationIdPropertyName = "m_localizationID";
         private const string LocalizationKeyPropertyName = "m_localizationKey";
 
-        [MenuItem("AlicizaX/Localization/Update UXTextMeshPro Localization Reference")]
+        [MenuItem("AlicizaX/Localization/Update UXTextMeshPro Localization Reference", false, 200)]
         private static void UpdateUXTextMeshProLocalizationReference()
         {
             UpdateLocalizationReferences();
