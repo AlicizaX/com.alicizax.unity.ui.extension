@@ -13,11 +13,11 @@ namespace AlicizaX.UI
 
         public GridLayoutManager()
         {
-            unit = cellCount;
         }
 
         public override Vector2 CalculateContentSize()
         {
+            unit = Mathf.Max(1, cellCount);
             int itemCount = adapter != null ? adapter.GetItemCount() : 0;
             if (itemCount <= 0)
             {
