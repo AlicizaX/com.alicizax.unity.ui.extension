@@ -89,12 +89,7 @@ namespace UnityEngine.UI
                 return true;
             }
 
-            UXNavigationScope scope = holder.GetComponent<UXNavigationScope>();
-            if (scope == null)
-            {
-                scope = holder.GetComponentInParent<UXNavigationScope>(true);
-            }
-
+            UXNavigationScope scope = holder.GetComponentInParent<UXNavigationScope>(true);
             return scope == _instance._topScope;
         }
 

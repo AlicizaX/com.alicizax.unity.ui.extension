@@ -7,6 +7,7 @@ namespace AlicizaX.UI
     {
         private readonly RecyclerView recyclerView;
         private RecyclerNavigationBridge navigationBridge;
+        private bool navigationBridgeLookupDone;
 
         public RecyclerNavigationController(RecyclerView recyclerView)
         {
@@ -43,7 +44,8 @@ namespace AlicizaX.UI
             int originalIndex = currentHolder.Index;
             int currentIndex = currentHolder.Index;
             int nextLayoutIndex = currentIndex;
-            int maxAttempts = allowWrap ? realCount : itemCount;
+            int stepAbs = Mathf.Abs(step);
+            int maxAttempts = allowWrap ? (realCount + stepAbs - 1) / stepAbs : itemCount;
             ScrollAlignment alignment = ResolveAlignment(direction, options.Alignment);
             int visibleStepBuffer = ResolveVisibleStepBuffer(options);
             for (int attempt = 0; attempt < maxAttempts; attempt++)
@@ -80,7 +82,7 @@ namespace AlicizaX.UI
                 currentIndex = nextLayoutIndex;
             }
 
-            recyclerView.TryFocusIndex(originalIndex, false, alignment);
+            recyclerView.TryFocusIndex(originalIndex, false, options.Alignment);
             return false;
 #endif
         }
@@ -281,9 +283,10 @@ namespace AlicizaX.UI
         {
             get
             {
-                if (navigationBridge == null && recyclerView != null)
+                if (!navigationBridgeLookupDone)
                 {
-                    navigationBridge = recyclerView.GetComponent<RecyclerNavigationBridge>();
+                    navigationBridge = recyclerView != null ? recyclerView.GetComponent<RecyclerNavigationBridge>() : null;
+                    navigationBridgeLookupDone = true;
                 }
 
                 return navigationBridge;

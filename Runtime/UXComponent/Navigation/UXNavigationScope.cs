@@ -731,23 +731,6 @@ namespace UnityEngine.UI
             RefreshSelectableHashesIfDirty();
             return FindHashIndex(_runtimeSelectableHashIds, _runtimeSelectableHashIndices, selectable.GetInstanceID());
         }
-        private static int IndexOf(Selectable[] selectables, int count, Selectable selectable)
-        {
-            if (selectables == null || selectable == null)
-            {
-                return InvalidIndex;
-            }
-
-            for (int i = 0; i < count; i++)
-            {
-                if (selectables[i] == selectable)
-                {
-                    return i;
-                }
-            }
-
-            return InvalidIndex;
-        }
 
         private static bool IsSelectableUsable(Selectable selectable)
         {

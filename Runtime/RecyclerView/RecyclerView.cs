@@ -803,7 +803,6 @@ namespace AlicizaX.UI
             if (!IsFullyVisible(holder))
             {
                 ScrollToWithAlignment(index, alignment, 0f, false);
-                Refresh();
                 TryGetVisibleViewHolder(index, out holder);
             }
 
