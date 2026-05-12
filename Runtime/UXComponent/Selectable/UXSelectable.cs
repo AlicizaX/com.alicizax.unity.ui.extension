@@ -69,9 +69,9 @@ namespace UnityEngine.UI
 
         protected override void DoStateTransition(SelectionState state, bool instant)
         {
+            base.DoStateTransition(state, instant);
             if (_state == state) return;
             _state = state;
-            base.DoStateTransition(state, instant);
             for (int i = 0; i < m_ChildTransitions.Count; i++)
             {
                 TransitionData transitionData = m_ChildTransitions[i];

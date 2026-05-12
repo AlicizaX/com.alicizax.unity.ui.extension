@@ -56,7 +56,7 @@ public class UXCreateHelper : Editor
         obj.name = "UXToggle";
         DestroyImmediate(obj.GetComponent<Toggle>());
         var uxToggle = obj.AddComponent<UXToggle>();
-        uxToggle.graphic = obj.transform.Find("Background/Checkmark").GetComponent<Graphic>();
+        uxToggle.targetGraphic = obj.transform.Find("Background/Checkmark").GetComponent<Graphic>();
         uxToggle.targetGraphic = obj.transform.Find("Background").GetComponent<Graphic>();
     }
 

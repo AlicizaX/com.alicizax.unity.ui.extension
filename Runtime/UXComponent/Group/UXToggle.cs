@@ -13,9 +13,6 @@ namespace UnityEngine.UI
         {
         }
 
-        public Toggle.ToggleTransition toggleTransition = Toggle.ToggleTransition.Fade;
-        public Graphic graphic;
-
         [SerializeField] private UXGroup m_Group;
 
         public UXGroup group
@@ -24,7 +21,7 @@ namespace UnityEngine.UI
             set
             {
                 SetToggleGroup(value, true);
-                PlayEffect(true);
+                RefreshVisual();
             }
         }
 
@@ -51,7 +48,7 @@ namespace UnityEngine.UI
         {
 #if UNITY_EDITOR
             if (executing == CanvasUpdate.Prelayout)
-                PlayEffect(true);
+                RefreshVisual();
 #endif
         }
 
@@ -84,24 +81,13 @@ namespace UnityEngine.UI
             if (m_Group != null)
                 SetToggleGroup(m_Group, false);
 
-            PlayEffect(true);
+            RefreshVisual();
         }
 
         protected override void OnDidApplyAnimationProperties()
         {
-            if (graphic != null)
-            {
-                bool oldValue = !Mathf.Approximately(graphic.canvasRenderer.GetColor().a, 0);
-                if (m_IsOn != oldValue)
-                {
-                    m_IsOn = oldValue;
-                    Set(!oldValue);
-                }
-            }
-
             base.OnDidApplyAnimationProperties();
         }
-
 
         internal void SetToggleGroupInternal(UXGroup newGroup, bool setMemberValue)
         {
@@ -189,18 +175,14 @@ namespace UnityEngine.UI
                 }
             }
 
-            PlayEffect(toggleTransition == Toggle.ToggleTransition.None);
-
             if (sendCallback)
             {
                 UISystemProfilerApi.AddMarker("Toggle.value", this);
                 onValueChanged.Invoke(m_IsOn);
             }
 
-            bool instant = (toggleTransition == Toggle.ToggleTransition.None);
-
             var stateToApply = m_IsOn ? Selectable.SelectionState.Selected : currentSelectionState;
-            DoStateTransition(stateToApply, instant);
+            DoStateTransition(stateToApply, false);
             OnAfterValueChanged(m_IsOn);
         }
 
@@ -212,28 +194,16 @@ namespace UnityEngine.UI
         {
         }
 
-        protected virtual void PlayEffect(bool instant)
+        // 刷新当前视觉状态，根据 isOn 决定走 Selected 还是当前交互状态
+        private void RefreshVisual()
         {
-            if (graphic == null)
-                return;
-
-            float alpha = m_IsOn ? 1f : 0f;
-
-#if UNITY_EDITOR
-            if (!Application.isPlaying)
-                graphic.canvasRenderer.SetAlpha(alpha);
-            else
-#endif
-            if (instant)
-                graphic.canvasRenderer.SetAlpha(alpha);
-            else
-                graphic.CrossFadeAlpha(alpha, 0.1f, true);
+            var state = m_IsOn ? Selectable.SelectionState.Selected : currentSelectionState;
+            DoStateTransition(state, true);
         }
-
 
         protected override void Start()
         {
-            PlayEffect(true);
+            RefreshVisual();
         }
 
         private void InternalToggle()
@@ -281,7 +251,6 @@ namespace UnityEngine.UI
             if (clip && UXComponentExtensionsHelper.AudioHelper != null)
                 UXComponentExtensionsHelper.AudioHelper.PlayAudio(clip);
         }
-
 
         [SerializeField] private AudioClip hoverAudioClip;
         [SerializeField] private AudioClip clickAudioClip;

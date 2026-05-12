@@ -12,8 +12,6 @@ namespace UnityEditor.UI
     internal class UXToggleEditor : UXSelectableEditor
     {
         private SerializedProperty m_OnValueChangedProperty;
-        private SerializedProperty m_TransitionProperty;
-        private SerializedProperty m_GraphicProperty;
         private SerializedProperty m_GroupProperty;
         private SerializedProperty m_IsOnProperty;
 
@@ -24,8 +22,6 @@ namespace UnityEditor.UI
         {
             base.OnEnable();
 
-            m_TransitionProperty = serializedObject.FindProperty("toggleTransition");
-            m_GraphicProperty = serializedObject.FindProperty("graphic");
             m_GroupProperty = serializedObject.FindProperty("m_Group");
             m_IsOnProperty = serializedObject.FindProperty("m_IsOn");
             m_OnValueChangedProperty = serializedObject.FindProperty("onValueChanged");
@@ -81,9 +77,6 @@ namespace UnityEditor.UI
 
             UXToggle toggle = serializedObject.targetObject as UXToggle;
             DrawIsOn(toggle);
-
-            GUILayoutHelper.DrawProperty(m_TransitionProperty, customSkin, "Transition");
-            GUILayoutHelper.DrawProperty(m_GraphicProperty, customSkin, "Graphic");
             DrawGroup(toggle);
 
             EditorGUILayout.Space();
