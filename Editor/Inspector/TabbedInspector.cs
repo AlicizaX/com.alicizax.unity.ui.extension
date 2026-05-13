@@ -87,8 +87,7 @@ namespace UnityEditor.Utils
         {
             if (string.IsNullOrEmpty(title)) return;
             _tabs.RemoveAll(t => t.title == title);
-            if (_tabs.Count == 0) _currentTabIndex = 0;
-            else if (_currentTabIndex >= _tabs.Count) _currentTabIndex = Mathf.Max(0, _tabs.Count - 1);
+            ClampCurrentTabIndex();
         }
 
         public void EnsureDefaultTab(string title, string iconName, Action defaultCallback)
@@ -111,6 +110,8 @@ namespace UnityEditor.Utils
                 // nothing to draw
                 return;
             }
+
+            ClampCurrentTabIndex();
 
             EditorGUILayout.BeginHorizontal();
 
@@ -165,6 +166,17 @@ namespace UnityEditor.Utils
         {
             if (!string.IsNullOrEmpty(_prefsKey))
                 EditorPrefs.SetInt(_prefsKey, _currentTabIndex);
+        }
+
+        void ClampCurrentTabIndex()
+        {
+            if (_tabs == null || _tabs.Count == 0)
+            {
+                _currentTabIndex = 0;
+                return;
+            }
+
+            _currentTabIndex = Mathf.Clamp(_currentTabIndex, 0, _tabs.Count - 1);
         }
     }
 }
