@@ -1,4 +1,6 @@
 #if TEXTMESHPRO_SUPPORT
+using AlicizaX;
+using AlicizaX.Localization;
 using TMPro;
 
 namespace UnityEngine.UI
@@ -22,6 +24,12 @@ namespace UnityEngine.UI
         {
             base.Start();
             if (!Application.isPlaying) return;
+            EventBus.Subscribe<LocalizationChangeEvent>(OnLocalizationChanged);
+            ChangeLanguage();
+        }
+
+        protected void OnLocalizationChanged(in LocalizationChangeEvent e)
+        {
             ChangeLanguage();
         }
 

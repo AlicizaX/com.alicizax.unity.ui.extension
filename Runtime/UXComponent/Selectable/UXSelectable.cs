@@ -17,8 +17,6 @@ namespace UnityEngine.UI
     {
         [SerializeField] private List<TransitionData> m_ChildTransitions = new();
 
-        private SelectionState _state;
-
         void StartChildColorTween(TransitionData transitionData, Color targetColor, bool instant)
         {
             if (transitionData.targetGraphic == null)
@@ -55,7 +53,7 @@ namespace UnityEngine.UI
             base.InstantClearState();
             for (int i = 0; i < m_ChildTransitions.Count; i++)
             {
-                switch (transition)
+                switch (m_ChildTransitions[i].transition)
                 {
                     case Transition.ColorTint:
                         StartChildColorTween(m_ChildTransitions[i], Color.white, true);
@@ -70,8 +68,6 @@ namespace UnityEngine.UI
         protected override void DoStateTransition(SelectionState state, bool instant)
         {
             base.DoStateTransition(state, instant);
-            if (_state == state) return;
-            _state = state;
             for (int i = 0; i < m_ChildTransitions.Count; i++)
             {
                 TransitionData transitionData = m_ChildTransitions[i];
@@ -105,7 +101,7 @@ namespace UnityEngine.UI
                         break;
                 }
 
-                switch (transition)
+                switch (transitionData.transition)
                 {
                     case Transition.ColorTint:
                         StartChildColorTween(transitionData, tintColor * transitionData.colors.colorMultiplier, instant);
