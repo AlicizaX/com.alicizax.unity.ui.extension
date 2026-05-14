@@ -1,13 +1,10 @@
 #if TEXTMESHPRO_SUPPORT
-
 using System;
 using System.Collections.Generic;
-using AlicizaX.Localization;
-using AlicizaX.Localization.Editor;
 using TMPro;
 using UnityEditor;
-using UnityEngine;
 using UnityEditor.Experimental.GraphView;
+using UnityEngine;
 using UnityEngine.UIElements;
 
 namespace UnityEngine.UI
@@ -15,8 +12,8 @@ namespace UnityEngine.UI
     internal readonly struct TableSelectionData
     {
         public readonly int Id;
-        public readonly string CombineKey; // SectionName/Key → 菜单层级
-        public readonly string CombineValue; // SectionName.Key → 存储用
+        public readonly string CombineKey;
+        public readonly string CombineValue;
 
         public TableSelectionData(int id, string combineKey, string combineValue)
         {
@@ -36,7 +33,6 @@ namespace UnityEngine.UI
             Dictionary<string, TableSelectionData> selectionByKey = null,
             List<string> selectionOptions = null,
             Dictionary<string, string> previewLabelByKey = null,
-            string previewLanguage = null,
             bool includeNone = true)
         {
             selectionById?.Clear();
@@ -53,85 +49,29 @@ namespace UnityEngine.UI
                     selectionOptions);
             }
 
-            string[] guids = AssetDatabase.FindAssets("t:GameLocaizationTable");
-            for (int i = 0; i < guids.Length; i++)
+            foreach (KeyValuePair<int, LocalizationEntry> pair in LocalizationRefreshHelper.EntriesById)
             {
-                string assetPath = AssetDatabase.GUIDToAssetPath(guids[i]);
-                GameLocaizationTable table = AssetDatabase.LoadAssetAtPath<GameLocaizationTable>(assetPath);
-                if (table == null)
+                LocalizationEntry entry = pair.Value;
+                string menuPath = GetMenuPath(entry.Key);
+                string combineKey = string.IsNullOrEmpty(entry.Sheet) ? menuPath : $"{entry.Sheet}/{menuPath}";
+                var selectionData = new TableSelectionData(entry.Id, combineKey, entry.Key);
+                AddSelection(selectionData, selectionById, selectionByKey, selectionOptions);
+
+                if (!string.IsNullOrEmpty(entry.Key))
                 {
-                    continue;
-                }
-
-                AddPreviewLabels(table, previewLanguage, previewLabelByKey);
-                AddSelections(table, selectionById, selectionByKey, selectionOptions);
-            }
-        }
-
-        private static void AddSelections(
-            GameLocaizationTable table,
-            Dictionary<int, TableSelectionData> selectionById,
-            Dictionary<string, TableSelectionData> selectionByKey,
-            List<string> selectionOptions)
-        {
-            if (table.TableSheet == null)
-            {
-                return;
-            }
-
-            for (int i = 0; i < table.TableSheet.Count; i++)
-            {
-                GameLocaizationTable.TableData sheet = table.TableSheet[i];
-                if (string.IsNullOrEmpty(sheet.SectionName) || sheet.SectionSheet == null)
-                {
-                    continue;
-                }
-
-                for (int j = 0; j < sheet.SectionSheet.Count; j++)
-                {
-                    GameLocaizationTable.SheetItem selection = sheet.SectionSheet[j];
-                    if (selection.Id <= 0 || string.IsNullOrEmpty(selection.Key))
-                    {
-                        continue;
-                    }
-
-                    string combineKey = $"{table.name}/{sheet.SectionName}/{selection.Key}";
-                    string combineValue = $"{sheet.SectionName}.{selection.Key}";
-                    AddSelection(
-                        new TableSelectionData(selection.Id, combineKey, combineValue),
-                        selectionById,
-                        selectionByKey,
-                        selectionOptions);
+                    previewLabelByKey?.TryAdd(entry.Key, entry.PreviewText);
                 }
             }
         }
 
-        private static void AddPreviewLabels(
-            GameLocaizationTable table,
-            string previewLanguage,
-            Dictionary<string, string> previewLabelByKey)
+        private static string GetMenuPath(string key)
         {
-            if (previewLabelByKey == null || string.IsNullOrEmpty(previewLanguage) || table.Languages == null)
+            if (string.IsNullOrEmpty(key))
             {
-                return;
+                return key;
             }
 
-            LocalizationLanguage localization = table.Languages.Find(t => t != null && t.LanguageName == previewLanguage);
-            if (localization?.Strings == null)
-            {
-                return;
-            }
-
-            for (int i = 0; i < localization.Strings.Count; i++)
-            {
-                LocalizationLanguage.LocalizationString item = localization.Strings[i];
-                if (item == null || string.IsNullOrEmpty(item.Key))
-                {
-                    continue;
-                }
-
-                previewLabelByKey.TryAdd(item.Key, item.Value);
-            }
+            return key.Replace('.', '/');
         }
 
         private static void AddSelection(
@@ -177,8 +117,7 @@ namespace UnityEngine.UI
                 selectionById,
                 selectionByKey,
                 allSelection,
-                previewLabelByKey,
-                LocalizationConfiguration.Instance.GenerateScriptCodeFirstConfigName);
+                previewLabelByKey);
         }
 
         protected string GetPreviewLabel()
@@ -192,7 +131,6 @@ namespace UnityEngine.UI
                 ? label
                 : UXTextMeshProLocalizationTableUtility.NoneSelection;
         }
-
 
         protected void FindSelectSelection()
         {
@@ -241,32 +179,30 @@ namespace UnityEngine.UI
         public override void OnInspectorGUI()
         {
             serializedObject.Update();
+            RefreshLocalizationData();
             FindSelectSelection();
 
-            // m_localizationKey 只读
             using (new EditorGUI.DisabledScope(true))
             {
                 EditorGUILayout.PropertyField(m_localizationKey);
                 EditorGUILayout.LabelField("Text", GetPreviewLabel());
             }
 
-            // 检查是否找不到对应 ID 的 key
             if (!localizationID.hasMultipleDifferentValues &&
                 localizationID.intValue > 0 &&
                 !selectionById.ContainsKey(localizationID.intValue))
             {
                 m_localizationKey.stringValue = string.Empty;
-                EditorGUILayout.HelpBox($"已选择的多语言 Key (ID={localizationID.intValue}) 已被删除，但仍然保留该 ID。", MessageType.Warning);
+                EditorGUILayout.HelpBox($"Selected localization ID ({localizationID.intValue}) was not found in LocalizationConst.json.", MessageType.Warning);
             }
 
             EditorGUILayout.Space();
 
-            // 下拉按钮
             if (GUILayout.Button(GetSelectionButtonLabel(), EditorStyles.popup))
             {
                 var mousePos = GUIUtility.GUIToScreenPoint(Event.current.mousePosition);
                 SearchWindow.Open(
-                    new SearchWindowContext(mousePos),
+                    new SearchWindowContext(mousePos, 420f),
                     ScriptableObject.CreateInstance<LocalizationSearchProvider>().Init(allSelection, ApplySelection)
                 );
             }
@@ -291,6 +227,7 @@ namespace UnityEngine.UI
                 localizationID.intValue = data.Id;
                 m_localizationKey.stringValue = data.CombineValue;
                 selectedSelectionIndex = allSelection.IndexOf(data.CombineKey);
+                RefreshTargetText(data.CombineValue);
             }
 
             serializedObject.ApplyModifiedProperties();
@@ -319,6 +256,22 @@ namespace UnityEngine.UI
 
                 Undo.RecordObject(textComponent, "Clear Localization Text");
                 textComponent.text = string.Empty;
+                EditorUtility.SetDirty(textComponent);
+            }
+        }
+
+        private void RefreshTargetText(string key)
+        {
+            string previewText = LocalizationRefreshHelper.GetPreviewLabel(key);
+            for (int i = 0; i < targets.Length; i++)
+            {
+                if (targets[i] is not TextMeshProUGUI textComponent)
+                {
+                    continue;
+                }
+
+                Undo.RecordObject(textComponent, "Refresh Localization Text");
+                textComponent.text = previewText;
                 EditorUtility.SetDirty(textComponent);
             }
         }
@@ -359,35 +312,34 @@ namespace UnityEngine.UI
                 if (option == UXTextMeshProLocalizationTableUtility.NoneSelection)
                 {
                     tree.Add(new SearchTreeEntry(new GUIContent(UXTextMeshProLocalizationTableUtility.NoneSelection)) { level = 1, userData = option });
+                    continue;
                 }
-                else
-                {
-                    // `/` 自动分层
-                    string[] parts = option.Split('/');
-                    if (parts.Length == 1)
-                    {
-                        tree.Add(new SearchTreeEntry(new GUIContent(parts[0])) { level = 1, userData = option });
-                    }
-                    else
-                    {
-                        // 前面的部分作为 group
-                        for (int i = 0; i < parts.Length - 1; i++)
-                        {
-                            // 确保 group 唯一
-                            string groupName = string.Join("/", parts, 0, i + 1);
-                            if (groupPaths.Add(groupName))
-                            {
-                                tree.Add(new SearchTreeGroupEntry(new GUIContent(parts[i])) { level = i + 1 });
-                            }
-                        }
 
-                        // 最后部分作为 Entry
-                        tree.Add(new SearchTreeEntry(new GUIContent(parts[^1])) { level = parts.Length, userData = option });
+                string[] parts = option.Split('/');
+                if (parts.Length == 1)
+                {
+                    tree.Add(new SearchTreeEntry(new GUIContent(parts[0])) { level = 1, userData = option });
+                    continue;
+                }
+
+                for (int i = 0; i < parts.Length - 1; i++)
+                {
+                    string groupName = string.Join("/", parts, 0, i + 1);
+                    if (groupPaths.Add(groupName))
+                    {
+                        tree.Add(new SearchTreeGroupEntry(new GUIContent(parts[i])) { level = i + 1 });
                     }
                 }
+
+                tree.Add(new SearchTreeEntry(new GUIContent(GetSearchableLeafLabel(option))) { level = parts.Length, userData = option });
             }
 
             return tree;
+        }
+
+        private static string GetSearchableLeafLabel(string option)
+        {
+            return option.Replace('/', '.');
         }
 
         public bool OnSelectEntry(SearchTreeEntry searchTreeEntry, SearchWindowContext context)

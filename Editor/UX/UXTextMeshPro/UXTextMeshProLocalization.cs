@@ -17,6 +17,8 @@ namespace UnityEngine.UI
 
         private static void UpdateLocalizationReferences()
         {
+            LocalizationRefreshHelper.InvalidateCache();
+
             var selectionById = new Dictionary<int, TableSelectionData>();
             UXTextMeshProLocalizationTableUtility.RebuildSelectionData(
                 selectionById,
@@ -124,5 +126,4 @@ namespace UnityEngine.UI
         }
     }
 }
-
 #endif

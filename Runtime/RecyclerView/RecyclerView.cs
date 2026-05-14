@@ -1257,10 +1257,11 @@ namespace AlicizaX.UI
         /// <param name="position">当前滚动位置。</param>
         private void OnScrollChanged(float position)
         {
+            bool fullRefreshed = UpdateVisibleRange();
             layoutManager.UpdateLayout();
             UpdateScrollbarValue(position);
-            UpdateVisibleRange();
-            layoutManager.DoItemAnimation();
+            if (!fullRefreshed)
+                layoutManager.DoItemAnimation();
             OnScrollValueChanged?.Invoke(position);
         }
 
@@ -1323,56 +1324,56 @@ namespace AlicizaX.UI
         /// <summary>
         /// 根据当前滚动位置增量更新可见区间内的视图持有者。
         /// </summary>
-        private void UpdateVisibleRange()
+        /// <returns>是否触发了全量刷新。</returns>
+        private bool UpdateVisibleRange()
         {
             if (layoutManager == null || RecyclerViewAdapter == null || RecyclerViewAdapter.GetItemCount() <= 0)
             {
-                return;
+                return false;
             }
 
-            // 处理可见区间起始端的回收与补充。
-            if (layoutManager.IsFullInvisibleStart(startIndex))
+            int itemCount = RecyclerViewAdapter.GetItemCount();
+            int safetyLimit = itemCount;
+
+            // 回收头部不可见的
+            while (safetyLimit-- > 0 && startIndex < endIndex && layoutManager.IsFullInvisibleStart(startIndex))
             {
                 viewProvider.RemoveViewHolder(startIndex);
                 startIndex += layoutManager.Unit;
             }
-            else if (layoutManager.IsFullVisibleStart(startIndex))
-            {
-                if (startIndex == 0)
-                {
-                    // 待补充：在滚动到列表起始端时补充刷新逻辑。
-                }
-                else
-                {
-                    startIndex -= layoutManager.Unit;
-                    viewProvider.CreateViewHolder(startIndex);
-                }
-            }
 
-            // 处理可见区间末端的回收与补充。
-            if (layoutManager.IsFullInvisibleEnd(endIndex))
+            // 回收尾部不可见的
+            while (safetyLimit > 0 && endIndex > startIndex && layoutManager.IsFullInvisibleEnd(endIndex))
             {
                 viewProvider.RemoveViewHolder(endIndex);
                 endIndex -= layoutManager.Unit;
+                safetyLimit--;
             }
-            else if (layoutManager.IsFullVisibleEnd(endIndex))
+
+            // 补充头部
+            while (safetyLimit > 0 && startIndex > 0 && layoutManager.IsFullVisibleStart(startIndex))
             {
-                if (endIndex >= viewProvider.GetItemCount() - layoutManager.Unit)
-                {
-                    // 待补充：在滚动到列表末端时补充加载更多逻辑。
-                }
-                else
-                {
-                    endIndex += layoutManager.Unit;
-                    viewProvider.CreateViewHolder(endIndex);
-                }
+                startIndex -= layoutManager.Unit;
+                viewProvider.CreateViewHolder(startIndex);
+                safetyLimit--;
+            }
+
+            // 补充尾部
+            while (safetyLimit > 0 && endIndex < itemCount - layoutManager.Unit && layoutManager.IsFullVisibleEnd(endIndex))
+            {
+                endIndex += layoutManager.Unit;
+                viewProvider.CreateViewHolder(endIndex);
+                safetyLimit--;
             }
 
             // 若增量更新后的区间与实际可见区不一致，则退化为全量刷新。
             if (!layoutManager.IsVisible(startIndex) || !layoutManager.IsVisible(endIndex))
             {
                 Refresh();
+                return true;
             }
+
+            return false;
         }
 
         /// <summary>
