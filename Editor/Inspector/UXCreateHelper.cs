@@ -152,30 +152,28 @@ public class UXCreateHelper : Editor
             return false;
         }
 
-        Undo.RecordObject(textMeshPro, "Replace TextMeshPro With UXTextMeshPro");
+        GameObject gameObject = textMeshPro.gameObject;
+        string textMeshProName = textMeshPro.name;
+
+        Undo.RegisterCompleteObjectUndo(textMeshPro, "Replace TextMeshPro With UXTextMeshPro");
 
         SerializedObject serializedObject = new SerializedObject(textMeshPro);
         SerializedProperty scriptProperty = serializedObject.FindProperty("m_Script");
         if (scriptProperty == null)
         {
-            Debug.LogError($"Failed to replace {textMeshPro.name}: m_Script property was not found.");
+            Debug.LogError($"Failed to replace {textMeshProName}: m_Script property was not found.");
             return false;
         }
 
         scriptProperty.objectReferenceValue = uxTextMeshProScript;
         serializedObject.ApplyModifiedProperties();
 
-        UXTextMeshPro uxTextMeshPro = textMeshPro.GetComponent<UXTextMeshPro>();
+        UXTextMeshPro uxTextMeshPro = gameObject.GetComponent<UXTextMeshPro>();
         if (uxTextMeshPro != null)
         {
             ClearUXTextMeshProLocalization(uxTextMeshPro);
             EditorUtility.SetDirty(uxTextMeshPro);
             PrefabUtility.RecordPrefabInstancePropertyModifications(uxTextMeshPro);
-        }
-        else
-        {
-            EditorUtility.SetDirty(textMeshPro);
-            PrefabUtility.RecordPrefabInstancePropertyModifications(textMeshPro);
         }
 
         return true;
