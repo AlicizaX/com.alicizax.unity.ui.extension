@@ -92,6 +92,8 @@ namespace AlicizaX.UI
 
         public float ScrollPosition => recyclerView.GetScrollPosition();
 
+        public virtual bool UsesVirtualLayoutRange => false;
+
         public LayoutManager() { }
 
         public void SetContentSize()
@@ -146,6 +148,43 @@ namespace AlicizaX.UI
 
         public abstract float GetItemLength(int index);
 
+        public virtual int GetDataIndex(int layoutIndex)
+        {
+            if (adapter == null)
+            {
+                return layoutIndex;
+            }
+
+            int itemCount = adapter.GetItemCount();
+            int realCount = adapter.GetRealCount();
+            if (realCount <= 0)
+            {
+                return layoutIndex;
+            }
+
+            return itemCount != realCount ? WrapIndex(layoutIndex, realCount) : layoutIndex;
+        }
+
+        public virtual int GetLayoutIndex(int dataIndex)
+        {
+            if (adapter == null)
+            {
+                return dataIndex;
+            }
+
+            int itemCount = adapter.GetItemCount();
+            int realCount = adapter.GetRealCount();
+            if (realCount <= 0)
+            {
+                return dataIndex;
+            }
+
+            dataIndex = WrapIndex(dataIndex, realCount);
+            return itemCount != realCount
+                ? GetNearestWrappedLayoutIndex(dataIndex, PositionToIndex(ScrollPosition), realCount)
+                : dataIndex;
+        }
+
         public virtual int GetSnapIndex(float position)
         {
             if (adapter == null || adapter.GetItemCount() <= 0)
@@ -157,6 +196,42 @@ namespace AlicizaX.UI
         }
 
         public virtual void DoItemAnimation() { }
+
+        protected static int WrapIndex(int index, int count)
+        {
+            if (count <= 0)
+            {
+                return index;
+            }
+
+            int wrapped = index % count;
+            return wrapped < 0 ? wrapped + count : wrapped;
+        }
+
+        protected static int GetNearestWrappedLayoutIndex(int dataIndex, int centerLayoutIndex, int itemCount)
+        {
+            if (itemCount <= 0)
+            {
+                return dataIndex;
+            }
+
+            int cycle = Mathf.RoundToInt((centerLayoutIndex - dataIndex) / (float)itemCount);
+            int candidate = dataIndex + cycle * itemCount;
+            int previous = candidate - itemCount;
+            int next = candidate + itemCount;
+
+            if (Mathf.Abs(previous - centerLayoutIndex) < Mathf.Abs(candidate - centerLayoutIndex))
+            {
+                candidate = previous;
+            }
+
+            if (Mathf.Abs(next - centerLayoutIndex) < Mathf.Abs(candidate - centerLayoutIndex))
+            {
+                candidate = next;
+            }
+
+            return candidate;
+        }
 
         public virtual bool IsFullVisibleStart(int index)
         {

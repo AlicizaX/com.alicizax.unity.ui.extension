@@ -77,7 +77,7 @@ namespace AlicizaX.UI
         public override ViewHolder Allocate(string viewName)
         {
             var viewHolder = objectPool.Allocate(viewName);
-            viewHolder.gameObject.SetActive(true);
+            viewHolder.SetPooledVisible(true);
             return viewHolder;
         }
 
@@ -104,13 +104,21 @@ namespace AlicizaX.UI
             PrepareBucketPool(warmCount);
 
             int itemCount = GetItemCount();
-            int start = Math.Max(0, LayoutManager.GetStartIndex());
-            int end = Math.Min(itemCount - 1, start + warmCount - 1);
+            int start = LayoutManager.GetStartIndex();
+            if (!LayoutManager.UsesVirtualLayoutRange)
+            {
+                start = Math.Max(0, start);
+            }
+
+            int end = LayoutManager.UsesVirtualLayoutRange
+                ? start + warmCount - 1
+                : Math.Min(itemCount - 1, start + warmCount - 1);
 
             Array.Clear(warmCountsByType, 0, warmCountsByType.Length);
             for (int index = start; index <= end; index++)
             {
-                string viewName = Adapter.GetViewName(index);
+                int dataIndex = LayoutManager.GetDataIndex(index);
+                string viewName = Adapter.GetViewName(dataIndex);
                 if (string.IsNullOrEmpty(viewName) || !templateIdsByName.TryGetValue(viewName, out int typeId))
                 {
                     continue;

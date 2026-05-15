@@ -28,7 +28,7 @@ namespace AlicizaX.UI
         public SimpleViewProvider(RecyclerView recyclerView, ViewHolder[] templates) : base(recyclerView, templates)
         {
             UnityComponentFactory<ViewHolder> factory = new(GetTemplate(), recyclerView.Content);
-            objectPool = new ObjectPool<ViewHolder>(factory, 0, 1);
+            objectPool = new ObjectPool<ViewHolder>(factory, 0, 32);
         }
 
         public override ViewHolder GetTemplate(string viewName = "")
@@ -39,7 +39,7 @@ namespace AlicizaX.UI
         public override ViewHolder Allocate(string viewName)
         {
             var viewHolder = objectPool.Allocate();
-            viewHolder.gameObject.SetActive(true);
+            viewHolder.SetPooledVisible(true);
             return viewHolder;
         }
 

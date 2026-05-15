@@ -52,13 +52,14 @@ namespace AlicizaX.UI
         {
             for (int i = index; i < index + LayoutManager.Unit; i++)
             {
-                if (i > Adapter.GetItemCount() - 1) break;
+                if (!LayoutManager.UsesVirtualLayoutRange && i > Adapter.GetItemCount() - 1) break;
 
-                string viewName = Adapter.GetViewName(i);
+                int dataIndex = LayoutManager.GetDataIndex(i);
+                string viewName = Adapter.GetViewName(dataIndex);
                 var viewHolder = Allocate(viewName);
                 viewHolder.Name = viewName;
                 viewHolder.Index = i;
-                viewHolder.DataIndex = i;
+                viewHolder.DataIndex = dataIndex;
                 viewHolder.RecyclerView = recyclerView;
                 (Adapter as IItemRenderPrewarmer)?.PrewarmItemRender(viewHolder, viewName);
                 if (!AddVisibleHolder(viewHolder))
@@ -75,8 +76,88 @@ namespace AlicizaX.UI
                 }
 
                 LayoutManager.Layout(viewHolder, i);
-                Adapter.OnBindViewHolder(viewHolder, i);
+                Adapter.OnBindViewHolder(viewHolder, dataIndex);
             }
+        }
+
+        internal bool TryReuseVisibleRange(int targetStart, int targetEnd)
+        {
+            if (Adapter == null || LayoutManager == null || visibleCount <= 0 || targetEnd < targetStart)
+            {
+                return false;
+            }
+
+            int slot = 0;
+            for (int groupIndex = targetStart; groupIndex <= targetEnd; groupIndex += LayoutManager.Unit)
+            {
+                for (int layoutIndex = groupIndex; layoutIndex < groupIndex + LayoutManager.Unit; layoutIndex++)
+                {
+                    if (!LayoutManager.UsesVirtualLayoutRange && layoutIndex > Adapter.GetItemCount() - 1)
+                    {
+                        break;
+                    }
+
+                    if (slot >= visibleCount)
+                    {
+                        return false;
+                    }
+
+                    ViewHolder viewHolder = visibleHolders[GetVisibleSlot(slot)];
+                    if (viewHolder == null)
+                    {
+                        return false;
+                    }
+
+                    int dataIndex = LayoutManager.GetDataIndex(layoutIndex);
+                    string viewName = Adapter.GetViewName(dataIndex);
+                    if (!string.Equals(viewHolder.Name, viewName, System.StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+
+                    slot++;
+                }
+            }
+
+            if (slot != visibleCount)
+            {
+                return false;
+            }
+
+            ResetViewHolderLookups();
+
+            slot = 0;
+            for (int groupIndex = targetStart; groupIndex <= targetEnd; groupIndex += LayoutManager.Unit)
+            {
+                for (int layoutIndex = groupIndex; layoutIndex < groupIndex + LayoutManager.Unit; layoutIndex++)
+                {
+                    if (!LayoutManager.UsesVirtualLayoutRange && layoutIndex > Adapter.GetItemCount() - 1)
+                    {
+                        break;
+                    }
+
+                    ViewHolder viewHolder = visibleHolders[GetVisibleSlot(slot)];
+                    int dataIndex = LayoutManager.GetDataIndex(layoutIndex);
+                    Adapter.OnRecycleViewHolder(viewHolder);
+                    ClearSelectedState(viewHolder);
+                    viewHolder.OnRecycled();
+
+                    viewHolder.Name = Adapter.GetViewName(dataIndex);
+                    viewHolder.Index = layoutIndex;
+                    viewHolder.DataIndex = dataIndex;
+                    viewHolder.RecyclerView = recyclerView;
+
+                    viewHoldersByIndex[layoutIndex] = viewHolder;
+                    viewHolderPositions[layoutIndex] = GetVisibleSlot(slot);
+                    AddViewHolderToDataBucket(dataIndex, viewHolder);
+
+                    LayoutManager.Layout(viewHolder, layoutIndex);
+                    Adapter.OnBindViewHolder(viewHolder, dataIndex);
+                    slot++;
+                }
+            }
+
+            return true;
         }
 
         public void RemoveViewHolder(int index)
@@ -86,7 +167,7 @@ namespace AlicizaX.UI
             EnsureRemoveBufferCapacity(LayoutManager.Unit);
             for (int i = index; i < end; i++)
             {
-                if (i > Adapter.GetItemCount() - 1)
+                if (!LayoutManager.UsesVirtualLayoutRange && i > Adapter.GetItemCount() - 1)
                 {
                     break;
                 }
@@ -175,6 +256,18 @@ namespace AlicizaX.UI
             viewHolderPositions.Clear();
         }
 
+        private void ResetViewHolderLookups()
+        {
+            viewHoldersByIndex.Clear();
+            foreach (var pair in viewHoldersByDataIndex)
+            {
+                ReleaseBucket(pair.Value);
+            }
+
+            viewHoldersByDataIndex.Clear();
+            viewHolderPositions.Clear();
+        }
+
         public Vector2 CalculateViewSize(int index)
         {
             Vector2 size = GetTemplate(Adapter.GetViewName(index)).SizeDelta;
@@ -199,7 +292,12 @@ namespace AlicizaX.UI
                 return 0;
             }
 
-            int start = Mathf.Max(0, LayoutManager.GetStartIndex());
+            int start = LayoutManager.GetStartIndex();
+            if (!LayoutManager.UsesVirtualLayoutRange)
+            {
+                start = Mathf.Max(0, start);
+            }
+
             int end = Mathf.Max(start, LayoutManager.GetEndIndex());
             int visibleCount = end - start + 1;
             int unit = Mathf.Max(1, LayoutManager.Unit);
@@ -266,6 +364,17 @@ namespace AlicizaX.UI
                 viewHoldersByDataIndex.Remove(viewHolder.DataIndex);
                 ReleaseBucket(bucket);
             }
+        }
+
+        private void AddViewHolderToDataBucket(int dataIndex, ViewHolder viewHolder)
+        {
+            if (!viewHoldersByDataIndex.TryGetValue(dataIndex, out ViewHolderBucket bucket))
+            {
+                bucket = AllocateBucket();
+                viewHoldersByDataIndex[dataIndex] = bucket;
+            }
+
+            bucket.Add(viewHolder);
         }
 
         private bool AddVisibleHolder(ViewHolder viewHolder)

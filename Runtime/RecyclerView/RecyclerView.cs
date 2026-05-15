@@ -134,6 +134,7 @@ namespace AlicizaX.UI
         private bool validationErrorLogged;
         private bool scrollbarVisibleState;
         private bool scrollbarInteractableState;
+        private ScrollbarEx scrollbarEx;
 
         /// <summary>
         /// 负责处理列表内导航逻辑的控制器。
@@ -142,6 +143,8 @@ namespace AlicizaX.UI
 
         private bool hasPendingFocusRecovery;
         private GameObject pendingFocusRecoveryTarget;
+        private bool hasPendingScrollbarRatio;
+        private float pendingScrollbarRatio;
 
         /// <summary>
         /// 是否存在等待滚动结束后执行的焦点请求。
@@ -487,6 +490,7 @@ namespace AlicizaX.UI
 
         private void LateUpdate()
         {
+            ProcessPendingScrollbarRatio();
             ProcessPendingFocusRecovery();
         }
 
@@ -502,7 +506,6 @@ namespace AlicizaX.UI
             if (scrollbar != null)
             {
                 scrollbar.onValueChanged.RemoveListener(OnScrollbarChanged);
-                ScrollbarEx scrollbarEx = scrollbar.gameObject.GetComponent<ScrollbarEx>();
                 if (scrollbarEx != null && scrollbarEx.OnDragEnd == OnScrollbarDragEnd)
                 {
                     scrollbarEx.OnDragEnd = null;
@@ -637,21 +640,21 @@ namespace AlicizaX.UI
             for (int i = 0; i < ViewProvider.VisibleCount; i++)
             {
                 ViewHolder holder = ViewProvider.GetVisibleViewHolder(i);
-                if (holder == null || holder.Index < 0)
+                if (holder == null || holder.DataIndex < 0)
                 {
                     continue;
                 }
 
                 if (useMax)
                 {
-                    if (holder.Index > best)
+                    if (holder.DataIndex > best)
                     {
-                        best = holder.Index;
+                        best = holder.DataIndex;
                     }
                 }
-                else if (holder.Index < best)
+                else if (holder.DataIndex < best)
                 {
-                    best = holder.Index;
+                    best = holder.DataIndex;
                 }
             }
 
@@ -683,7 +686,7 @@ namespace AlicizaX.UI
 
             scrollbar.onValueChanged.AddListener(OnScrollbarChanged);
 
-            var scrollbarEx = scrollbar.gameObject.GetComponent<ScrollbarEx>();
+            scrollbarEx = scrollbar.gameObject.GetComponent<ScrollbarEx>();
             if (scrollbarEx == null)
             {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
@@ -760,7 +763,8 @@ namespace AlicizaX.UI
         /// <returns>找到且该持有者仍处于可见范围内时返回 <see langword="true"/>；否则返回 <see langword="false"/>。</returns>
         internal bool TryGetVisibleViewHolder(int index, out ViewHolder viewHolder)
         {
-            viewHolder = ViewProvider.GetViewHolder(index);
+            int layoutIndex = layoutManager != null ? layoutManager.GetLayoutIndex(index) : index;
+            viewHolder = ViewProvider.GetViewHolder(layoutIndex);
             return viewHolder != null && layoutManager != null && layoutManager.IsVisible(viewHolder.Index);
         }
 
@@ -1063,8 +1067,14 @@ namespace AlicizaX.UI
                 return;
             }
 
-            startIndex = Mathf.Max(0, layoutManager.GetStartIndex());
+            startIndex = layoutManager.GetStartIndex();
             endIndex = layoutManager.GetEndIndex();
+            if (!layoutManager.UsesVirtualLayoutRange)
+            {
+                startIndex = Mathf.Max(0, startIndex);
+            }
+
+            endIndex = NormalizeRangeEnd(startIndex, endIndex, Mathf.Max(1, layoutManager.Unit));
             if (endIndex < startIndex)
             {
                 return;
@@ -1111,7 +1121,7 @@ namespace AlicizaX.UI
             scroller.Direction = direction;
             scroller.ViewSize = layoutManager.ViewportSize;
             scroller.ContentSize = layoutManager.ContentSize;
-            scroller.Position = Mathf.Clamp(scroller.Position, 0, scroller.MaxPosition);
+            scroller.Position = scroller.ClampPosition(scroller.Position);
             viewProvider?.PreparePool();
 
             UpdateScrollerState();
@@ -1141,7 +1151,8 @@ namespace AlicizaX.UI
         {
             if (scroll == ScrollMode.AlwaysDisable || scroller == null) return;
 
-            scroller.ScrollTo(layoutManager.IndexToPosition(index), smooth);
+            int layoutIndex = layoutManager.GetLayoutIndex(index);
+            scroller.ScrollTo(layoutManager.IndexToPosition(layoutIndex), smooth);
 
             if (!smooth)
             {
@@ -1197,11 +1208,12 @@ namespace AlicizaX.UI
                 return scroller.Position;
             }
 
-            float itemSize = layoutManager.GetItemLength(index);
+            int layoutIndex = layoutManager.GetLayoutIndex(index);
+            float itemSize = layoutManager.GetItemLength(layoutIndex);
             float viewportLength = direction == Direction.Vertical ? layoutManager.ViewportSize.y : layoutManager.ViewportSize.x;
 
             // 计算目标项的原始位置，不在此阶段做范围限制。
-            float itemPosition = layoutManager.GetItemStartPosition(index);
+            float itemPosition = layoutManager.GetItemStartPosition(layoutIndex);
 
             float targetPosition = alignment switch
             {
@@ -1215,7 +1227,7 @@ namespace AlicizaX.UI
             targetPosition += offset;
 
             // 将结果限制在可滚动范围内。
-            return Mathf.Clamp(targetPosition, 0, scroller.MaxPosition);
+            return scroller.ClampPosition(targetPosition);
         }
 
         /// <summary>
@@ -1257,11 +1269,19 @@ namespace AlicizaX.UI
         /// <param name="position">当前滚动位置。</param>
         private void OnScrollChanged(float position)
         {
+            if (layoutManager == null)
+            {
+                return;
+            }
+
             bool fullRefreshed = UpdateVisibleRange();
             layoutManager.UpdateLayout();
             UpdateScrollbarValue(position);
             if (!fullRefreshed)
+            {
                 layoutManager.DoItemAnimation();
+            }
+
             OnScrollValueChanged?.Invoke(position);
         }
 
@@ -1288,6 +1308,13 @@ namespace AlicizaX.UI
         /// <param name="ratio">滚动条归一化值。</param>
         private void OnScrollbarChanged(float ratio)
         {
+            if (scrollbarEx != null && scrollbarEx.IsDragging)
+            {
+                pendingScrollbarRatio = ratio;
+                hasPendingScrollbarRatio = true;
+                return;
+            }
+
             if (scroller != null)
             {
                 scroller.ScrollToRatio(ratio);
@@ -1301,6 +1328,7 @@ namespace AlicizaX.UI
         {
             if (scroller == null) return;
 
+            ProcessPendingScrollbarRatio();
             HandleScrollSettled();
         }
 
@@ -1321,6 +1349,20 @@ namespace AlicizaX.UI
             }
         }
 
+        private void ProcessPendingScrollbarRatio()
+        {
+            if (!hasPendingScrollbarRatio)
+            {
+                return;
+            }
+
+            hasPendingScrollbarRatio = false;
+            if (scroller != null)
+            {
+                scroller.ScrollToRatio(pendingScrollbarRatio);
+            }
+        }
+
         /// <summary>
         /// 根据当前滚动位置增量更新可见区间内的视图持有者。
         /// </summary>
@@ -1333,47 +1375,131 @@ namespace AlicizaX.UI
             }
 
             int itemCount = RecyclerViewAdapter.GetItemCount();
-            int safetyLimit = itemCount;
-
-            // 回收头部不可见的
-            while (safetyLimit-- > 0 && startIndex < endIndex && layoutManager.IsFullInvisibleStart(startIndex))
+            int unit = Mathf.Max(1, layoutManager.Unit);
+            bool virtualRange = layoutManager.UsesVirtualLayoutRange;
+            int targetStart = layoutManager.GetStartIndex();
+            int targetEnd = layoutManager.GetEndIndex();
+            if (!virtualRange)
             {
-                viewProvider.RemoveViewHolder(startIndex);
-                startIndex += layoutManager.Unit;
+                targetStart = Mathf.Clamp(targetStart, 0, itemCount - 1);
+                targetEnd = Mathf.Clamp(targetEnd, -1, itemCount - 1);
             }
 
-            // 回收尾部不可见的
-            while (safetyLimit > 0 && endIndex > startIndex && layoutManager.IsFullInvisibleEnd(endIndex))
-            {
-                viewProvider.RemoveViewHolder(endIndex);
-                endIndex -= layoutManager.Unit;
-                safetyLimit--;
-            }
+            targetEnd = NormalizeRangeEnd(targetStart, targetEnd, unit);
 
-            // 补充头部
-            while (safetyLimit > 0 && startIndex > 0 && layoutManager.IsFullVisibleStart(startIndex))
+            if (targetEnd < targetStart)
             {
-                startIndex -= layoutManager.Unit;
-                viewProvider.CreateViewHolder(startIndex);
-                safetyLimit--;
-            }
+                if (ViewProvider.VisibleCount > 0)
+                {
+                    ViewProvider.Clear();
+                }
 
-            // 补充尾部
-            while (safetyLimit > 0 && endIndex < itemCount - layoutManager.Unit && layoutManager.IsFullVisibleEnd(endIndex))
-            {
-                endIndex += layoutManager.Unit;
-                viewProvider.CreateViewHolder(endIndex);
-                safetyLimit--;
-            }
-
-            // 若增量更新后的区间与实际可见区不一致，则退化为全量刷新。
-            if (!layoutManager.IsVisible(startIndex) || !layoutManager.IsVisible(endIndex))
-            {
-                Refresh();
+                startIndex = 0;
+                endIndex = -1;
                 return true;
             }
 
+            if (startIndex == targetStart && endIndex == targetEnd)
+            {
+                return false;
+            }
+
+            if (ShouldRebuildVisibleRange(targetStart, targetEnd, unit))
+            {
+                RebuildVisibleRange(targetStart, targetEnd, unit);
+                return true;
+            }
+
+            while (startIndex < targetStart)
+            {
+                viewProvider.RemoveViewHolder(startIndex);
+                startIndex += unit;
+            }
+
+            while (endIndex > targetEnd)
+            {
+                viewProvider.RemoveViewHolder(endIndex);
+                endIndex -= unit;
+            }
+
+            while (startIndex > targetStart)
+            {
+                startIndex -= unit;
+                viewProvider.CreateViewHolder(startIndex);
+            }
+
+            while (endIndex < targetEnd)
+            {
+                endIndex += unit;
+                viewProvider.CreateViewHolder(endIndex);
+            }
+
+            startIndex = targetStart;
+            endIndex = targetEnd;
             return false;
+        }
+
+        private bool ShouldRebuildVisibleRange(int targetStart, int targetEnd, int unit)
+        {
+            if (endIndex < startIndex || ViewProvider.VisibleCount <= 0)
+            {
+                return true;
+            }
+
+            if (targetEnd < startIndex || targetStart > endIndex)
+            {
+                return true;
+            }
+
+            int currentGroups = CountRangeGroups(startIndex, endIndex, unit);
+            int removeGroups = CountRangeGroups(startIndex, Mathf.Min(endIndex, targetStart - unit), unit) +
+                               CountRangeGroups(Mathf.Max(startIndex, targetEnd + unit), endIndex, unit);
+            int createGroups = CountRangeGroups(targetStart, Mathf.Min(targetEnd, startIndex - unit), unit) +
+                               CountRangeGroups(Mathf.Max(targetStart, endIndex + unit), targetEnd, unit);
+
+            return removeGroups >= currentGroups || createGroups >= currentGroups;
+        }
+
+        private static int CountRangeGroups(int rangeStart, int rangeEnd, int unit)
+        {
+            if (rangeEnd < rangeStart)
+            {
+                return 0;
+            }
+
+            return ((rangeEnd - rangeStart) / unit) + 1;
+        }
+
+        private static int NormalizeRangeEnd(int rangeStart, int rangeEnd, int unit)
+        {
+            if (rangeEnd < rangeStart)
+            {
+                return rangeEnd;
+            }
+
+            return rangeStart + ((rangeEnd - rangeStart) / unit) * unit;
+        }
+
+        private void RebuildVisibleRange(int targetStart, int targetEnd, int unit)
+        {
+            if (ViewProvider.TryReuseVisibleRange(targetStart, targetEnd))
+            {
+                startIndex = targetStart;
+                endIndex = targetEnd;
+                layoutManager.DoItemAnimation();
+                return;
+            }
+
+            ViewProvider.Clear();
+            startIndex = targetStart;
+            endIndex = targetEnd;
+
+            for (int i = targetStart; i <= targetEnd; i += unit)
+            {
+                ViewProvider.CreateViewHolder(i);
+            }
+
+            layoutManager.DoItemAnimation();
         }
 
         /// <summary>
@@ -1606,9 +1732,8 @@ namespace AlicizaX.UI
 
             float position = GetScrollPosition();
             int index = layoutManager.GetSnapIndex(position);
-            index = Mathf.Clamp(index, 0, RecyclerViewAdapter.GetItemCount() - 1);
             float targetPosition = layoutManager.IndexToPosition(index);
-            UpdateCurrentIndex(index);
+            UpdateCurrentIndex(layoutManager.GetDataIndex(index));
             if (Mathf.Abs(targetPosition - position) <= 0.1f)
             {
                 return false;
@@ -1706,7 +1831,7 @@ namespace AlicizaX.UI
                     continue;
                 }
 
-                RecyclerViewAdapter.OnBindViewHolder(holder, holder.Index);
+                RecyclerViewAdapter.OnBindViewHolder(holder, holder.DataIndex);
                 reboundCount++;
             }
 

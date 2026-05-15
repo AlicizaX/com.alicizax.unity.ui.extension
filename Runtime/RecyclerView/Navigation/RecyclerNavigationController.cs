@@ -41,24 +41,24 @@ namespace AlicizaX.UI
 
             bool isLoopSource = itemCount != realCount;
             bool allowWrap = isLoopSource && options.Wrap;
-            int originalIndex = currentHolder.Index;
-            int currentIndex = currentHolder.Index;
-            int nextLayoutIndex = currentIndex;
+            int originalIndex = currentHolder.DataIndex;
+            int currentIndex = currentHolder.DataIndex;
+            int nextIndex = currentIndex;
             int stepAbs = Mathf.Abs(step);
             int maxAttempts = allowWrap ? (realCount + stepAbs - 1) / stepAbs : itemCount;
             ScrollAlignment alignment = ResolveAlignment(direction, options.Alignment);
             int visibleStepBuffer = ResolveVisibleStepBuffer(options);
             for (int attempt = 0; attempt < maxAttempts; attempt++)
             {
-                nextLayoutIndex += step;
+                nextIndex += step;
                 if (allowWrap)
                 {
-                    nextLayoutIndex = WrapIndex(nextLayoutIndex, realCount);
+                    nextIndex = WrapIndex(nextIndex, realCount);
                 }
                 else
                 {
-                    nextLayoutIndex = Mathf.Clamp(nextLayoutIndex, 0, itemCount - 1);
-                    if (nextLayoutIndex == currentIndex)
+                    nextIndex = Mathf.Clamp(nextIndex, 0, itemCount - 1);
+                    if (nextIndex == currentIndex)
                     {
                         break;
                     }
@@ -66,20 +66,20 @@ namespace AlicizaX.UI
 
                 bool preserveViewportPosition = ShouldPreserveViewportPosition(
                     direction,
-                    nextLayoutIndex,
+                    nextIndex,
                     step,
                     itemCount,
                     allowWrap,
                     visibleStepBuffer);
 
                 if (preserveViewportPosition
-                    ? TryFocusIndexPreservingViewportPosition(nextLayoutIndex, originalIndex, options.SmoothScroll, alignment)
-                    : recyclerView.TryFocusIndex(nextLayoutIndex, options.SmoothScroll, alignment))
+                    ? TryFocusIndexPreservingViewportPosition(nextIndex, originalIndex, options.SmoothScroll, alignment)
+                    : recyclerView.TryFocusIndex(nextIndex, options.SmoothScroll, alignment))
                 {
                     return true;
                 }
 
-                currentIndex = nextLayoutIndex;
+                currentIndex = nextIndex;
             }
 
             recyclerView.TryFocusIndex(originalIndex, false, options.Alignment);
@@ -189,9 +189,11 @@ namespace AlicizaX.UI
 
             Scroller scroller = recyclerView.Scroller;
             float currentPosition = scroller.Position;
-            float referencePosition = recyclerView.LayoutManager.GetItemStartPosition(referenceIndex);
-            float targetPosition = recyclerView.LayoutManager.GetItemStartPosition(index);
-            float desiredPosition = Mathf.Clamp(currentPosition + (targetPosition - referencePosition), 0f, scroller.MaxPosition);
+            int referenceLayoutIndex = recyclerView.LayoutManager.GetLayoutIndex(referenceIndex);
+            int targetLayoutIndex = recyclerView.LayoutManager.GetLayoutIndex(index);
+            float referencePosition = recyclerView.LayoutManager.GetItemStartPosition(referenceLayoutIndex);
+            float targetPosition = recyclerView.LayoutManager.GetItemStartPosition(targetLayoutIndex);
+            float desiredPosition = scroller.ClampPosition(currentPosition + (targetPosition - referencePosition));
 
             if (!Mathf.Approximately(currentPosition, desiredPosition))
             {
@@ -240,7 +242,7 @@ namespace AlicizaX.UI
             for (int i = 0; i < viewProvider.VisibleCount; i++)
             {
                 ViewHolder holder = viewProvider.GetVisibleViewHolder(i);
-                if (holder == null || holder.Index < 0)
+                if (holder == null || holder.DataIndex < 0)
                 {
                     continue;
                 }
@@ -250,14 +252,14 @@ namespace AlicizaX.UI
                     continue;
                 }
 
-                if (holder.Index < minIndex)
+                if (holder.DataIndex < minIndex)
                 {
-                    minIndex = holder.Index;
+                    minIndex = holder.DataIndex;
                 }
 
-                if (holder.Index > maxIndex)
+                if (holder.DataIndex > maxIndex)
                 {
-                    maxIndex = holder.Index;
+                    maxIndex = holder.DataIndex;
                 }
             }
 

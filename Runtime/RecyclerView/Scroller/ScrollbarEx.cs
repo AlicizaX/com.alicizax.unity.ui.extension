@@ -12,6 +12,8 @@ namespace AlicizaX.UI
 
         public Action OnDragEnd;
 
+        public bool IsDragging => dragging;
+
         private bool dragging;
         private bool hovering;
         private float targetHandleScale = 1f;

@@ -63,6 +63,14 @@ namespace AlicizaX.UI
             interactionCacheReady = true;
         }
 
+        internal void SetPooledVisible(bool visible)
+        {
+            if (gameObject.activeSelf != visible)
+            {
+                gameObject.SetActive(visible);
+            }
+        }
+
         internal bool TryGetFocusTarget(out GameObject target)
         {
             if (!SupportsNavigationFocus())

@@ -18,7 +18,8 @@ namespace AlicizaX.UI
             Idle,
             Smooth,
             Duration,
-            Inertia
+            Inertia,
+            Wheel
         }
 
         protected float position;
@@ -92,6 +93,7 @@ namespace AlicizaX.UI
         private float motionSpeed;
         private float inertiaVelocity;
         private float inertiaDistance;
+        private float wheelTargetPosition;
         private bool notifyMoveStoppedOnComplete;
 
         public float MaxPosition => direction == Direction.Vertical ? Mathf.Max(contentSize.y - viewSize.y, 0) : Mathf.Max(contentSize.x - viewSize.x, 0);
@@ -144,6 +146,9 @@ namespace AlicizaX.UI
                     break;
                 case MotionState.Inertia:
                     TickInertia(deltaTime);
+                    break;
+                case MotionState.Wheel:
+                    TickWheel(deltaTime);
                     break;
                 default:
                     motionState = MotionState.Idle;
@@ -237,15 +242,28 @@ namespace AlicizaX.UI
                 return;
             }
 
-            StopMovement();
+            if (motionState != MotionState.Wheel)
+            {
+                StopMovement();
+                wheelTargetPosition = position;
+            }
 
             float rate = GetScrollRate() * wheelSpeed;
             Vector2 normalizedDelta = NormalizeScrollDelta(eventData.scrollDelta);
             velocity = direction == Direction.Vertical ? -normalizedDelta.y * rate : normalizedDelta.x * rate;
-            position += velocity;
+            wheelTargetPosition = ClampPosition(wheelTargetPosition + velocity);
 
+            if (Mathf.Approximately(wheelTargetPosition, position))
+            {
+                return;
+            }
+
+            float distance = wheelTargetPosition - position;
+            position = ClampPosition(position + distance * 0.85f);
             OnValueChanged?.Invoke(position);
-            StartReleaseMotion();
+
+            motionState = MotionState.Wheel;
+            notifyMoveStoppedOnComplete = true;
         }
 
         internal virtual float GetDelta(PointerEventData eventData)
@@ -277,7 +295,7 @@ namespace AlicizaX.UI
             return value;
         }
 
-        protected float GetScrollRate()
+        protected virtual float GetScrollRate()
         {
             float rate = 1f;
             float viewLength = ViewLength;
@@ -340,6 +358,7 @@ namespace AlicizaX.UI
         protected void StopMovement()
         {
             motionState = MotionState.Idle;
+            wheelTargetPosition = position;
             notifyMoveStoppedOnComplete = false;
         }
 
@@ -399,23 +418,14 @@ namespace AlicizaX.UI
             float t = Mathf.Clamp01(motionElapsed / motionDuration);
             float offset = (float)EaseUtil.EaseOutCirc(t) * inertiaDistance;
             float nextPosition = motionStartPosition + offset;
-            float maxPosition = MaxPosition;
+            float clampedPosition = ClampPosition(nextPosition);
 
-            if (nextPosition < 0f)
+            if (!Mathf.Approximately(clampedPosition, nextPosition))
             {
-                position = 0f;
+                position = clampedPosition;
                 OnValueChanged?.Invoke(position);
                 StopMovement();
-                StartPositionMotion(0f, 7f, true);
-                return;
-            }
-
-            if (nextPosition > maxPosition)
-            {
-                position = maxPosition;
-                OnValueChanged?.Invoke(position);
-                StopMovement();
-                StartPositionMotion(maxPosition, 7f, true);
+                StartPositionMotion(clampedPosition, 7f, true);
                 return;
             }
 
@@ -428,10 +438,32 @@ namespace AlicizaX.UI
             }
         }
 
+        private void TickWheel(float deltaTime)
+        {
+            float target = ClampPosition(wheelTargetPosition);
+            if (Mathf.Abs(target - position) <= 0.1f)
+            {
+                position = target;
+                OnValueChanged?.Invoke(position);
+                CompleteMotion(true);
+                return;
+            }
+
+            float speed = 15f;
+            position = Mathf.Lerp(position, target, 1f - Mathf.Exp(-speed * deltaTime));
+            OnValueChanged?.Invoke(position);
+        }
+
+        public virtual float ClampPosition(float value)
+        {
+            return Mathf.Clamp(value, 0f, MaxPosition);
+        }
+
         private void CompleteMotion(bool notifyStopped)
         {
             motionState = MotionState.Idle;
             velocity = 0f;
+            wheelTargetPosition = position;
             bool shouldNotify = notifyStopped || notifyMoveStoppedOnComplete;
             notifyMoveStoppedOnComplete = false;
 

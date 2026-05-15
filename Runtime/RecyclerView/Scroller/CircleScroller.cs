@@ -59,5 +59,15 @@ namespace AlicizaX.UI
         {
             return false;
         }
+
+        public override float ClampPosition(float value)
+        {
+            return value;
+        }
+
+        protected override float GetScrollRate()
+        {
+            return 1f;
+        }
     }
 }

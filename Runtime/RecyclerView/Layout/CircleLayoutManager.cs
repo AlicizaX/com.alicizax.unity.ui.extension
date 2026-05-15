@@ -9,9 +9,13 @@ namespace AlicizaX.UI
         private  CircleDirection circleDirection= CircleDirection.Positive;
         [SerializeField]
         private float intervalAngle=0;
+        [SerializeField]
+        private int maxVisibleItemCount = 32;
 
         private float radius;
         private float initalAngle;
+
+        public override bool UsesVirtualLayoutRange => true;
 
         public CircleLayoutManager()
         {
@@ -64,23 +68,29 @@ namespace AlicizaX.UI
 
         public override int GetStartIndex()
         {
-            return 0;
+            GetVisibleWindow(out int start, out _);
+            return start;
         }
 
         public override int GetEndIndex()
         {
-            return adapter == null || adapter.GetItemCount() <= 0 ? -1 : adapter.GetItemCount() - 1;
+            GetVisibleWindow(out _, out int end);
+            return end;
         }
 
-        public override bool IsFullVisibleStart(int index) => false;
+        public override bool IsFullVisibleStart(int index) => index > GetStartIndex();
 
-        public override bool IsFullInvisibleStart(int index) => false;
+        public override bool IsFullInvisibleStart(int index) => index < GetStartIndex();
 
-        public override bool IsFullVisibleEnd(int index) => false;
+        public override bool IsFullVisibleEnd(int index) => index < GetEndIndex();
 
-        public override bool IsFullInvisibleEnd(int index) => false;
+        public override bool IsFullInvisibleEnd(int index) => index > GetEndIndex();
 
-        public override bool IsVisible(int index) => true;
+        public override bool IsVisible(int index)
+        {
+            GetVisibleWindow(out int start, out int end);
+            return index >= start && index <= end;
+        }
 
         public override float IndexToPosition(int index)
         {
@@ -90,8 +100,7 @@ namespace AlicizaX.UI
             }
 
             float position = index * intervalAngle;
-
-            return -position;
+            return circleDirection == CircleDirection.Positive ? -position : position;
         }
 
         public override int PositionToIndex(float position)
@@ -102,7 +111,7 @@ namespace AlicizaX.UI
             }
 
             int index = Mathf.RoundToInt(position / intervalAngle);
-            return -index;
+            return circleDirection == CircleDirection.Positive ? -index : index;
         }
 
         public override float GetItemStartPosition(int index)
@@ -122,7 +131,24 @@ namespace AlicizaX.UI
                 return 0;
             }
 
-            return Mathf.Clamp(PositionToIndex(position), 0, adapter.GetItemCount() - 1);
+            return PositionToIndex(position);
+        }
+
+        public override int GetDataIndex(int layoutIndex)
+        {
+            int itemCount = adapter != null ? adapter.GetItemCount() : 0;
+            return itemCount > 0 ? WrapIndex(layoutIndex, itemCount) : layoutIndex;
+        }
+
+        public override int GetLayoutIndex(int dataIndex)
+        {
+            int itemCount = adapter != null ? adapter.GetItemCount() : 0;
+            if (itemCount <= 0)
+            {
+                return dataIndex;
+            }
+
+            return GetNearestWrappedLayoutIndex(WrapIndex(dataIndex, itemCount), PositionToIndex(ScrollPosition), itemCount);
         }
 
         public override void DoItemAnimation()
@@ -136,7 +162,7 @@ namespace AlicizaX.UI
                     continue;
                 }
 
-                float angle = i * intervalAngle + initalAngle;
+                float angle = viewHolder.Index * intervalAngle + initalAngle;
                 angle = circleDirection == CircleDirection.Positive ? angle + ScrollPosition : angle - ScrollPosition;
                 float delta = (angle - initalAngle) % 360;
                 delta = delta < 0 ? delta + 360 : delta;
@@ -146,6 +172,32 @@ namespace AlicizaX.UI
 
                 viewHolder.RectTransform.localScale = Vector3.one * scale;
             }
+        }
+
+        private void GetVisibleWindow(out int start, out int end)
+        {
+            int itemCount = adapter != null ? adapter.GetItemCount() : 0;
+            if (itemCount <= 0)
+            {
+                start = 0;
+                end = -1;
+                return;
+            }
+
+            int visibleCount = GetVisibleItemCount(itemCount);
+            int centerIndex = PositionToIndex(ScrollPosition);
+            start = centerIndex - visibleCount / 2;
+            end = start + visibleCount - 1;
+        }
+
+        private int GetVisibleItemCount(int itemCount)
+        {
+            if (itemCount <= 0)
+            {
+                return 0;
+            }
+
+            return Mathf.Min(itemCount, Mathf.Max(1, maxVisibleItemCount));
         }
     }
 

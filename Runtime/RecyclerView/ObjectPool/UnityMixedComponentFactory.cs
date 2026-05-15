@@ -65,6 +65,12 @@ namespace AlicizaX.UI
 
         public void Reset(string typeName, T obj)
         {
+            if (obj is ViewHolder viewHolder)
+            {
+                viewHolder.SetPooledVisible(false);
+                return;
+            }
+
             obj.gameObject.SetActive(false);
         }
 
