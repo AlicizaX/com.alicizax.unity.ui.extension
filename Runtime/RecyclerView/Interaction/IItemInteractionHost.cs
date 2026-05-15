@@ -18,12 +18,6 @@ namespace AlicizaX.UI
 
         void HandleMove(AxisEventData eventData);
 
-        void HandleBeginDrag(PointerEventData eventData);
-
-        void HandleDrag(PointerEventData eventData);
-
-        void HandleEndDrag(PointerEventData eventData);
-
         void HandleSubmit(BaseEventData eventData);
 
         void HandleCancel(BaseEventData eventData);

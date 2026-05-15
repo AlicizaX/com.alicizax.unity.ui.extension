@@ -502,32 +502,6 @@ namespace AlicizaX.UI
             }
         }
 
-        /// <summary>
-        /// 由交互代理转发开始拖拽事件。
-        /// </summary>
-        /// <param name="eventData">拖拽事件数据。</param>
-        void IItemInteractionHost.HandleBeginDrag(PointerEventData eventData)
-        {
-            OnBeginDrag(eventData);
-        }
-
-        /// <summary>
-        /// 由交互代理转发拖拽事件。
-        /// </summary>
-        /// <param name="eventData">拖拽事件数据。</param>
-        void IItemInteractionHost.HandleDrag(PointerEventData eventData)
-        {
-            OnDrag(eventData);
-        }
-
-        /// <summary>
-        /// 由交互代理转发结束拖拽事件。
-        /// </summary>
-        /// <param name="eventData">拖拽事件数据。</param>
-        void IItemInteractionHost.HandleEndDrag(PointerEventData eventData)
-        {
-            OnEndDrag(eventData);
-        }
 
         /// <summary>
         /// 由交互代理转发提交事件。
@@ -598,29 +572,6 @@ namespace AlicizaX.UI
             return false;
         }
 
-        /// <summary>
-        /// 当当前项开始被拖拽时调用。
-        /// </summary>
-        /// <param name="eventData">拖拽事件数据。</param>
-        protected virtual void OnBeginDrag(PointerEventData eventData)
-        {
-        }
-
-        /// <summary>
-        /// 当当前项发生拖拽时调用。
-        /// </summary>
-        /// <param name="eventData">拖拽事件数据。</param>
-        protected virtual void OnDrag(PointerEventData eventData)
-        {
-        }
-
-        /// <summary>
-        /// 当当前项结束拖拽时调用。
-        /// </summary>
-        /// <param name="eventData">拖拽事件数据。</param>
-        protected virtual void OnEndDrag(PointerEventData eventData)
-        {
-        }
 
         /// <summary>
         /// 当当前项收到提交操作时调用。

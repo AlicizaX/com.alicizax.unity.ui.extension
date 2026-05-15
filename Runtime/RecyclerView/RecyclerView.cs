@@ -51,6 +51,11 @@ namespace AlicizaX.UI
         #region 序列化字段 - 滚动设置
 
         /// <summary>
+        /// 滚动到边界时的运动类型：Elastic（弹性回弹）或 Clamped（硬性限制）。
+        /// </summary>
+        [HideInInspector] [SerializeField] private MovementType movementType = MovementType.Elastic;
+
+        /// <summary>
         /// 是否启用滚动能力。
         /// </summary>
         [HideInInspector] [SerializeField] private ScrollMode scroll = ScrollMode.AlwaysEnable;
@@ -59,6 +64,17 @@ namespace AlicizaX.UI
         /// 是否在停止滚动后自动吸附到最近项。
         /// </summary>
         [HideInInspector] [SerializeField] private bool snap;
+
+        /// <summary>
+        /// 是否启用惯性滑动。
+        /// </summary>
+        [HideInInspector] [SerializeField] private bool inertia = true;
+
+        /// <summary>
+        /// 惯性减速率，值越小减速越快。
+        /// </summary>
+        [HideInInspector] [SerializeField, Range(0.001f, 0.999f)]
+        private float decelerationRate = 0.135f;
 
         /// <summary>
         /// 平滑滚动时的速度系数。
@@ -222,6 +238,24 @@ namespace AlicizaX.UI
         #region 公共属性 - 滚动设置
 
         /// <summary>
+        /// 获取或设置滚动到边界时的运动类型。
+        /// </summary>
+        public MovementType MovementType
+        {
+            get => movementType;
+            set
+            {
+                if (movementType == value) return;
+                movementType = value;
+
+                if (scroller != null)
+                {
+                    scroller.MovementType = movementType;
+                }
+            }
+        }
+
+        /// <summary>
         /// 获取或设置是否启用滚动能力。
         /// </summary>
         public ScrollMode Scroll
@@ -260,6 +294,42 @@ namespace AlicizaX.UI
                 }
 
                 // 如需在启用吸附后立即校正位置，可在此触发最近项吸附。
+            }
+        }
+
+        /// <summary>
+        /// 获取或设置是否启用惯性滑动。
+        /// </summary>
+        public bool Inertia
+        {
+            get => inertia;
+            set
+            {
+                if (inertia == value) return;
+                inertia = value;
+
+                if (scroller != null)
+                {
+                    scroller.Inertia = inertia;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 获取或设置惯性减速率。值越小减速越快，范围 [0.001, 0.999]。
+        /// </summary>
+        public float DecelerationRate
+        {
+            get => decelerationRate;
+            set
+            {
+                if (Mathf.Approximately(decelerationRate, value)) return;
+                decelerationRate = value;
+
+                if (scroller != null)
+                {
+                    scroller.DecelerationRate = decelerationRate;
+                }
             }
         }
 
@@ -671,6 +741,9 @@ namespace AlicizaX.UI
             scroller.ScrollSpeed = scrollSpeed;
             scroller.WheelSpeed = wheelSpeed;
             scroller.Snap = snap;
+            scroller.MovementType = movementType;
+            scroller.Inertia = inertia;
+            scroller.DecelerationRate = decelerationRate;
             scroller.OnValueChanged.AddListener(OnScrollChanged);
             scroller.OnMoveStoped.AddListener(OnMoveStoped);
             scroller.OnDragging.AddListener(OnScrollerDraggingChanged);

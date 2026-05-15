@@ -6,11 +6,6 @@ namespace AlicizaX.UI
     [DisallowMultipleComponent]
     public class Scroller : MonoBehaviour, IScroller, IBeginDragHandler, IEndDragHandler, IDragHandler, IScrollHandler
     {
-        private const float MaxInertiaVelocity = 60f;
-        private const float MinInertiaDuration = 0.06f;
-        private const float MaxInertiaDuration = 0.24f;
-        private const float MinInertiaDistanceFactor = 1.5f;
-        private const float MaxInertiaDistanceFactor = 6f;
         private const float LegacyMouseWheelStep = 120f;
 
         protected enum MotionState
@@ -81,6 +76,30 @@ namespace AlicizaX.UI
             set => snap = value;
         }
 
+        protected MovementType movementType = MovementType.Elastic;
+
+        public MovementType MovementType
+        {
+            get => movementType;
+            set => movementType = value;
+        }
+
+        protected bool inertia = true;
+
+        public bool Inertia
+        {
+            get => inertia;
+            set => inertia = value;
+        }
+
+        protected float decelerationRate = 0.135f;
+
+        public float DecelerationRate
+        {
+            get => decelerationRate;
+            set => decelerationRate = Mathf.Clamp(value, 0.001f, 0.999f);
+        }
+
         protected ScrollerEvent scrollerEvent = new();
         protected MoveStopEvent moveStopEvent = new();
         protected DraggingEvent draggingEvent = new();
@@ -92,9 +111,10 @@ namespace AlicizaX.UI
         private float motionDuration;
         private float motionSpeed;
         private float inertiaVelocity;
-        private float inertiaDistance;
         private float wheelTargetPosition;
         private bool notifyMoveStoppedOnComplete;
+        private float dragStopTime;
+        private float trackedVelocity;
 
         public float MaxPosition => direction == Direction.Vertical ? Mathf.Max(contentSize.y - viewSize.y, 0) : Mathf.Max(contentSize.x - viewSize.x, 0);
 
@@ -232,6 +252,18 @@ namespace AlicizaX.UI
             velocity = GetDelta(eventData);
             position += velocity;
 
+            float dt = Time.deltaTime;
+            if (dt > 0f)
+            {
+                trackedVelocity = velocity / dt;
+            }
+            dragStopTime = Time.time;
+
+            if (movementType == MovementType.Clamped)
+            {
+                position = ClampPosition(position);
+            }
+
             OnValueChanged?.Invoke(position);
         }
 
@@ -306,19 +338,29 @@ namespace AlicizaX.UI
 
             if (position < 0)
             {
-                rate = Mathf.Max(0, 1 - (Mathf.Abs(position) / viewLength));
+                rate = movementType == MovementType.Clamped
+                    ? 0f
+                    : Mathf.Max(0, 1 - (Mathf.Abs(position) / viewLength));
             }
             else if (position > MaxPosition)
             {
-                rate = Mathf.Max(0, 1 - (Mathf.Abs(position - MaxPosition) / viewLength));
+                rate = movementType == MovementType.Clamped
+                    ? 0f
+                    : Mathf.Max(0, 1 - (Mathf.Abs(position - MaxPosition) / viewLength));
             }
 
             return rate;
         }
 
-        protected virtual void Inertia()
+        protected virtual void StartInertia()
         {
-            if (Mathf.Abs(velocity) <= 0.1f)
+            if ((Time.time - dragStopTime) > 0.03f)
+            {
+                CompleteMotion(true);
+                return;
+            }
+
+            if (Mathf.Abs(trackedVelocity) <= 50f)
             {
                 CompleteMotion(true);
                 return;
@@ -326,18 +368,19 @@ namespace AlicizaX.UI
 
             StopMovement();
             motionState = MotionState.Inertia;
-            motionStartPosition = position;
-            motionElapsed = 0f;
-            inertiaVelocity = Mathf.Clamp(velocity, -MaxInertiaVelocity, MaxInertiaVelocity);
-            float normalizedVelocity = Mathf.Clamp01(Mathf.Abs(inertiaVelocity) / MaxInertiaVelocity);
-            motionDuration = Mathf.Lerp(MinInertiaDuration, MaxInertiaDuration, normalizedVelocity);
-            float distanceFactor = Mathf.Lerp(MinInertiaDistanceFactor, MaxInertiaDistanceFactor, normalizedVelocity);
-            inertiaDistance = inertiaVelocity * distanceFactor;
+            float maxVelocity = ViewLength * 5f;
+            inertiaVelocity = Mathf.Clamp(trackedVelocity, -maxVelocity, maxVelocity);
             notifyMoveStoppedOnComplete = true;
         }
 
         protected virtual bool StartElasticMotion()
         {
+            if (movementType == MovementType.Clamped)
+            {
+                position = ClampPosition(position);
+                return false;
+            }
+
             if (position < 0)
             {
                 StopMovement();
@@ -369,7 +412,13 @@ namespace AlicizaX.UI
                 return;
             }
 
-            Inertia();
+            if (!inertia)
+            {
+                CompleteMotion(true);
+                return;
+            }
+
+            StartInertia();
         }
 
         private void StartPositionMotion(float targetPosition, float speed, bool notifyStopped)
@@ -414,28 +463,73 @@ namespace AlicizaX.UI
 
         private void TickInertia(float deltaTime)
         {
-            motionElapsed += deltaTime;
-            float t = Mathf.Clamp01(motionElapsed / motionDuration);
-            float offset = (float)EaseUtil.EaseOutCirc(t) * inertiaDistance;
-            float nextPosition = motionStartPosition + offset;
-            float clampedPosition = ClampPosition(nextPosition);
+            inertiaVelocity *= Mathf.Pow(decelerationRate, deltaTime);
 
-            if (!Mathf.Approximately(clampedPosition, nextPosition))
+            if (Mathf.Abs(inertiaVelocity) < 1f)
             {
-                position = clampedPosition;
-                OnValueChanged?.Invoke(position);
-                StopMovement();
-                StartPositionMotion(clampedPosition, 7f, true);
+                if (movementType == MovementType.Elastic && !IsInBounds(position))
+                {
+                    StartElasticReturn();
+                }
+                else
+                {
+                    CompleteMotion(true);
+                }
                 return;
             }
 
-            position = nextPosition;
-            OnValueChanged?.Invoke(position);
+            float nextPosition = position + inertiaVelocity * deltaTime;
 
-            if (t >= 1f)
+            if (movementType == MovementType.Elastic)
             {
-                CompleteMotion(true);
+                float overscroll = GetOverscroll(nextPosition);
+                if (Mathf.Abs(overscroll) > 0f)
+                {
+                    float damping = 1f - Mathf.Clamp01(Mathf.Abs(overscroll) / ViewLength);
+                    inertiaVelocity *= damping;
+
+                    if (Mathf.Abs(inertiaVelocity) < 50f)
+                    {
+                        position = nextPosition;
+                        OnValueChanged?.Invoke(position);
+                        StartElasticReturn();
+                        return;
+                    }
+                }
+
+                position = nextPosition;
+                OnValueChanged?.Invoke(position);
             }
+            else
+            {
+                float clampedPosition = ClampPosition(nextPosition);
+                position = clampedPosition;
+                OnValueChanged?.Invoke(position);
+
+                if (!Mathf.Approximately(clampedPosition, nextPosition))
+                {
+                    CompleteMotion(true);
+                }
+            }
+        }
+
+        private float GetOverscroll(float pos)
+        {
+            if (pos < 0f) return pos;
+            if (pos > MaxPosition) return pos - MaxPosition;
+            return 0f;
+        }
+
+        private bool IsInBounds(float pos)
+        {
+            return pos >= 0f && pos <= MaxPosition;
+        }
+
+        private void StartElasticReturn()
+        {
+            float target = position < 0f ? 0f : MaxPosition;
+            StopMovement();
+            StartPositionMotion(target, 7f, true);
         }
 
         private void TickWheel(float deltaTime)

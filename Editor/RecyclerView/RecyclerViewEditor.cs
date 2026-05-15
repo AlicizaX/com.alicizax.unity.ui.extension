@@ -56,6 +56,9 @@ namespace AlicizaX.UI.Editor
         private SerializedProperty _spacing;
         private SerializedProperty _padding;
         private SerializedProperty _snap;
+        private SerializedProperty _movementType;
+        private SerializedProperty _inertia;
+        private SerializedProperty _decelerationRate;
         private SerializedProperty _scrollSpeed;
         private SerializedProperty _wheelSpeed;
 
@@ -124,6 +127,9 @@ namespace AlicizaX.UI.Editor
             _spacing = serializedObject.FindProperty("spacing");
             _padding = serializedObject.FindProperty("padding");
             _snap = serializedObject.FindProperty("snap");
+            _movementType = serializedObject.FindProperty("movementType");
+            _inertia = serializedObject.FindProperty("inertia");
+            _decelerationRate = serializedObject.FindProperty("decelerationRate");
             _scrollSpeed = serializedObject.FindProperty("scrollSpeed");
             _wheelSpeed = serializedObject.FindProperty("wheelSpeed");
         }
@@ -340,6 +346,13 @@ namespace AlicizaX.UI.Editor
 
                 DrawScrollBarSettings(isPlaying);
                 DrawPropertyRow(_snap);
+                DrawPropertyRow(_movementType, "Movement Type");
+                DrawPropertyRow(_inertia);
+
+                using (new EditorGUI.DisabledScope(!_inertia.boolValue))
+                {
+                    DrawPropertyRow(_decelerationRate, "Deceleration Rate");
+                }
             }
             EditorGUILayout.EndVertical();
         }

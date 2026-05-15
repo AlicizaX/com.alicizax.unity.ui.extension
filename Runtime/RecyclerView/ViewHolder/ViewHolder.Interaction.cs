@@ -6,23 +6,15 @@ namespace AlicizaX.UI
 {
     public abstract partial class ViewHolder :
         IPointerClickHandler,
-        IBeginDragHandler,
-        IDragHandler,
-        IEndDragHandler,
         ISubmitHandler,
         ICancelHandler
     {
-        private const float MinClickSuppressDragPixels = 10f;
-
         [SerializeField]
         private ItemInteractionFlags itemInteractionFlags = ItemInteractionFlags.None;
 
         private IItemInteractionHost interactionHost;
         private ItemInteractionFlags activeInteractionFlags;
         private Scroller parentScroller;
-        private Vector2 dragStartPosition;
-        private float dragStartScrollPosition;
-        private bool suppressNextClick;
 #if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
         private UnityEngine.UI.UXNavigationScope registeredNavigationScope;
 #endif
@@ -38,7 +30,6 @@ namespace AlicizaX.UI
             interactionHost = host;
             activeInteractionFlags = host?.InteractionFlags ?? itemInteractionFlags;
             parentScroller = RecyclerView != null ? RecyclerView.Scroller : null;
-            ResetClickSuppressionTracking();
             EnsureFocusAnchor();
             RegisterNavigationScopeIfNeeded();
 
@@ -50,7 +41,6 @@ namespace AlicizaX.UI
             interactionHost = null;
             activeInteractionFlags = ItemInteractionFlags.None;
             parentScroller = null;
-            ResetClickSuppressionTracking();
             UnregisterNavigationScope();
 
             InvalidateNavigationScope();
@@ -58,13 +48,6 @@ namespace AlicizaX.UI
 
         public void OnPointerClick(PointerEventData eventData)
         {
-            if (suppressNextClick)
-            {
-                suppressNextClick = false;
-                eventData.Use();
-                return;
-            }
-
             if ((activeInteractionFlags & ItemInteractionFlags.PointerClick) != 0)
             {
                 interactionHost?.HandlePointerClick(eventData);
@@ -125,99 +108,6 @@ namespace AlicizaX.UI
             }
         }
 
-        public void OnBeginDrag(PointerEventData eventData)
-        {
-            BeginClickSuppressionTracking(eventData);
-
-            if ((activeInteractionFlags & ItemInteractionFlags.BeginDrag) != 0)
-            {
-                interactionHost?.HandleBeginDrag(eventData);
-                return;
-            }
-
-            parentScroller?.OnBeginDrag(eventData);
-        }
-
-        public void OnDrag(PointerEventData eventData)
-        {
-            if ((activeInteractionFlags & ItemInteractionFlags.Drag) != 0)
-            {
-                interactionHost?.HandleDrag(eventData);
-                UpdateClickSuppression(eventData);
-                return;
-            }
-
-            parentScroller?.OnDrag(eventData);
-            UpdateClickSuppression(eventData);
-        }
-
-        public void OnEndDrag(PointerEventData eventData)
-        {
-            if ((activeInteractionFlags & ItemInteractionFlags.EndDrag) != 0)
-            {
-                interactionHost?.HandleEndDrag(eventData);
-                return;
-            }
-
-            parentScroller?.OnEndDrag(eventData);
-        }
-
-        private void BeginClickSuppressionTracking(PointerEventData eventData)
-        {
-            dragStartPosition = eventData.pressPosition;
-            dragStartScrollPosition = parentScroller != null ? parentScroller.Position : 0f;
-            suppressNextClick = false;
-        }
-
-        private void ResetClickSuppressionTracking()
-        {
-            dragStartPosition = Vector2.zero;
-            dragStartScrollPosition = 0f;
-            suppressNextClick = false;
-        }
-
-        private void UpdateClickSuppression(PointerEventData eventData)
-        {
-            if (suppressNextClick)
-            {
-                return;
-            }
-
-            float threshold = GetClickSuppressDragThreshold();
-            if (GetMainAxisDragDistance(eventData) >= threshold ||
-                GetScrollDistance() >= threshold)
-            {
-                suppressNextClick = true;
-            }
-        }
-
-        private float GetMainAxisDragDistance(PointerEventData eventData)
-        {
-            Vector2 offset = eventData.position - dragStartPosition;
-            if (RecyclerView == null || RecyclerView.Direction == Direction.Vertical)
-            {
-                return Mathf.Abs(offset.y);
-            }
-
-            if (RecyclerView.Direction == Direction.Horizontal)
-            {
-                return Mathf.Abs(offset.x);
-            }
-
-            return offset.magnitude;
-        }
-
-        private float GetScrollDistance()
-        {
-            return parentScroller != null ? Mathf.Abs(parentScroller.Position - dragStartScrollPosition) : 0f;
-        }
-
-        private static float GetClickSuppressDragThreshold()
-        {
-            EventSystem eventSystem = EventSystem.current;
-            int pixelDragThreshold = eventSystem != null ? eventSystem.pixelDragThreshold : 0;
-            return Mathf.Max(pixelDragThreshold, MinClickSuppressDragPixels);
-        }
 
         public void OnSubmit(BaseEventData eventData)
         {
