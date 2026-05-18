@@ -395,7 +395,7 @@ namespace UnityEditor.UI
             switch (currentTransition)
             {
                 case Selectable.Transition.ColorTint:
-                    CheckAndSetColorDefaults(colorBlock, targetGraphic);
+                    CheckAndSetColorDefaults(colorBlock);
                     Rect colorRect = new Rect(position.x, y, position.width, EditorGUI.GetPropertyHeight(colorBlock));
 
                     if (EditorGUILayout.BeginFadeGroup(m_ChildShowColorTint.faded))
@@ -407,7 +407,7 @@ namespace UnityEditor.UI
                     break;
 
                 case Selectable.Transition.SpriteSwap:
-                    CheckAndSetColorDefaults(colorBlock, targetGraphic);
+                    CheckAndSetColorDefaults(colorBlock);
                     Rect spriteRect = new Rect(position.x, y, position.width, EditorGUI.GetPropertyHeight(spriteState));
 
                     if (EditorGUILayout.BeginFadeGroup(m_ChildShowSpriteTrasition.faded))
@@ -473,7 +473,7 @@ namespace UnityEditor.UI
             return height;
         }
 
-        protected void CheckAndSetColorDefaults(SerializedProperty colorBlock, SerializedProperty targetGraphic)
+        protected void CheckAndSetColorDefaults(SerializedProperty colorBlock)
         {
             if (colorBlock == null) return;
 
@@ -508,20 +508,6 @@ namespace UnityEditor.UI
             {
                 if (m_ColorMultiplier != null) m_ColorMultiplier.floatValue = 1f;
                 if (fadeDuration != null) fadeDuration.floatValue = 0.1f;
-            }
-
-            var graphic = targetGraphic != null ? targetGraphic.objectReferenceValue as Graphic : null;
-            if (graphic != null)
-            {
-                if (!EditorApplication.isPlaying)
-                {
-                    SerializedProperty normalColorProp = colorBlock.FindPropertyRelative("m_NormalColor");
-                    if (normalColorProp != null)
-                    {
-                        Color color = normalColorProp.colorValue;
-                        graphic.canvasRenderer.SetColor(color);
-                    }
-                }
             }
         }
 
