@@ -6,7 +6,6 @@ namespace AlicizaX.UI
     public class ObjectPool<T> : IObjectPool<T> where T : class
     {
         private readonly Stack<T> entries;
-        private readonly HashSet<T> activeEntries;
         private readonly int initialSize;
         private int maxSize;
         protected readonly IObjectFactory<T> factory;
@@ -38,7 +37,6 @@ namespace AlicizaX.UI
             }
 
             entries = new Stack<T>(maxSize);
-            activeEntries = new HashSet<T>();
             Warm(initialSize);
         }
 
@@ -75,7 +73,6 @@ namespace AlicizaX.UI
                 {
                     hitCount++;
                     activeCount++;
-                    activeEntries.Add(value);
                     if (activeCount > peakActive)
                     {
                         peakActive = activeCount;
@@ -88,7 +85,6 @@ namespace AlicizaX.UI
             value = factory.Create();
             totalCount++;
             activeCount++;
-            activeEntries.Add(value);
             if (activeCount > peakActive)
             {
                 peakActive = activeCount;
@@ -103,7 +99,6 @@ namespace AlicizaX.UI
 
             if (!factory.Validate(obj))
             {
-                activeEntries.Remove(obj);
                 factory.Destroy(obj);
                 destroyCount++;
                 if (totalCount > 0)
@@ -121,7 +116,6 @@ namespace AlicizaX.UI
 
             if (disposed)
             {
-                activeEntries.Remove(obj);
                 factory.Destroy(obj);
                 destroyCount++;
                 if (totalCount > 0)
@@ -141,7 +135,6 @@ namespace AlicizaX.UI
             {
                 activeCount--;
             }
-            activeEntries.Remove(obj);
 
             if (entries.Count < maxSize)
             {
@@ -179,7 +172,6 @@ namespace AlicizaX.UI
                 }
             }
 
-            activeCount = activeEntries.Count;
             totalCount = activeCount;
         }
 

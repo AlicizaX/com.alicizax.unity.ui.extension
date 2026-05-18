@@ -11,6 +11,7 @@ namespace AlicizaX.UI
         private ViewHolderBucket[] bucketPool = new ViewHolderBucket[8];
         private int visibleHead;
         private int visibleCount;
+        private int visibleMask = 7;
         private int bucketPoolCount;
         private readonly Dictionary<int, ViewHolder> viewHoldersByIndex = new();
         private readonly Dictionary<int, ViewHolderBucket> viewHoldersByDataIndex = new();
@@ -307,15 +308,22 @@ namespace AlicizaX.UI
 
         protected void PrepareVisibleStorage(int warmCount)
         {
-            int capacity = Mathf.Max(Mathf.Max(1, LayoutManager != null ? LayoutManager.Unit : 1), warmCount);
-            if (visibleHolders.Length < capacity)
+            int required = Mathf.Max(Mathf.Max(1, LayoutManager != null ? LayoutManager.Unit : 1), warmCount);
+            if (visibleHolders.Length < required)
             {
+                int capacity = visibleHolders.Length;
+                while (capacity < required)
+                {
+                    capacity <<= 1;
+                }
+
                 visibleHolders = new ViewHolder[capacity];
+                visibleMask = capacity - 1;
             }
 
-            if (removeBuffer.Length < capacity)
+            if (removeBuffer.Length < required)
             {
-                removeBuffer = new ViewHolder[capacity];
+                removeBuffer = new ViewHolder[required];
             }
         }
 
@@ -414,7 +422,7 @@ namespace AlicizaX.UI
 
         private int GetVisibleSlot(int index)
         {
-            return (visibleHead + index) % visibleHolders.Length;
+            return (visibleHead + index) & visibleMask;
         }
 
         private void EnsureVisibleHolderCapacity(int required)
@@ -437,6 +445,7 @@ namespace AlicizaX.UI
             }
 
             visibleHolders = next;
+            visibleMask = capacity - 1;
             visibleHead = 0;
         }
 

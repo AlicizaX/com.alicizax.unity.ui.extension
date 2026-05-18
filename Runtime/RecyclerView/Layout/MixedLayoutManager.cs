@@ -1,5 +1,6 @@
 using System;
 using System.Buffers;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace AlicizaX.UI
@@ -14,11 +15,15 @@ namespace AlicizaX.UI
         private int cachedItemCount = -1;
         private bool positionCacheDirty = true;
 
+        private Dictionary<string, float> templateLengthByName;
+        private Direction cachedTemplateDirection;
+
         public MixedLayoutManager() { }
 
-        ~MixedLayoutManager()
+        public override void Release()
         {
             ReturnRentedArrays();
+            templateLengthByName?.Clear();
         }
 
         private void ReturnRentedArrays()
@@ -217,10 +222,39 @@ namespace AlicizaX.UI
             RebuildPositionCache(itemCount);
         }
 
+        private float ResolveTemplateLength(string viewName)
+        {
+            if (templateLengthByName != null && cachedTemplateDirection == direction &&
+                templateLengthByName.TryGetValue(viewName, out float cached))
+            {
+                return cached;
+            }
+
+            if (templateLengthByName == null)
+            {
+                templateLengthByName = new Dictionary<string, float>(4, StringComparer.Ordinal);
+            }
+
+            if (cachedTemplateDirection != direction)
+            {
+                templateLengthByName.Clear();
+                cachedTemplateDirection = direction;
+            }
+
+            ViewHolder template = viewProvider.GetTemplate(viewName);
+            if (template == null)
+            {
+                return 0f;
+            }
+
+            Vector2 size = template.SizeDelta;
+            float length = direction == Direction.Vertical ? size.y : size.x;
+            templateLengthByName[viewName] = length;
+            return length;
+        }
+
         private void RebuildPositionCache(int itemCount)
         {
-            // ArrayPool.Rent 返回的数组长度 >= 请求长度，rentedArraySize 记录实际容量。
-            // 仅当 itemCount 超出当前容量时才归还并重新租用，缩容时复用原数组。
             if (itemCount > rentedArraySize)
             {
                 ReturnRentedArrays();
@@ -234,12 +268,20 @@ namespace AlicizaX.UI
             }
 
             firstItemSize = itemCount > 0 ? viewProvider.CalculateViewSize(0) : Vector2.zero;
+
+            float spacingValue = direction == Direction.Vertical ? spacing.y : spacing.x;
             float position = 0f;
+            int lastIndex = itemCount - 1;
+
             for (int i = 0; i < itemCount; i++)
             {
+                string viewName = adapter.GetViewName(i);
+                float templateLength = ResolveTemplateLength(viewName);
+                float len = i < lastIndex ? templateLength + spacingValue : templateLength;
+
                 itemPositions[i] = position;
-                itemLengths[i] = GetLength(i, itemCount);
-                position += itemLengths[i];
+                itemLengths[i] = len;
+                position += len;
             }
 
             cachedItemCount = itemCount;
@@ -310,17 +352,6 @@ namespace AlicizaX.UI
         private float GetItemEndPosition(int index)
         {
             return itemPositions[index] + itemLengths[index];
-        }
-
-        private float GetLength(int index, int itemCount)
-        {
-            Vector2 size = viewProvider.CalculateViewSize(index);
-            if (index < itemCount - 1)
-            {
-                size += spacing;
-            }
-
-            return direction == Direction.Vertical ? size.y : size.x;
         }
     }
 }

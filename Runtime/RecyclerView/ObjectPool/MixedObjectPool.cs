@@ -8,7 +8,6 @@ namespace AlicizaX.UI
         private const int DEFAULT_MAX_SIZE_PER_TYPE = 10;
 
         private readonly Dictionary<string, Stack<T>> entries;
-        private readonly Dictionary<T, string> activeEntries;
         private readonly Dictionary<string, int> typeSize;
         private readonly Dictionary<string, int> activeCountByType;
         private readonly Dictionary<string, int> peakActiveByType;
@@ -35,7 +34,6 @@ namespace AlicizaX.UI
             }
 
             entries = new Dictionary<string, Stack<T>>(StringComparer.Ordinal);
-            activeEntries = new Dictionary<T, string>();
             typeSize = new Dictionary<string, int>(StringComparer.Ordinal);
             activeCountByType = new Dictionary<string, int>(StringComparer.Ordinal);
             peakActiveByType = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -53,14 +51,12 @@ namespace AlicizaX.UI
             {
                 T obj = stack.Pop();
                 hitCount++;
-                activeEntries[obj] = typeName;
                 TrackAllocate(typeName);
                 return obj;
             }
 
             missCount++;
             T created = factory.Create(typeName);
-            activeEntries[created] = typeName;
             TrackAllocate(typeName);
             return created;
         }
@@ -71,7 +67,6 @@ namespace AlicizaX.UI
 
             if (!factory.Validate(typeName, obj))
             {
-                activeEntries.Remove(obj);
                 factory.Destroy(typeName, obj);
                 destroyCount++;
                 TrackFree(typeName);
@@ -80,7 +75,6 @@ namespace AlicizaX.UI
 
             if (disposed)
             {
-                activeEntries.Remove(obj);
                 factory.Destroy(typeName, obj);
                 destroyCount++;
                 TrackFree(typeName);
@@ -91,7 +85,6 @@ namespace AlicizaX.UI
             Stack<T> stack = GetOrCreateStack(typeName);
 
             factory.Reset(typeName, obj);
-            activeEntries.Remove(obj);
             TrackFree(typeName);
 
             if (stack.Count >= maxSize)

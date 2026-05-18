@@ -47,11 +47,17 @@ namespace AlicizaX.UI
             set => viewProvider = value;
         }
 
+        protected RectTransform cachedViewportRect;
+
         protected RecyclerView recyclerView;
         public virtual RecyclerView RecyclerView
         {
             get => recyclerView;
-            set => recyclerView = value;
+            set
+            {
+                recyclerView = value;
+                cachedViewportRect = value != null ? value.GetComponent<RectTransform>() : null;
+            }
         }
 
         protected Direction direction;
@@ -96,9 +102,15 @@ namespace AlicizaX.UI
 
         public LayoutManager() { }
 
+        public virtual void Release() { }
+
         public void SetContentSize()
         {
-            viewportSize = recyclerView.GetComponent<RectTransform>().rect.size;
+            if (cachedViewportRect != null)
+            {
+                viewportSize = cachedViewportRect.rect.size;
+            }
+
             contentSize = CalculateContentSize();
             contentOffset = CalculateContentOffset();
             viewportOffset = CalculateViewportOffset();

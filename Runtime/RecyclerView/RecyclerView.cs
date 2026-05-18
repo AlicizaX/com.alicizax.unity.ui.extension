@@ -151,6 +151,7 @@ namespace AlicizaX.UI
         private bool scrollbarVisibleState;
         private bool scrollbarInteractableState;
         private ScrollbarEx scrollbarEx;
+        private RectTransform cachedViewportRect;
 
         /// <summary>
         /// 负责处理列表内导航逻辑的控制器。
@@ -556,6 +557,8 @@ namespace AlicizaX.UI
             InitializeTemplates();
             ConfigureScroller();
             ConfigureScrollbar();
+
+            cachedViewportRect = content != null ? content.parent as RectTransform : transform as RectTransform;
         }
 
         private void LateUpdate()
@@ -581,6 +584,8 @@ namespace AlicizaX.UI
                     scrollbarEx.OnDragEnd = null;
                 }
             }
+
+            layoutManager?.Release();
 
             hasPendingFocusRecovery = false;
             pendingFocusRecoveryTarget = null;
@@ -959,12 +964,13 @@ namespace AlicizaX.UI
                 return false;
             }
 
-            RectTransform viewport = content != null ? content.parent as RectTransform : null;
-            if (viewport == null)
+            if (layoutManager != null && direction is Direction.Vertical or Direction.Horizontal)
             {
-                viewport = transform as RectTransform;
+                return layoutManager.IsFullVisibleStart(holder.Index) &&
+                       layoutManager.IsFullVisibleEnd(holder.Index);
             }
 
+            RectTransform viewport = cachedViewportRect;
             if (viewport == null)
             {
                 return true;
@@ -974,17 +980,10 @@ namespace AlicizaX.UI
             Rect viewportRect = viewport.rect;
             const float epsilon = 0.01f;
 
-            return direction switch
-            {
-                Direction.Vertical => bounds.min.y >= viewportRect.yMin - epsilon &&
-                                      bounds.max.y <= viewportRect.yMax + epsilon,
-                Direction.Horizontal => bounds.min.x >= viewportRect.xMin - epsilon &&
-                                        bounds.max.x <= viewportRect.xMax + epsilon,
-                _ => bounds.min.x >= viewportRect.xMin - epsilon &&
-                     bounds.max.x <= viewportRect.xMax + epsilon &&
-                     bounds.min.y >= viewportRect.yMin - epsilon &&
-                     bounds.max.y <= viewportRect.yMax + epsilon
-            };
+            return bounds.min.x >= viewportRect.xMin - epsilon &&
+                   bounds.max.x <= viewportRect.xMax + epsilon &&
+                   bounds.min.y >= viewportRect.yMin - epsilon &&
+                   bounds.max.y <= viewportRect.yMax + epsilon;
         }
 
         /// <summary>
