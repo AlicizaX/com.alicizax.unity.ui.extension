@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace AlicizaX.UI
 {
-    public class LoopAdapter<T> : Adapter<T> where T : ISimpleViewData
+    public class LoopAdapter<T> : Adapter<T> where T : class, ISimpleViewData
     {
         public LoopAdapter(RecyclerView recyclerView) : base(recyclerView)
         {

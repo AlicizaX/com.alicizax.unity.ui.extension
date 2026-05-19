@@ -94,9 +94,12 @@ MonoBehaviour:
   alignment: 1
   spacing: {x: 0, y: 0}
   padding: {x: 0, y: 0}
+  movementType: 0
   scroll: 1
   snap: 0
-  scrollSpeed: 1
+  inertia: 1
+  decelerationRate: 0.135
+  scrollSpeed: 0.5
   wheelSpeed: 5
   templates: []
   content: {fileID: 7227160576944475251}

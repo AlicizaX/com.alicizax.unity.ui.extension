@@ -8,8 +8,6 @@ namespace AlicizaX.UI
     /// </summary>
     public static class UGListExtensions
     {
-        public static bool DebugScrollTo { get; set; } = false;
-
         /// <summary>
         /// 将列表滚动到指定索引，并按给定对齐方式定位。
         /// </summary>
@@ -29,7 +27,7 @@ namespace AlicizaX.UI
             bool smooth = false,
             float duration = 0.3f)
             where TAdapter : Adapter<TData>
-            where TData : ISimpleViewData
+            where TData : class, ISimpleViewData
         {
             if (ugList?.RecyclerView == null)
             {
@@ -57,7 +55,7 @@ namespace AlicizaX.UI
             bool smooth = false,
             float duration = 0.3f)
             where TAdapter : Adapter<TData>
-            where TData : ISimpleViewData
+            where TData : class, ISimpleViewData
         {
             ugList.ScrollToStart(index, offset, smooth, duration);
         }
@@ -79,7 +77,7 @@ namespace AlicizaX.UI
             bool smooth = false,
             float duration = 0.3f)
             where TAdapter : Adapter<TData>
-            where TData : ISimpleViewData
+            where TData : class, ISimpleViewData
         {
             ugList.ScrollToCenter(index, offset, smooth, duration);
         }
@@ -101,7 +99,7 @@ namespace AlicizaX.UI
             bool smooth = false,
             float duration = 0.3f)
             where TAdapter : Adapter<TData>
-            where TData : ISimpleViewData
+            where TData : class, ISimpleViewData
         {
             ugList.ScrollToEnd(index, offset, smooth, duration);
         }

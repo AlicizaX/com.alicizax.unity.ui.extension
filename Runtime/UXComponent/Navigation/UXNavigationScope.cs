@@ -1,28 +1,29 @@
 ﻿#if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
-using AlicizaX.UI.Runtime;
-using UnityEngine.EventSystems;
-
-namespace UnityEngine.UI
+namespace AlicizaX.UI.UXNavigation
 {
+    using UnityEngine;
+    using UnityEngine.UI;
+    using AlicizaX.UI.Runtime;
+
     [DisallowMultipleComponent]
     [AddComponentMenu("UI/UX Navigation Scope")]
-    public sealed class UXNavigationScope : MonoBehaviour, ISelectHandler
+    public sealed class UXNavigationScope : MonoBehaviour
     {
         private const int InvalidIndex = -1;
-        private const int DefaultRuntimeSelectableCapacity = 16;
-
         [SerializeField, Header("默认选中控件")] private Selectable _defaultSelectable;
-        [SerializeField, Header("所属 UIHolder")] private UIHolderObjectBase _holder;
+
+        [SerializeField, Header("所属 UIHolder")]
+        private UIHolderObjectBase _holder;
+
         [SerializeField, Header("编辑器烘焙导航控件")] private Selectable[] _bakedSelectables = System.Array.Empty<Selectable>();
-        [SerializeField, Header("动态控件容量")] private int _runtimeSelectableCapacity = DefaultRuntimeSelectableCapacity;
         [SerializeField, Header("记住上次选中")] private bool _rememberLastSelection = true;
-        [SerializeField, Header("手柄/键盘模式必须有选中")] private bool _requireSelectionWhenGamepad = true;
+
         [SerializeField, Header("阻断下层导航域")] private bool _blockLowerScopes = true;
-        [SerializeField, Header("自动选中首个可用控件")] private bool _autoSelectFirstAvailable = true;
 
         private Selectable[] _runtimeSelectables;
         private Navigation[] _bakedBaselineNavigation;
         private Navigation[] _runtimeBaselineNavigation;
+        private bool[] _runtimeSelectableRememberable;
         private Canvas _cachedCanvas;
         private Selectable _lastSelected;
         private bool _navigationSuppressed;
@@ -47,6 +48,7 @@ namespace UnityEngine.UI
         public bool NavigationSuppressed => _navigationSuppressed;
         internal int BakedSelectableCount => _bakedSelectables != null ? _bakedSelectables.Length : 0;
         public int RuntimeSelectableCount => _runtimeSelectableCount;
+        public int RuntimeSelectableCapacity => _runtimeSelectables != null ? Mathf.Max(_runtimeSelectables.Length, BakedSelectableCount) : BakedSelectableCount;
 
         public Selectable DefaultSelectable
         {
@@ -60,7 +62,6 @@ namespace UnityEngine.UI
         }
 
         public bool RememberLastSelection => _rememberLastSelection;
-        public bool RequireSelectionWhenGamepad => _requireSelectionWhenGamepad;
         public bool BlockLowerScopes => _blockLowerScopes;
 
         internal bool IsNavigationSkipped
@@ -82,7 +83,7 @@ namespace UnityEngine.UI
             Transform current = transform;
             while (current != null)
             {
-                if (current.TryGetComponent(out UXNavigationSkip skip))
+                if (current.TryGetComponent(out UXNavigationSkip skip) && skip.isActiveAndEnabled)
                 {
                     return true;
                 }
@@ -144,17 +145,7 @@ namespace UnityEngine.UI
             MarkRuntimeStateDirty();
         }
 
-#if UNITY_EDITOR
-        private void OnValidate()
-        {
-            if (_runtimeSelectableCapacity < 0)
-            {
-                _runtimeSelectableCapacity = 0;
-            }
-        }
-#endif
-
-        public bool RegisterSelectable(Selectable selectable)
+        public bool RegisterSelectable(Selectable selectable, bool rememberable = false)
         {
             if (selectable == null || !Owns(selectable.gameObject) || ContainsSelectable(selectable))
             {
@@ -170,11 +161,13 @@ namespace UnityEngine.UI
             int index = _runtimeSelectableCount++;
             _runtimeSelectables[index] = selectable;
             _runtimeBaselineNavigation[index] = selectable.navigation;
+            _runtimeSelectableRememberable[index] = rememberable;
             MarkSelectableSetDirty();
             if (_navigationSuppressed)
             {
                 SetSelectableSuppressed(selectable);
             }
+
             MarkRuntimeStateDirty();
             return true;
         }
@@ -200,18 +193,22 @@ namespace UnityEngine.UI
             int last = --_runtimeSelectableCount;
             Selectable movedSelectable = _runtimeSelectables[last];
             Navigation movedNavigation = _runtimeBaselineNavigation[last];
+            bool movedRememberable = _runtimeSelectableRememberable[last];
             _runtimeSelectables[last] = null;
             _runtimeBaselineNavigation[last] = default(Navigation);
+            _runtimeSelectableRememberable[last] = false;
             if (index != last)
             {
                 _runtimeSelectables[index] = movedSelectable;
                 _runtimeBaselineNavigation[index] = movedNavigation;
+                _runtimeSelectableRememberable[index] = movedRememberable;
             }
 
             if (_lastSelected == selectable)
             {
                 _lastSelected = null;
             }
+
             MarkSelectableSetDirty();
             MarkRuntimeStateDirty();
             return true;
@@ -231,13 +228,8 @@ namespace UnityEngine.UI
             {
                 RefreshBaselineWhenUnsuppressed();
             }
-            MarkRuntimeStateDirty();
-        }
 
-        public void OnSelect(BaseEventData eventData)
-        {
-            GameObject selectedObject = eventData != null ? eventData.selectedObject : null;
-            UXNavigationRuntime.NotifySelection(selectedObject);
+            MarkRuntimeStateDirty();
         }
 
         internal void InvalidateSkipCacheOnly()
@@ -326,7 +318,7 @@ namespace UnityEngine.UI
                 return _defaultSelectable;
             }
 
-            return _autoSelectFirstAvailable ? _firstAvailableSelectable : null;
+            return _firstAvailableSelectable;
         }
 
         internal bool HasAvailableSelectable()
@@ -337,7 +329,7 @@ namespace UnityEngine.UI
                 return true;
             }
 
-            return _autoSelectFirstAvailable && _availableSelectableCount > 0;
+            return _availableSelectableCount > 0;
         }
 
         internal void RecordSelection(GameObject selectedObject)
@@ -348,7 +340,7 @@ namespace UnityEngine.UI
             }
 
             Selectable selectable = GetSelectableFromObject(selectedObject);
-            if (IsSelectableValid(selectable))
+            if (IsSelectableValid(selectable) && IsSelectableRememberable(selectable))
             {
                 _lastSelected = selectable;
             }
@@ -378,14 +370,29 @@ namespace UnityEngine.UI
 
         private void EnsureRuntimeBuffers(bool preserveRuntimeSelectables)
         {
-            int capacity = _runtimeSelectableCapacity > 0 ? _runtimeSelectableCapacity : 0;
+            int capacity = _runtimeSelectables != null ? Mathf.Max(_runtimeSelectables.Length, BakedSelectableCount) : BakedSelectableCount;
+            ResizeRuntimeBuffers(capacity, preserveRuntimeSelectables);
+
+            int bakedCount = BakedSelectableCount;
+            if (_bakedBaselineNavigation == null || _bakedBaselineNavigation.Length != bakedCount)
+            {
+                _bakedBaselineNavigation = bakedCount > 0 ? new Navigation[bakedCount] : System.Array.Empty<Navigation>();
+                CreateBakedHash(bakedCount);
+                MarkSelectableSetDirty();
+            }
+        }
+
+        private void ResizeRuntimeBuffers(int capacity, bool preserveRuntimeSelectables)
+        {
             if (_runtimeSelectables == null || _runtimeSelectables.Length != capacity)
             {
                 Selectable[] previousSelectables = _runtimeSelectables;
                 Navigation[] previousBaseline = _runtimeBaselineNavigation;
+                bool[] previousRememberable = _runtimeSelectableRememberable;
                 int previousCount = _runtimeSelectableCount;
                 _runtimeSelectables = capacity > 0 ? new Selectable[capacity] : System.Array.Empty<Selectable>();
                 _runtimeBaselineNavigation = capacity > 0 ? new Navigation[capacity] : System.Array.Empty<Navigation>();
+                _runtimeSelectableRememberable = capacity > 0 ? new bool[capacity] : System.Array.Empty<bool>();
                 CreateRuntimeHash(capacity);
                 _runtimeSelectableCount = 0;
 
@@ -404,18 +411,11 @@ namespace UnityEngine.UI
                         _runtimeBaselineNavigation[_runtimeSelectableCount] = previousBaseline != null && i < previousBaseline.Length
                             ? previousBaseline[i]
                             : selectable.navigation;
+                        _runtimeSelectableRememberable[_runtimeSelectableCount] = previousRememberable != null && i < previousRememberable.Length && previousRememberable[i];
                         _runtimeSelectableCount++;
                     }
                 }
 
-                MarkSelectableSetDirty();
-            }
-
-            int bakedCount = BakedSelectableCount;
-            if (_bakedBaselineNavigation == null || _bakedBaselineNavigation.Length != bakedCount)
-            {
-                _bakedBaselineNavigation = bakedCount > 0 ? new Navigation[bakedCount] : System.Array.Empty<Navigation>();
-                CreateBakedHash(bakedCount);
                 MarkSelectableSetDirty();
             }
         }
@@ -430,7 +430,7 @@ namespace UnityEngine.UI
             int capacity = _runtimeSelectables != null ? _runtimeSelectables.Length : 0;
             if (capacity <= 0)
             {
-                capacity = _runtimeSelectableCapacity > 0 ? _runtimeSelectableCapacity : DefaultRuntimeSelectableCapacity;
+                capacity = Mathf.Max(BakedSelectableCount, 1);
             }
 
             while (capacity < required)
@@ -438,8 +438,7 @@ namespace UnityEngine.UI
                 capacity <<= 1;
             }
 
-            _runtimeSelectableCapacity = capacity;
-            EnsureRuntimeBuffers(true);
+            ResizeRuntimeBuffers(capacity, true);
         }
 
         private void CaptureBaselineBeforeSuppress()
@@ -533,6 +532,27 @@ namespace UnityEngine.UI
             return IsSelectableUsable(selectable) && ContainsSelectable(selectable);
         }
 
+        private bool IsSelectableRememberable(Selectable selectable)
+        {
+            if (selectable == null)
+            {
+                return false;
+            }
+
+            RefreshSelectableHashesIfDirty();
+            int instanceId = selectable.GetInstanceID();
+            if (FindHashIndex(_bakedSelectableHashIds, _bakedSelectableHashIndices, instanceId) >= 0)
+            {
+                return true;
+            }
+
+            int runtimeIndex = FindHashIndex(_runtimeSelectableHashIds, _runtimeSelectableHashIndices, instanceId);
+            return runtimeIndex >= 0
+                   && _runtimeSelectableRememberable != null
+                   && runtimeIndex < _runtimeSelectableRememberable.Length
+                   && _runtimeSelectableRememberable[runtimeIndex];
+        }
+
         private void MarkSelectableSetDirty()
         {
             _selectableSetDirty = true;
@@ -587,6 +607,7 @@ namespace UnityEngine.UI
                 _availableSelectableCount++;
             }
         }
+
         private void RefreshSelectableHashesIfDirty()
         {
             if (!_selectableSetDirty)
@@ -756,21 +777,6 @@ namespace UnityEngine.UI
                 runtime.MarkStateDirty();
             }
         }
-
-        private static void ReportCapacityExceeded()
-        {
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-            Debug.LogError("UXNavigationScope runtime selectable capacity exceeded.");
-#endif
-        }
     }
 }
 #endif
-
-
-
-
-
-
-
-

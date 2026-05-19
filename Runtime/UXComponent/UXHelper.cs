@@ -1,29 +1,15 @@
 using UnityEngine;
+using AudioType = AlicizaX.Audio.Runtime.AudioType;
 
-public static class UXComponentExtensionsHelper
+internal static class UXComponentExtensionsHelper
 {
-    internal static IUXLocalizationHelper LocalizationHelper;
-    internal static IUXAudioHelper AudioHelper;
-
-    public static void SetLocalizationHelper(IUXLocalizationHelper helper)
+    public static string GetString(string key)
     {
-        LocalizationHelper = helper;
+        return GameApp.Localization.GetString(key);
     }
 
-    public static void SetAudioHelper(IUXAudioHelper helper)
+    public static void PlayAudio(AudioClip clip)
     {
-        AudioHelper = helper;
+        GameApp.Audio.Play(AudioType.UISound, clip);
     }
-}
-
-public interface IUXLocalizationHelper
-{
-    public string GetString(string key);
-}
-
-
-public interface IUXAudioHelper
-{
-    void PlayAudio(AudioClip clip);
-    void PlayAudio(string clipName);
 }

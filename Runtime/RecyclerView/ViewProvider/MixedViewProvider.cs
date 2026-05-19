@@ -1,17 +1,13 @@
 using System;
-using System.Collections.Generic;
 using Cysharp.Text;
 
 namespace AlicizaX.UI
 {
-    public class MixedViewProvider : ViewProvider
+    internal class MixedViewProvider : ViewProvider
     {
         private readonly MixedObjectPool<ViewHolder> objectPool;
-        private readonly Dictionary<string, int> templateIdsByName = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, ViewHolder> templatesByName = new(StringComparer.Ordinal);
-        private readonly ViewHolder[] cachedTemplates;
-        private readonly string[] templateNames;
-        private readonly int[] warmCountsByType;
+        private readonly int[] warmCountsByTemplateId;
+        private bool templateErrorLogged;
 
         public override string PoolStats
         {
@@ -27,73 +23,55 @@ namespace AlicizaX.UI
 
         public MixedViewProvider(RecyclerView recyclerView, ViewHolder[] templates) : base(recyclerView, templates)
         {
-            int count = 0;
-            for (int i = 0; i < templates.Length; i++)
-            {
-                if (templates[i] != null)
-                {
-                    count++;
-                }
-            }
-
-            cachedTemplates = new ViewHolder[count];
-            templateNames = new string[count];
-            warmCountsByType = new int[count];
-
-            int typeId = 0;
-            for (int i = 0; i < templates.Length; i++)
-            {
-                ViewHolder template = templates[i];
-                if (template == null)
-                {
-                    continue;
-                }
-
-                string templateName = template.GetType().Name;
-                templateIdsByName[templateName] = typeId;
-                templatesByName[templateName] = template;
-                cachedTemplates[typeId] = template;
-                templateNames[typeId] = templateName;
-                typeId++;
-            }
-
-            UnityMixedComponentFactory<ViewHolder> factory = new(templatesByName, recyclerView.Content);
+            warmCountsByTemplateId = new int[templates != null ? templates.Length : 0];
+            UnityMixedComponentFactory<ViewHolder> factory = new(templates, recyclerView.Content);
             objectPool = new MixedObjectPool<ViewHolder>(factory);
         }
 
-        public override ViewHolder GetTemplate(string viewName)
+        public override ViewHolder GetTemplate(int templateId)
         {
-            if (!templatesByName.TryGetValue(viewName, out ViewHolder template))
+            if (!IsValidTemplateId(templateId))
             {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                Log.Error("ViewProvider template was not found.");
+                LogTemplateError("ViewProvider template id is invalid.");
 #endif
                 return null;
             }
 
-            return template;
+            return templates[templateId];
         }
 
-        public override ViewHolder Allocate(string viewName)
+        internal override ViewHolder Allocate(int templateId)
         {
-            var viewHolder = objectPool.Allocate(viewName);
+            if (!IsValidTemplateId(templateId))
+            {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                LogTemplateError("ViewProvider template id is invalid.");
+#endif
+                return null;
+            }
+
+            var viewHolder = objectPool.Allocate(templateId);
+            if (viewHolder == null)
+            {
+                return null;
+            }
+
             viewHolder.SetPooledVisible(true);
             return viewHolder;
         }
 
-        public override void Free(string viewName, ViewHolder viewHolder)
+        internal override void Free(int templateId, ViewHolder viewHolder)
         {
-            objectPool.Free(viewName, viewHolder);
+            objectPool.Free(templateId, viewHolder);
         }
 
-        public override void Reset()
+        internal override void Reset()
         {
             Clear();
-            (Adapter as IItemRenderCacheOwner)?.ReleaseAllItemRenders();
-            objectPool.ClearInactive();
         }
 
-        public override void PreparePool()
+        internal override void PreparePool()
         {
             int warmCount = GetRecommendedWarmCount();
             if (warmCount <= 0)
@@ -101,7 +79,7 @@ namespace AlicizaX.UI
                 return;
             }
 
-            PrepareBucketPool(warmCount);
+            PrepareDataBucketStorage(warmCount);
 
             int itemCount = GetItemCount();
             int start = LayoutManager.GetStartIndex();
@@ -114,32 +92,63 @@ namespace AlicizaX.UI
                 ? start + warmCount - 1
                 : Math.Min(itemCount - 1, start + warmCount - 1);
 
-            Array.Clear(warmCountsByType, 0, warmCountsByType.Length);
+            Array.Clear(warmCountsByTemplateId, 0, warmCountsByTemplateId.Length);
             for (int index = start; index <= end; index++)
             {
                 int dataIndex = LayoutManager.GetDataIndex(index);
-                string viewName = Adapter.GetViewName(dataIndex);
-                if (string.IsNullOrEmpty(viewName) || !templateIdsByName.TryGetValue(viewName, out int typeId))
+                int templateId = Adapter.GetTemplateId(dataIndex);
+                if (!IsValidTemplateId(templateId))
                 {
                     continue;
                 }
 
-                warmCountsByType[typeId]++;
+                warmCountsByTemplateId[templateId]++;
             }
 
-            for (int typeId = 0; typeId < warmCountsByType.Length; typeId++)
+            for (int templateId = 0; templateId < warmCountsByTemplateId.Length; templateId++)
             {
-                int count = warmCountsByType[typeId];
+                int count = warmCountsByTemplateId[templateId];
                 if (count <= 0)
                 {
                     continue;
                 }
 
-                string typeName = templateNames[typeId];
                 int targetCount = count + Math.Max(1, LayoutManager.Unit);
-                objectPool.EnsureCapacity(typeName, targetCount);
-                objectPool.Warm(typeName, targetCount);
+                objectPool.EnsureCapacity(templateId, targetCount);
+                objectPool.Warm(templateId, targetCount);
             }
         }
+
+        internal override void TrimInactive()
+        {
+            objectPool.TrimInactive();
+        }
+
+        internal override void Dispose()
+        {
+            Clear();
+            objectPool.Dispose();
+        }
+
+        private bool IsValidTemplateId(int templateId)
+        {
+            return templateId >= 0 &&
+                   templates != null &&
+                   templateId < templates.Length &&
+                   templates[templateId] != null;
+        }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        private void LogTemplateError(string message)
+        {
+            if (templateErrorLogged)
+            {
+                return;
+            }
+
+            templateErrorLogged = true;
+            Log.Error(message);
+        }
+#endif
     }
 }

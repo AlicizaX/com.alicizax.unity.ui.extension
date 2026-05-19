@@ -38,7 +38,7 @@ namespace AlicizaX.UI
             }
 
             len = row * (cellSize.x + spacing.x) - spacing.x;
-            return new Vector2(len, contentSize.y + padding.x * 2);
+            return new Vector2(len + padding.x * 2, contentSize.y);
         }
 
         public override Vector2 CalculatePosition(int index)
@@ -159,7 +159,7 @@ namespace AlicizaX.UI
                 position = len + viewLength > contentSize.x ? contentSize.x - viewportSize.x : len;
             }
 
-            return position;
+            return Mathf.Max(position, 0f);
         }
 
         public override int PositionToIndex(float position)

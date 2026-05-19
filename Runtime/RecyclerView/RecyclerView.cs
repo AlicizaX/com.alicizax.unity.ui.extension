@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.Threading;
 using UnityEngine;
-using UnityEngine.EventSystems;
 using UnityEngine.Serialization;
 using UnityEngine.UI;
 
@@ -17,12 +15,8 @@ namespace AlicizaX.UI
         /// <summary>
         /// 滚动条拖拽手柄允许的最小像素长度。
         /// </summary>
-        private const float MinScrollbarHandlePixels = 18f;
+        private const float MinScrollbarHandlePixels = 20f;
 
-        /// <summary>
-        /// 记录 Unity 主线程的托管线程标识。
-        /// </summary>
-        private static int mainThreadId = -1;
 
         #region 序列化字段 - 布局设置
 
@@ -105,8 +99,8 @@ namespace AlicizaX.UI
         /// <summary>
         /// 是否显示滚动条。
         /// </summary>
-        [FormerlySerializedAs("showScrollBar")]
-        [HideInInspector] [SerializeField] private ScrollbarVisibility scrollbarVisibility;
+        [FormerlySerializedAs("showScrollBar")] [HideInInspector] [SerializeField]
+        private ScrollbarVisibility scrollbarVisibility;
 
         /// <summary>
         /// 与当前列表关联的滚动条组件。
@@ -135,7 +129,7 @@ namespace AlicizaX.UI
         /// <summary>
         /// 当前使用的滚动器实例。
         /// </summary>
-        [HideInInspector] [SerializeReference] private Scroller scroller;
+        [HideInInspector] [SerializeField] private Scroller scroller;
 
         #endregion
 
@@ -151,32 +145,13 @@ namespace AlicizaX.UI
         private bool scrollbarVisibleState;
         private bool scrollbarInteractableState;
         private ScrollbarEx scrollbarEx;
-        private RectTransform cachedViewportRect;
 
-        /// <summary>
-        /// 负责处理列表内导航逻辑的控制器。
-        /// </summary>
-        private RecyclerNavigationController navigationController;
-
-        private bool hasPendingFocusRecovery;
-        private GameObject pendingFocusRecoveryTarget;
         private bool hasPendingScrollbarRatio;
+
         private float pendingScrollbarRatio;
-
-        /// <summary>
-        /// 是否存在等待滚动结束后执行的焦点请求。
-        /// </summary>
-        private bool hasPendingFocusRequest;
-
-        /// <summary>
-        /// 挂起焦点请求期望采用的对齐方式。
-        /// </summary>
-        private ScrollAlignment pendingFocusAlignment;
-
-        /// <summary>
-        /// 挂起焦点请求对应的数据索引。
-        /// </summary>
-        private int pendingFocusIndex = -1;
+        private RectTransform cachedRectTransform;
+        private Vector2 lastViewportSize;
+        private bool hasLastViewportSize;
 
         /// <summary>
         /// 当前可见区间的起始布局索引。
@@ -191,8 +166,7 @@ namespace AlicizaX.UI
         /// <summary>
         /// 当前记录的逻辑选中索引。
         /// </summary>
-        private int currentIndex;
-        private int focusIndex = -1;
+        private int currentScrollDataIndex;
 
         #endregion
 
@@ -204,7 +178,18 @@ namespace AlicizaX.UI
         public Direction Direction
         {
             get => direction;
-            set => direction = value;
+            set
+            {
+                if (direction == value)
+                {
+                    return;
+                }
+
+                direction = value;
+                ApplyLayoutSettings();
+                RequestLayout();
+                Refresh();
+            }
         }
 
         /// <summary>
@@ -213,7 +198,18 @@ namespace AlicizaX.UI
         public Alignment Alignment
         {
             get => alignment;
-            set => alignment = value;
+            set
+            {
+                if (alignment == value)
+                {
+                    return;
+                }
+
+                alignment = value;
+                ApplyLayoutSettings();
+                RequestLayout();
+                Refresh();
+            }
         }
 
         /// <summary>
@@ -222,7 +218,18 @@ namespace AlicizaX.UI
         public Vector2 Spacing
         {
             get => spacing;
-            set => spacing = value;
+            set
+            {
+                if (spacing == value)
+                {
+                    return;
+                }
+
+                spacing = value;
+                ApplyLayoutSettings();
+                RequestLayout();
+                Refresh();
+            }
         }
 
         /// <summary>
@@ -231,7 +238,18 @@ namespace AlicizaX.UI
         public Vector2 Padding
         {
             get => padding;
-            set => padding = value;
+            set
+            {
+                if (padding == value)
+                {
+                    return;
+                }
+
+                padding = value;
+                ApplyLayoutSettings();
+                RequestLayout();
+                Refresh();
+            }
         }
 
         #endregion
@@ -442,7 +460,7 @@ namespace AlicizaX.UI
         /// <summary>
         /// 获取视图提供器；首次访问时根据模板数量自动创建。
         /// </summary>
-        public ViewProvider ViewProvider
+        internal ViewProvider ViewProvider
         {
             get
             {
@@ -485,11 +503,6 @@ namespace AlicizaX.UI
         /// </summary>
         public LayoutManager LayoutManager => layoutManager;
 
-        /// <summary>
-        /// 获取导航控制器；首次访问时自动创建。
-        /// </summary>
-        public RecyclerNavigationController NavigationController => navigationController ??= new RecyclerNavigationController(this);
-
         #endregion
 
         #region 公共属性 - 状态
@@ -499,25 +512,11 @@ namespace AlicizaX.UI
         /// </summary>
         internal IAdapter RecyclerViewAdapter { get; private set; }
 
-        /// <summary>
-        /// 获取当前记录的内部逻辑索引。
-        /// 仅供框架内部的导航与布局逻辑使用；业务层请改为通过 <see cref="OnFocusIndexChanged"/> 维护自身状态，
-        /// 或使用适配器上的 <c>ChoiceIndex</c> 表示业务选中项。
-        /// </summary>
-        internal int CurrentIndex => currentIndex;
-
-        internal int FocusIndex => focusIndex;
+        internal int CurrentScrollDataIndex => currentScrollDataIndex;
 
         #endregion
 
         #region 事件
-
-        /// <summary>
-        /// 当当前逻辑索引发生变化时触发。
-        /// </summary>
-        public Action<int> OnFocusIndexChanged;
-
-        public Action<int> OnCurrentIndexChanged;
 
         /// <summary>
         /// 当滚动位置发生变化时触发。
@@ -539,41 +538,50 @@ namespace AlicizaX.UI
         #region 引擎生命周期
 
         /// <summary>
-        /// 初始化模板、滚动器、滚动条与导航桥接组件。
+        /// Initializes templates, scroller, and scrollbar.
         /// </summary>
         private void Awake()
         {
-            if (mainThreadId < 0)
-            {
-                mainThreadId = Thread.CurrentThread.ManagedThreadId;
-            }
-
             ValidateConfiguration();
             if (!isValid)
             {
                 return;
             }
 
+            TryUpdateViewportSizeCache(out _);
             InitializeTemplates();
             ConfigureScroller();
             ConfigureScrollbar();
-
-            cachedViewportRect = content != null ? content.parent as RectTransform : transform as RectTransform;
         }
 
         private void LateUpdate()
         {
             ProcessPendingScrollbarRatio();
-            ProcessPendingFocusRecovery();
+        }
+
+        private void OnRectTransformDimensionsChange()
+        {
+            if (!TryUpdateViewportSizeCache(out bool changed) || !changed)
+            {
+                return;
+            }
+
+            if (!Application.isPlaying || !isValid || RecyclerViewAdapter == null)
+            {
+                return;
+            }
+
+            RequestLayout();
+            Refresh();
         }
 
         private void OnDestroy()
         {
             if (scroller != null)
             {
-                scroller.OnValueChanged.RemoveListener(OnScrollChanged);
-                scroller.OnMoveStoped.RemoveListener(OnMoveStoped);
-                scroller.OnDragging.RemoveListener(OnScrollerDraggingChanged);
+                scroller.OnValueChanged -= OnScrollChanged;
+                scroller.OnMoveStoped -= OnMoveStoped;
+                scroller.OnDragging -= OnScrollerDraggingChanged;
             }
 
             if (scrollbar != null)
@@ -586,9 +594,7 @@ namespace AlicizaX.UI
             }
 
             layoutManager?.Release();
-
-            hasPendingFocusRecovery = false;
-            pendingFocusRecoveryTarget = null;
+            viewProvider?.Dispose();
         }
 
         #endregion
@@ -653,34 +659,7 @@ namespace AlicizaX.UI
                     return;
                 }
 
-                if (templates.Length > 1 && string.IsNullOrEmpty(template.GetType().Name))
-                {
-                    LogValidationError("RecyclerView mixed template name is missing.");
-                    isValid = false;
-                    return;
-                }
-
-                if (templates.Length > 1 && HasDuplicateTemplateType(i, template.GetType()))
-                {
-                    LogValidationError("RecyclerView mixed template type duplicated.");
-                    isValid = false;
-                    return;
-                }
             }
-        }
-
-        private bool HasDuplicateTemplateType(int currentIndex, Type templateType)
-        {
-            for (int i = 0; i < currentIndex; i++)
-            {
-                ViewHolder template = templates[i];
-                if (template != null && template.GetType() == templateType)
-                {
-                    return true;
-                }
-            }
-
-            return false;
         }
 
         private void LogValidationError(string message)
@@ -697,46 +676,6 @@ namespace AlicizaX.UI
         }
 
         /// <summary>
-        /// 确保当前对象挂载用于导航事件桥接的组件。
-        /// </summary>
-        /// <summary>
-        /// 查找当前可见列表边缘对应的数据索引。
-        /// </summary>
-        /// <param name="useMax"><see langword="true"/> 表示查找最大的布局索引；否则查找最小的布局索引。</param>
-        /// <returns>找到的边缘数据索引；不存在可见项时返回 <c>-1</c>。</returns>
-        private int FindVisibleEdgeDataIndex(bool useMax)
-        {
-            if (ViewProvider.VisibleCount == 0)
-            {
-                return -1;
-            }
-
-            int best = useMax ? int.MinValue : int.MaxValue;
-            for (int i = 0; i < ViewProvider.VisibleCount; i++)
-            {
-                ViewHolder holder = ViewProvider.GetVisibleViewHolder(i);
-                if (holder == null || holder.DataIndex < 0)
-                {
-                    continue;
-                }
-
-                if (useMax)
-                {
-                    if (holder.DataIndex > best)
-                    {
-                        best = holder.DataIndex;
-                    }
-                }
-                else if (holder.DataIndex < best)
-                {
-                    best = holder.DataIndex;
-                }
-            }
-
-            return best is int.MinValue or int.MaxValue ? -1 : best;
-        }
-
-        /// <summary>
         /// 配置滚动器参数并注册滚动回调。
         /// </summary>
         private void ConfigureScroller()
@@ -749,9 +688,9 @@ namespace AlicizaX.UI
             scroller.MovementType = movementType;
             scroller.Inertia = inertia;
             scroller.DecelerationRate = decelerationRate;
-            scroller.OnValueChanged.AddListener(OnScrollChanged);
-            scroller.OnMoveStoped.AddListener(OnMoveStoped);
-            scroller.OnDragging.AddListener(OnScrollerDraggingChanged);
+            scroller.OnValueChanged += OnScrollChanged;
+            scroller.OnMoveStoped += OnMoveStoped;
+            scroller.OnDragging += OnScrollerDraggingChanged;
             UpdateScrollerState();
         }
 
@@ -787,11 +726,6 @@ namespace AlicizaX.UI
         /// <param name="adapter">要绑定的适配器实例。</param>
         internal void SetAdapter(IAdapter adapter)
         {
-            if (!EnsureMainThread(nameof(SetAdapter)))
-            {
-                return;
-            }
-
             if (adapter == null)
             {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
@@ -814,7 +748,6 @@ namespace AlicizaX.UI
             }
 
             viewProvider?.Clear();
-            (RecyclerViewAdapter as IItemRenderCacheOwner)?.ReleaseAllItemRenders();
             RecyclerViewAdapter = adapter;
             ViewProvider.Adapter = adapter;
             ViewProvider.LayoutManager = layoutManager;
@@ -822,260 +755,10 @@ namespace AlicizaX.UI
             layoutManager.RecyclerView = this;
             layoutManager.Adapter = adapter;
             layoutManager.ViewProvider = viewProvider;
-            layoutManager.Direction = direction;
-            layoutManager.Alignment = alignment;
-            layoutManager.Spacing = spacing;
-            layoutManager.Padding = padding;
+            ApplyLayoutSettings();
             startIndex = 0;
             endIndex = -1;
-            currentIndex = -1;
-            focusIndex = -1;
-            ClearPendingFocusRequest();
-        }
-
-        /// <summary>
-        /// 尝试获取当前可见区域内指定索引对应的视图持有者。
-        /// </summary>
-        /// <param name="index">目标布局索引。</param>
-        /// <param name="viewHolder">返回找到的视图持有者。</param>
-        /// <returns>找到且该持有者仍处于可见范围内时返回 <see langword="true"/>；否则返回 <see langword="false"/>。</returns>
-        internal bool TryGetVisibleViewHolder(int index, out ViewHolder viewHolder)
-        {
-            int layoutIndex = layoutManager != null ? layoutManager.GetLayoutIndex(index) : index;
-            viewHolder = ViewProvider.GetViewHolder(layoutIndex);
-            return viewHolder != null && layoutManager != null && layoutManager.IsVisible(viewHolder.Index);
-        }
-
-        /// <summary>
-        /// 尝试将焦点移动到指定索引对应的列表项。
-        /// </summary>
-        /// <param name="index">目标数据索引。</param>
-        /// <param name="smooth">是否先以平滑滚动方式将目标项滚入可见区域。</param>
-        /// <param name="alignment">目标项滚动完成后的对齐方式。</param>
-        /// <returns>成功定位并应用焦点时返回 <see langword="true"/>；否则返回 <see langword="false"/>。</returns>
-        public bool TryFocusIndex(int index, bool smooth = false, ScrollAlignment alignment = ScrollAlignment.Center)
-        {
-            if (RecyclerViewAdapter == null || RecyclerViewAdapter.GetItemCount() <= 0 || index < 0 || index >= RecyclerViewAdapter.GetItemCount())
-            {
-                return false;
-            }
-
-            if (smooth && (!TryGetVisibleViewHolder(index, out ViewHolder smoothHolder) || !IsFullyVisible(smoothHolder)))
-            {
-                QueueFocusRequest(index, alignment);
-                ScrollToWithAlignment(index, alignment, 0f, true);
-                return true;
-            }
-
-            if (!TryGetVisibleViewHolder(index, out ViewHolder holder) || !IsFullyVisible(holder))
-            {
-                ScrollToWithAlignment(index, alignment, 0f, false);
-                if (!TryGetVisibleViewHolder(index, out holder))
-                {
-                    Refresh();
-                    TryGetVisibleViewHolder(index, out holder);
-                }
-            }
-
-            if (holder == null)
-            {
-                return false;
-            }
-
-            if (!IsFullyVisible(holder))
-            {
-                ScrollToWithAlignment(index, alignment, 0f, false);
-                TryGetVisibleViewHolder(index, out holder);
-            }
-
-            if (holder == null || !IsFullyVisible(holder) || !TryResolveFocusTarget(holder, out GameObject target))
-            {
-                return false;
-            }
-
-            ApplyFocus(target);
-            UpdateFocusIndex(index);
-            UpdateCurrentIndex(index);
-            return true;
-        }
-
-        /// <summary>
-        /// 按进入方向尝试将焦点移入当前列表。
-        /// </summary>
-        /// <param name="entryDirection">焦点进入列表时的方向。</param>
-        /// <returns>成功聚焦某个列表项时返回 <see langword="true"/>；否则返回 <see langword="false"/>。</returns>
-        public bool TryFocusEntry(
-            MoveDirection entryDirection,
-            bool smooth = false,
-            ScrollAlignment alignment = ScrollAlignment.Center)
-        {
-            if (RecyclerViewAdapter == null)
-            {
-                return false;
-            }
-
-            int realCount = RecyclerViewAdapter.GetRealCount();
-            if (realCount <= 0)
-            {
-                return false;
-            }
-
-            int targetIndex = entryDirection is MoveDirection.Up or MoveDirection.Left
-                ? FindVisibleEdgeDataIndex(true)
-                : FindVisibleEdgeDataIndex(false);
-
-            if (targetIndex < 0)
-            {
-                targetIndex = entryDirection is MoveDirection.Up or MoveDirection.Left
-                    ? realCount - 1
-                    : Mathf.Clamp(CurrentIndex, 0, realCount - 1);
-            }
-
-            int step = entryDirection is MoveDirection.Up or MoveDirection.Left ? -1 : 1;
-            return TryFocusIndexRange(targetIndex, step, realCount, smooth, alignment);
-        }
-
-        /// <summary>
-        /// 解析指定持有者最终应被聚焦的目标对象。
-        /// </summary>
-        /// <param name="holder">目标视图持有者。</param>
-        /// <param name="target">返回解析得到的焦点对象。</param>
-        /// <returns>成功解析到可聚焦对象时返回 <see langword="true"/>；否则返回 <see langword="false"/>。</returns>
-        internal bool TryResolveFocusTarget(ViewHolder holder, out GameObject target)
-        {
-            target = null;
-            if (holder == null)
-            {
-                return false;
-            }
-
-            return holder.TryGetFocusTarget(out target);
-        }
-
-        /// <summary>
-        /// 判断指定持有者是否已经完整处于当前视口内。
-        /// </summary>
-        /// <param name="holder">待检测的视图持有者。</param>
-        /// <returns>完整可见时返回 <see langword="true"/>；否则返回 <see langword="false"/>。</returns>
-        internal bool IsFullyVisible(ViewHolder holder)
-        {
-            if (holder == null)
-            {
-                return false;
-            }
-
-            if (layoutManager != null && direction is Direction.Vertical or Direction.Horizontal)
-            {
-                return layoutManager.IsFullVisibleStart(holder.Index) &&
-                       layoutManager.IsFullVisibleEnd(holder.Index);
-            }
-
-            RectTransform viewport = cachedViewportRect;
-            if (viewport == null)
-            {
-                return true;
-            }
-
-            Bounds bounds = RectTransformUtility.CalculateRelativeRectTransformBounds(viewport, holder.RectTransform);
-            Rect viewportRect = viewport.rect;
-            const float epsilon = 0.01f;
-
-            return bounds.min.x >= viewportRect.xMin - epsilon &&
-                   bounds.max.x <= viewportRect.xMax + epsilon &&
-                   bounds.min.y >= viewportRect.yMin - epsilon &&
-                   bounds.max.y <= viewportRect.yMax + epsilon;
-        }
-
-        /// <summary>
-        /// 通过 EventSystem 将焦点切换到指定目标，并在下一帧做一次恢复校正。
-        /// </summary>
-        /// <param name="target">目标焦点对象。</param>
-        internal void ApplyFocus(GameObject target)
-        {
-            if (target == null)
-            {
-                return;
-            }
-
-            EventSystem eventSystem = EventSystem.current;
-            if (eventSystem == null)
-            {
-                return;
-            }
-
-            if (ReferenceEquals(eventSystem.currentSelectedGameObject, target))
-            {
-                ScheduleFocusRecovery(target);
-                return;
-            }
-
-            if (eventSystem.alreadySelecting)
-            {
-                ScheduleFocusRecovery(target);
-                return;
-            }
-
-            eventSystem.SetSelectedGameObject(target);
-            ScheduleFocusRecovery(target);
-        }
-
-        private void ScheduleFocusRecovery(GameObject target)
-        {
-            pendingFocusRecoveryTarget = target;
-            hasPendingFocusRecovery = target != null;
-        }
-
-        private bool TryFocusIndexRange(int startIndex, int step, int itemCount, bool smooth, ScrollAlignment alignment)
-        {
-            if (itemCount <= 0 || step == 0)
-            {
-                return false;
-            }
-
-            int index = Mathf.Clamp(startIndex, 0, itemCount - 1);
-            while (index >= 0 && index < itemCount)
-            {
-                if (TryFocusIndex(index, smooth, alignment))
-                {
-                    return true;
-                }
-
-                index += step;
-            }
-
-            return false;
-        }
-
-        private static bool IsSelectableFocusable(Selectable selectable)
-        {
-            return selectable != null &&
-                   selectable.IsActive() &&
-                   selectable.IsInteractable();
-        }
-
-        private void ProcessPendingFocusRecovery()
-        {
-            if (!hasPendingFocusRecovery)
-            {
-                return;
-            }
-
-            GameObject target = pendingFocusRecoveryTarget;
-            hasPendingFocusRecovery = false;
-            pendingFocusRecoveryTarget = null;
-
-            if (target == null || !target.activeInHierarchy)
-            {
-                return;
-            }
-
-            EventSystem eventSystem = EventSystem.current;
-            if (eventSystem == null || ReferenceEquals(eventSystem.currentSelectedGameObject, target))
-            {
-                return;
-            }
-
-            eventSystem.SetSelectedGameObject(target);
+            currentScrollDataIndex = -1;
         }
 
         /// <summary>
@@ -1088,16 +771,11 @@ namespace AlicizaX.UI
                 return;
             }
 
-            if (!EnsureMainThread(nameof(Reset)))
-            {
-                return;
-            }
-
             viewProvider?.Reset();
 
             if (scroller != null)
             {
-                scroller.Position = 0;
+                scroller.ResetMotion(0);
             }
 
             if (scrollbar != null)
@@ -1107,9 +785,12 @@ namespace AlicizaX.UI
 
             startIndex = 0;
             endIndex = -1;
-            currentIndex = -1;
-            focusIndex = -1;
-            ClearPendingFocusRequest();
+            currentScrollDataIndex = -1;
+        }
+
+        public void TrimInactivePool()
+        {
+            viewProvider?.TrimInactive();
         }
 
         #endregion
@@ -1122,11 +803,6 @@ namespace AlicizaX.UI
         internal void Refresh()
         {
             if (!isValid)
-            {
-                return;
-            }
-
-            if (!EnsureMainThread(nameof(Refresh)))
             {
                 return;
             }
@@ -1170,17 +846,13 @@ namespace AlicizaX.UI
                 return;
             }
 
-            if (!EnsureMainThread(nameof(RequestLayout)))
-            {
-                return;
-            }
-
             if (layoutManager == null)
             {
                 UpdateScrollbarVisibility();
                 return;
             }
 
+            ApplyLayoutSettings();
             layoutManager.SetContentSize();
 
             if (scroller == null)
@@ -1203,7 +875,45 @@ namespace AlicizaX.UI
 
         #endregion
 
+        private void ApplyLayoutSettings()
+        {
+            if (layoutManager == null)
+            {
+                return;
+            }
+
+            layoutManager.Direction = direction;
+            layoutManager.Alignment = alignment;
+            layoutManager.Spacing = spacing;
+            layoutManager.Padding = padding;
+        }
+
         #region 公共方法 - 滚动
+
+        private bool TryUpdateViewportSizeCache(out bool changed)
+        {
+            changed = false;
+            if (cachedRectTransform == null)
+            {
+                cachedRectTransform = transform as RectTransform;
+            }
+
+            if (cachedRectTransform == null)
+            {
+                return false;
+            }
+
+            Vector2 size = cachedRectTransform.rect.size;
+            if (hasLastViewportSize && size == lastViewportSize)
+            {
+                return true;
+            }
+
+            changed = hasLastViewportSize;
+            lastViewportSize = size;
+            hasLastViewportSize = true;
+            return true;
+        }
 
         /// <summary>
         /// 获取当前滚动位置。
@@ -1221,9 +931,11 @@ namespace AlicizaX.UI
         /// <param name="smooth">是否使用平滑滚动。</param>
         public void ScrollTo(int index, bool smooth = false)
         {
-            if (scroll == ScrollMode.AlwaysDisable || scroller == null) return;
+            if (!TryResolveScrollTarget(index, out int layoutIndex, out int dataIndex))
+            {
+                return;
+            }
 
-            int layoutIndex = layoutManager.GetLayoutIndex(index);
             scroller.ScrollTo(layoutManager.IndexToPosition(layoutIndex), smooth);
 
             if (!smooth)
@@ -1231,7 +943,7 @@ namespace AlicizaX.UI
                 Refresh();
             }
 
-            UpdateCurrentIndex(index);
+            SetCurrentScrollDataIndex(dataIndex);
         }
 
         /// <summary>
@@ -1242,11 +954,14 @@ namespace AlicizaX.UI
         /// <param name="offset">在对齐基础上的额外偏移量。</param>
         /// <param name="smooth">是否使用平滑滚动。</param>
         /// <param name="duration">平滑滚动时长，单位为秒。</param>
-        public void ScrollToWithAlignment(int index, ScrollAlignment alignment, float offset = 0f, bool smooth = false, float duration = 0.3f)
+        internal void ScrollToWithAlignment(int index, ScrollAlignment alignment, float offset = 0f, bool smooth = false, float duration = 0.3f)
         {
-            if (scroll == ScrollMode.AlwaysDisable || scroller == null) return;
+            if (!TryResolveScrollTarget(index, out int layoutIndex, out int dataIndex))
+            {
+                return;
+            }
 
-            float targetPosition = CalculateScrollPositionWithAlignment(index, alignment, offset);
+            float targetPosition = CalculateScrollPositionWithAlignment(layoutIndex, alignment, offset);
 
 
             if (duration > 0 && smooth)
@@ -1263,24 +978,18 @@ namespace AlicizaX.UI
                 Refresh();
             }
 
-            UpdateCurrentIndex(index);
+            SetCurrentScrollDataIndex(dataIndex);
         }
 
         /// <summary>
         /// 计算指定索引在目标对齐方式下应滚动到的位置。
         /// </summary>
-        /// <param name="index">目标数据索引。</param>
+        /// <param name="layoutIndex">目标布局索引。</param>
         /// <param name="alignment">目标项滚动完成后的对齐方式。</param>
         /// <param name="offset">在对齐基础上的额外偏移量。</param>
         /// <returns>计算得到的滚动位置，结果会被限制在合法范围内。</returns>
-        private float CalculateScrollPositionWithAlignment(int index, ScrollAlignment alignment, float offset)
+        private float CalculateScrollPositionWithAlignment(int layoutIndex, ScrollAlignment alignment, float offset)
         {
-            if (RecyclerViewAdapter == null || index < 0 || index >= RecyclerViewAdapter.GetItemCount())
-            {
-                return scroller.Position;
-            }
-
-            int layoutIndex = layoutManager.GetLayoutIndex(index);
             float itemSize = layoutManager.GetItemLength(layoutIndex);
             float viewportLength = direction == Direction.Vertical ? layoutManager.ViewportSize.y : layoutManager.ViewportSize.x;
 
@@ -1302,33 +1011,37 @@ namespace AlicizaX.UI
             return scroller.ClampPosition(targetPosition);
         }
 
-        /// <summary>
-        /// 计算指定索引对应项在内容区域中的原始起始位置。
-        /// </summary>
-        /// <param name="index">目标数据索引。</param>
-        /// <returns>未做边界限制的原始滚动位置。</returns>
-        private float CalculateRawItemPosition(int index)
+        private bool TryResolveScrollTarget(int index, out int layoutIndex, out int dataIndex)
         {
-            // 根据滚动方向选择对应轴向的间距与内边距。
-            Vector2 spacing = layoutManager.Spacing;
-            Vector2 padding = layoutManager.Padding;
-            float itemSize = GetItemSize(index);
-            float spacingValue = direction == Direction.Vertical ? spacing.y : spacing.x;
-            float paddingValue = direction == Direction.Vertical ? padding.y : padding.x;
+            layoutIndex = 0;
+            dataIndex = -1;
 
-            // 直接基于索引、尺寸与间距推导原始位置。
-            return index * (itemSize + spacingValue) + paddingValue;
-        }
+            if (!isValid || scroll == ScrollMode.AlwaysDisable || scroller == null || layoutManager == null || RecyclerViewAdapter == null)
+            {
+                return false;
+            }
 
-        /// <summary>
-        /// 获取指定索引对应项在主滚动轴上的尺寸。
-        /// </summary>
-        /// <param name="index">目标数据索引。</param>
-        /// <returns>目标项在主滚动轴上的尺寸值。</returns>
-        private float GetItemSize(int index)
-        {
-            Vector2 itemSize = ViewProvider.CalculateViewSize(index);
-            return direction == Direction.Vertical ? itemSize.y : itemSize.x;
+            int itemCount = RecyclerViewAdapter.GetItemCount();
+            if (itemCount <= 0)
+            {
+                return false;
+            }
+
+            int realCount = RecyclerViewAdapter.GetRealCount();
+            bool isLoop = realCount > 0 && itemCount != realCount;
+            if (!isLoop && (index < 0 || index >= itemCount))
+            {
+                return false;
+            }
+
+            layoutIndex = layoutManager.GetLayoutIndex(index);
+            if (!layoutManager.UsesVirtualLayoutRange && (layoutIndex < 0 || layoutIndex >= itemCount))
+            {
+                return false;
+            }
+
+            dataIndex = layoutManager.GetDataIndex(layoutIndex);
+            return isLoop || (dataIndex >= 0 && dataIndex < itemCount);
         }
 
         #endregion
@@ -1341,7 +1054,7 @@ namespace AlicizaX.UI
         /// <param name="position">当前滚动位置。</param>
         private void OnScrollChanged(float position)
         {
-            if (layoutManager == null)
+            if (!isValid || layoutManager == null || RecyclerViewAdapter == null || viewProvider == null)
             {
                 return;
             }
@@ -1358,7 +1071,7 @@ namespace AlicizaX.UI
         }
 
         /// <summary>
-        /// 响应滚动器停止移动事件，处理吸附与挂起焦点请求。
+        /// Handles scroller stop events and snap behavior.
         /// </summary>
         private void OnMoveStoped()
         {
@@ -1805,7 +1518,7 @@ namespace AlicizaX.UI
             float position = GetScrollPosition();
             int index = layoutManager.GetSnapIndex(position);
             float targetPosition = layoutManager.IndexToPosition(index);
-            UpdateCurrentIndex(layoutManager.GetDataIndex(index));
+            SetCurrentScrollDataIndex(layoutManager.GetDataIndex(index));
             if (Mathf.Abs(targetPosition - position) <= 0.1f)
             {
                 return false;
@@ -1822,49 +1535,47 @@ namespace AlicizaX.UI
                 return;
             }
 
-            TryProcessPendingFocusRequest();
+            UpdateCurrentScrollDataIndexFromScrollPosition();
             OnScrollStopped?.Invoke();
         }
 
-        /// <summary>
-        /// 更新当前逻辑索引，并在变化时触发事件通知。
-        /// </summary>
-        /// <param name="index">新的候选索引。</param>
-        internal void UpdateCurrentIndex(int index)
+        private void UpdateCurrentScrollDataIndexFromScrollPosition()
         {
-            UpdateTrackedIndex(ref currentIndex, index, OnCurrentIndexChanged);
+            if (layoutManager == null || RecyclerViewAdapter == null || RecyclerViewAdapter.GetItemCount() <= 0)
+            {
+                SetCurrentScrollDataIndex(-1);
+                return;
+            }
+
+            int layoutIndex = layoutManager.PositionToIndex(GetScrollPosition());
+            if (!layoutManager.UsesVirtualLayoutRange)
+            {
+                layoutIndex = Mathf.Clamp(layoutIndex, 0, RecyclerViewAdapter.GetItemCount() - 1);
+            }
+
+            SetCurrentScrollDataIndex(layoutManager.GetDataIndex(layoutIndex));
         }
 
-        internal void UpdateFocusIndex(int index)
+        private void SetCurrentScrollDataIndex(int index)
         {
-            UpdateTrackedIndex(ref focusIndex, index, OnFocusIndexChanged);
-        }
-
-        private void UpdateTrackedIndex(ref int trackedIndex, int index, Action<int> callback)
-        {
-            int itemCount = GetTrackedItemCount();
+            int itemCount = GetScrollDataIndexItemCount();
             if (itemCount <= 0)
             {
-                if (trackedIndex != -1)
-                {
-                    trackedIndex = -1;
-                    callback?.Invoke(trackedIndex);
-                }
+                currentScrollDataIndex = -1;
+                return;
+            }
 
+            if (index < 0)
+            {
+                currentScrollDataIndex = -1;
                 return;
             }
 
             index %= itemCount;
-            index = index < 0 ? itemCount + index : index;
-
-            if (trackedIndex != index)
-            {
-                trackedIndex = index;
-                callback?.Invoke(trackedIndex);
-            }
+            currentScrollDataIndex = index;
         }
 
-        private int GetTrackedItemCount()
+        private int GetScrollDataIndexItemCount()
         {
             if (RecyclerViewAdapter == null)
             {
@@ -1887,27 +1598,12 @@ namespace AlicizaX.UI
         /// <returns>实际完成重绑的持有者数量。</returns>
         internal int RebindVisibleDataIndex(int dataIndex)
         {
-            if (!EnsureMainThread(nameof(RebindVisibleDataIndex)) ||
-                RecyclerViewAdapter == null ||
-                !ViewProvider.TryGetViewHolderBucket(dataIndex, out ViewProvider.ViewHolderBucket holders))
+            if (RecyclerViewAdapter == null)
             {
                 return 0;
             }
 
-            int reboundCount = 0;
-            for (int i = 0; i < holders.Count; i++)
-            {
-                ViewHolder holder = holders[i];
-                if (holder == null)
-                {
-                    continue;
-                }
-
-                RecyclerViewAdapter.OnBindViewHolder(holder, holder.DataIndex);
-                reboundCount++;
-            }
-
-            return reboundCount;
+            return ViewProvider.RebindVisibleDataIndex(dataIndex);
         }
 
         /// <summary>
@@ -1933,69 +1629,9 @@ namespace AlicizaX.UI
             return reboundCount;
         }
 
-        /// <summary>
-        /// 缓存一条等待滚动结束后执行的焦点请求。
-        /// </summary>
-        /// <param name="index">待聚焦的数据索引。</param>
-        /// <param name="alignment">目标对齐方式。</param>
-        private void QueueFocusRequest(int index, ScrollAlignment alignment)
+        internal int ApplyVisibleSelection(int dataIndex, bool selected)
         {
-            hasPendingFocusRequest = true;
-            pendingFocusIndex = index;
-            pendingFocusAlignment = alignment;
-        }
-
-        /// <summary>
-        /// 清除当前缓存的焦点请求。
-        /// </summary>
-        private void ClearPendingFocusRequest()
-        {
-            hasPendingFocusRequest = false;
-            pendingFocusIndex = -1;
-            pendingFocusAlignment = ScrollAlignment.Center;
-        }
-
-        /// <summary>
-        /// 尝试执行当前缓存的焦点请求。
-        /// </summary>
-        private void TryProcessPendingFocusRequest()
-        {
-            if (!hasPendingFocusRequest)
-            {
-                return;
-            }
-
-            int index = pendingFocusIndex;
-            ScrollAlignment alignment = pendingFocusAlignment;
-            ClearPendingFocusRequest();
-            TryFocusIndex(index, false, alignment);
-        }
-
-        /// <summary>
-        /// 判断当前调用线程是否为 Unity 主线程。
-        /// </summary>
-        /// <returns>当前线程为主线程时返回 <see langword="true"/>；否则返回 <see langword="false"/>。</returns>
-        private static bool IsMainThread()
-        {
-            return mainThreadId < 0 || Thread.CurrentThread.ManagedThreadId == mainThreadId;
-        }
-
-        /// <summary>
-        /// 校验当前调用是否发生在 Unity 主线程上。
-        /// </summary>
-        /// <param name="caller">发起校验的调用方名称。</param>
-        /// <returns>位于主线程时返回 <see langword="true"/>；否则返回 <see langword="false"/>。</returns>
-        private bool EnsureMainThread(string caller)
-        {
-            if (IsMainThread())
-            {
-                return true;
-            }
-
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-            Log.Error("RecyclerView method must run on Unity main thread.");
-#endif
-            return false;
+            return ViewProvider.ApplyVisibleSelection(dataIndex, selected);
         }
 
         #endregion

@@ -4,9 +4,9 @@ namespace AlicizaX.UI
 
     public interface IMixedObjectPool<T> : IDisposable where T : class
     {
-        T Allocate(string typeName);
+        T Allocate(int templateId);
 
-        void Free(string typeName, T obj);
+        void Free(int templateId, T obj);
     }
 
 }

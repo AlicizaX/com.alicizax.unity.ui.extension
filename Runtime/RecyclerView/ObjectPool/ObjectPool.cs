@@ -177,6 +177,11 @@ namespace AlicizaX.UI
 
         public void ClearInactive()
         {
+            TrimInactive();
+        }
+
+        public void TrimInactive()
+        {
             Clear();
         }
 

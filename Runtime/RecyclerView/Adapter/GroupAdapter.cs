@@ -3,15 +3,20 @@ using System.Collections.Generic;
 
 namespace AlicizaX.UI
 {
-    public class GroupAdapter<TData> : Adapter<TData> where TData : IGroupViewData, new()
+    public class GroupAdapter<TData> : Adapter<TData> where TData : class, IGroupViewData, new()
     {
         private readonly List<TData> showList = new();
-        private readonly string groupViewName;
+        private readonly int groupTemplateId;
         private readonly Dictionary<int, TData> groupsByType = new();
+        private readonly List<TData> groupOrder = new();
+        private readonly Dictionary<int, int> itemCountByType = new();
+        private readonly Dictionary<int, int> firstItemIndexByType = new();
+        private readonly Dictionary<int, int> lastItemIndexByType = new();
+        private int[] nextItemIndexes = Array.Empty<int>();
 
-        public GroupAdapter(RecyclerView recyclerView, string groupViewName) : base(recyclerView)
+        public GroupAdapter(RecyclerView recyclerView, int groupTemplateId) : base(recyclerView)
         {
-            this.groupViewName = groupViewName;
+            this.groupTemplateId = groupTemplateId;
         }
 
         public GroupAdapter(RecyclerView recyclerView, List<TData> list) : base(recyclerView, list)
@@ -32,19 +37,25 @@ namespace AlicizaX.UI
             return showList.Count;
         }
 
-        public override string GetViewName(int index)
+        public override int GetTemplateId(int index)
         {
             return index >= 0 && index < showList.Count
-                ? showList[index].TemplateName
-                : string.Empty;
+                ? showList[index].TemplateId
+                : -1;
         }
 
         public override void NotifyDataChanged()
         {
-            if (string.IsNullOrEmpty(groupViewName))
+            TData selectedData = GetChoiceData();
+            NotifyDataChanged(selectedData);
+        }
+
+        private void NotifyDataChanged(TData selectedData)
+        {
+            if (groupTemplateId < 0)
             {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                Log.Error("GroupAdapter requires a non-empty groupViewName.");
+                Log.Error("GroupAdapter requires a non-negative groupTemplateId.");
 #endif
                 return;
             }
@@ -53,40 +64,151 @@ namespace AlicizaX.UI
             {
                 showList.Clear();
                 groupsByType.Clear();
+                groupOrder.Clear();
+                itemCountByType.Clear();
+                firstItemIndexByType.Clear();
+                lastItemIndexByType.Clear();
+                RestoreChoiceIndex(selectedData);
                 base.NotifyDataChanged();
                 return;
             }
 
-            for (int i = 0; i < list.Count; i++)
-            {
-                CreateGroup(list[i].Type);
-            }
-
-            for (int i = 0; i < showList.Count; i++)
-            {
-                TData group = showList[i];
-                if (group.TemplateName != groupViewName)
-                {
-                    continue;
-                }
-
-                CollapseInternal(i);
-                if (group.Expanded)
-                {
-                    ExpandInternal(i);
-                    i += CountItemsForType(group.Type);
-                }
-            }
-
-            RemoveEmptyGroups();
+            BuildTypeIndex();
+            RebuildShowList();
+            RestoreChoiceIndex(selectedData);
             base.NotifyDataChanged();
         }
 
         public override void SetList(List<TData> list)
         {
+            TData selectedData = GetChoiceData();
             showList.Clear();
             groupsByType.Clear();
-            base.SetList(list);
+            groupOrder.Clear();
+            itemCountByType.Clear();
+            firstItemIndexByType.Clear();
+            lastItemIndexByType.Clear();
+            this.list = list ?? new List<TData>();
+            recyclerView.Reset();
+            NotifyDataChanged(selectedData);
+        }
+
+        public override void Add(TData item)
+        {
+            if (list == null)
+            {
+                list = new List<TData>();
+            }
+
+            TData selectedData = GetChoiceData();
+            list.Add(item);
+            NotifyDataChanged(selectedData);
+        }
+
+        internal override void AddRange(IEnumerable<TData> collection)
+        {
+            if (collection == null)
+            {
+                return;
+            }
+
+            TData selectedData = GetChoiceData();
+            list.AddRange(collection);
+            NotifyDataChanged(selectedData);
+        }
+
+        public override void Insert(int index, TData item)
+        {
+            TData selectedData = GetChoiceData();
+            list.Insert(index, item);
+            NotifyDataChanged(selectedData);
+        }
+
+        internal override void InsertRange(int index, IEnumerable<TData> collection)
+        {
+            if (collection == null)
+            {
+                return;
+            }
+
+            TData selectedData = GetChoiceData();
+            list.InsertRange(index, collection);
+            NotifyDataChanged(selectedData);
+        }
+
+        public override void Remove(TData item)
+        {
+            int index = list.IndexOf(item);
+            RemoveAt(index);
+        }
+
+        public override void RemoveAt(int index)
+        {
+            if (index < 0 || index >= list.Count)
+            {
+                return;
+            }
+
+            TData selectedData = GetChoiceData();
+            list.RemoveAt(index);
+            NotifyDataChanged(selectedData);
+        }
+
+        public override void RemoveRange(int index, int count)
+        {
+            if (count <= 0)
+            {
+                return;
+            }
+
+            TData selectedData = GetChoiceData();
+            list.RemoveRange(index, count);
+            NotifyDataChanged(selectedData);
+        }
+
+        internal override void RemoveAll(Predicate<TData> match)
+        {
+            if (match == null)
+            {
+                return;
+            }
+
+            TData selectedData = GetChoiceData();
+            list.RemoveAll(match);
+            NotifyDataChanged(selectedData);
+        }
+
+        public override void Clear()
+        {
+            if (list == null || list.Count == 0)
+            {
+                return;
+            }
+
+            TData selectedData = GetChoiceData();
+            list.Clear();
+            NotifyDataChanged(selectedData);
+        }
+
+        public override void Reverse(int index, int count)
+        {
+            TData selectedData = GetChoiceData();
+            list.Reverse(index, count);
+            NotifyDataChanged(selectedData);
+        }
+
+        public override void Reverse()
+        {
+            TData selectedData = GetChoiceData();
+            list.Reverse();
+            NotifyDataChanged(selectedData);
+        }
+
+        internal override void Sort(Comparison<TData> comparison)
+        {
+            TData selectedData = GetChoiceData();
+            list.Sort(comparison);
+            NotifyDataChanged(selectedData);
         }
 
         private void CreateGroup(int type)
@@ -98,11 +220,11 @@ namespace AlicizaX.UI
 
             TData groupData = new TData
             {
-                TemplateName = groupViewName,
+                TemplateId = groupTemplateId,
                 Type = type
             };
             groupsByType[type] = groupData;
-            showList.Add(groupData);
+            groupOrder.Add(groupData);
         }
 
         public void Expand(int index)
@@ -131,7 +253,7 @@ namespace AlicizaX.UI
         {
             return index >= 0 &&
                    index < showList.Count &&
-                   string.Equals(showList[index].TemplateName, groupViewName, StringComparison.Ordinal);
+                   showList[index].TemplateId == groupTemplateId;
         }
 
         public bool TryGetDisplayData(int index, out TData data)
@@ -146,47 +268,87 @@ namespace AlicizaX.UI
             return true;
         }
 
-        private void ExpandInternal(int index)
+        private void BuildTypeIndex()
         {
-            if (list == null || index < 0 || index >= showList.Count)
+            itemCountByType.Clear();
+            firstItemIndexByType.Clear();
+            lastItemIndexByType.Clear();
+
+            if (list == null || list.Count <= 0)
             {
                 return;
             }
 
-            int type = showList[index].Type;
+            EnsureNextItemCapacity(list.Count);
             for (int i = 0; i < list.Count; i++)
             {
-                if (list[i].Type == type)
+                nextItemIndexes[i] = -1;
+                int type = list[i].Type;
+                CreateGroup(type);
+
+                itemCountByType.TryGetValue(type, out int count);
+                itemCountByType[type] = count + 1;
+
+                if (lastItemIndexByType.TryGetValue(type, out int lastIndex))
                 {
-                    showList.Insert(index + 1, list[i]);
-                    index++;
+                    nextItemIndexes[lastIndex] = i;
+                }
+                else
+                {
+                    firstItemIndexByType[type] = i;
+                }
+
+                lastItemIndexByType[type] = i;
+            }
+        }
+
+        private void RebuildShowList()
+        {
+            showList.Clear();
+            for (int i = 0; i < groupOrder.Count; i++)
+            {
+                TData group = groupOrder[i];
+                if (!itemCountByType.TryGetValue(group.Type, out int count) || count <= 0)
+                {
+                    continue;
+                }
+
+                showList.Add(group);
+                if (group.Expanded)
+                {
+                    AddItemsForType(group.Type);
                 }
             }
         }
 
-        private void CollapseInternal(int index)
+        private void AddItemsForType(int type)
         {
-            if (index < 0 || index >= showList.Count)
+            if (!firstItemIndexByType.TryGetValue(type, out int index))
             {
                 return;
             }
 
-            int type = showList[index].Type;
-            int removeCount = 0;
-            for (int i = index + 1; i < showList.Count; i++)
+            while (index >= 0)
             {
-                if (showList[i].TemplateName == groupViewName || showList[i].Type != type)
-                {
-                    break;
-                }
+                showList.Add(list[index]);
+                index = nextItemIndexes[index];
+            }
+        }
 
-                removeCount++;
+        private void EnsureNextItemCapacity(int count)
+        {
+            if (nextItemIndexes.Length >= count)
+            {
+                return;
             }
 
-            if (removeCount > 0)
+            int capacity = nextItemIndexes.Length > 0 ? nextItemIndexes.Length : 4;
+            while (capacity < count)
             {
-                showList.RemoveRange(index + 1, removeCount);
+                capacity <<= 1;
             }
+
+            nextItemIndexes = new int[capacity];
         }
 
         protected override bool TryGetBindData(int index, out TData data)
@@ -218,40 +380,42 @@ namespace AlicizaX.UI
             SetChoiceIndex(index);
         }
 
-        private int CountItemsForType(int type)
+        private TData GetChoiceData()
         {
-            if (list == null)
-            {
-                return 0;
-            }
-
-            int count = 0;
-            for (int i = 0; i < list.Count; i++)
-            {
-                if (list[i].Type == type)
-                {
-                    count++;
-                }
-            }
-
-            return count;
+            return choiceIndex >= 0 && choiceIndex < showList.Count
+                ? showList[choiceIndex]
+                : default;
         }
 
-        private void RemoveEmptyGroups()
+        private void RestoreChoiceIndex(TData selectedData)
         {
-            for (int i = showList.Count - 1; i >= 0; i--)
+            int index = IndexOfDisplayData(selectedData);
+            if (choiceIndex == index)
             {
-                TData group = showList[i];
-                if (group.TemplateName != groupViewName)
-                {
-                    continue;
-                }
+                return;
+            }
 
-                if (CountItemsForType(group.Type) == 0)
+            choiceIndex = index;
+            OnChoiceIndexChanged?.Invoke(choiceIndex);
+        }
+
+        private int IndexOfDisplayData(TData data)
+        {
+            if (EqualityComparer<TData>.Default.Equals(data, default))
+            {
+                return -1;
+            }
+
+            for (int i = 0; i < showList.Count; i++)
+            {
+                TData item = showList[i];
+                if (ReferenceEquals(item, data) || EqualityComparer<TData>.Default.Equals(item, data))
                 {
-                    showList.RemoveAt(i);
+                    return i;
                 }
             }
+
+            return -1;
         }
     }
 }

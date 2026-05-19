@@ -1,9 +1,11 @@
 ﻿#if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
-using AlicizaX.UI.Runtime;
-using UnityEngine.EventSystems;
-
-namespace UnityEngine.UI
+namespace AlicizaX.UI.UXNavigation
 {
+    using AlicizaX.UI.Runtime;
+    using UnityEngine.EventSystems;
+    using UnityEngine;
+    using UnityEngine.UI;
+
     public interface IUXNavigationCursorPolicy
     {
         void OnNavigationContextChanged(UXInputMode mode, UXNavigationScope previousTopScope, UXNavigationScope currentTopScope);
@@ -25,7 +27,6 @@ namespace UnityEngine.UI
         private bool _stateDirty = true;
         private bool _suppressionDirty = true;
         private bool _isFlushingState;
-        private bool _isEnsuringSelection;
         private bool _contextNotificationDirty;
         private UXNavigationScope _pendingPreviousTopScope;
 
@@ -54,15 +55,7 @@ namespace UnityEngine.UI
             _cursorPolicy = cursorPolicy;
             if (_instance != null)
             {
-                _cursorPolicy?.OnNavigationContextChanged(UXInputModeService.CurrentMode, _instance._topScope, _instance._topScope);
-            }
-        }
-
-        public static void NotifySelection(GameObject selectedObject)
-        {
-            if (_instance != null)
-            {
-                _instance.RecordSelection(selectedObject);
+                _cursorPolicy?.OnNavigationContextChanged(UXNavigationModeListener.CurrentMode, _instance._topScope, _instance._topScope);
             }
         }
 
@@ -108,17 +101,17 @@ namespace UnityEngine.UI
 
         private void OnEnable()
         {
-            UXInputModeService.OnModeChanged += OnInputModeChanged;
+            UXNavigationModeListener.OnModeChanged += OnInputModeChanged;
         }
 
         private void OnDisable()
         {
-            UXInputModeService.OnModeChanged -= OnInputModeChanged;
+            UXNavigationModeListener.OnModeChanged -= OnInputModeChanged;
         }
 
         private void OnDestroy()
         {
-            UXInputModeService.OnModeChanged -= OnInputModeChanged;
+            UXNavigationModeListener.OnModeChanged -= OnInputModeChanged;
             if (_instance == this)
             {
                 _instance = null;
@@ -142,7 +135,6 @@ namespace UnityEngine.UI
             int index = _scopeCount++;
             _scopes[index] = scope;
             scope.RuntimeIndex = index;
-            UXInputModeService.EnsureInstance();
             MarkStateDirty();
         }
 
@@ -161,6 +153,7 @@ namespace UnityEngine.UI
 
             if (_topScope == scope)
             {
+                CaptureTopScopeSelection();
                 SetTopScope(null, false);
             }
 
@@ -216,6 +209,7 @@ namespace UnityEngine.UI
             }
 
             _isFlushingState = true;
+            CaptureTopScopeSelection();
             UXNavigationScope previousTopScope = _topScope;
             if (_stateDirty)
             {
@@ -230,7 +224,7 @@ namespace UnityEngine.UI
                 _suppressionDirty = false;
             }
 
-            if (ensureSelection && (UXInputModeService.CurrentMode == UXInputMode.Gamepad || UXInputModeService.CurrentMode == UXInputMode.Keyboard))
+            if (ensureSelection && UXNavigationModeListener.RequiresSelectedForCurrentMode)
             {
                 EnsureNavigationSelection();
             }
@@ -305,7 +299,7 @@ namespace UnityEngine.UI
         private void EnsureNavigationSelection()
         {
             EventSystem eventSystem = EventSystem.current;
-            if (eventSystem == null || _topScope == null || !_topScope.RequireSelectionWhenGamepad)
+            if (eventSystem == null || _topScope == null || !UXNavigationModeListener.RequiresSelectedForCurrentMode)
             {
                 return;
             }
@@ -318,9 +312,7 @@ namespace UnityEngine.UI
             }
 
             Selectable preferred = _topScope.GetPreferredSelectable();
-            _isEnsuringSelection = true;
             eventSystem.SetSelectedGameObject(preferred != null ? preferred.gameObject : null);
-            _isEnsuringSelection = false;
             GameObject selectedObject = eventSystem.currentSelectedGameObject;
             if (selectedObject != null)
             {
@@ -328,14 +320,16 @@ namespace UnityEngine.UI
             }
         }
 
-        private void RecordSelection(GameObject selectedObject)
+        private void CaptureTopScopeSelection()
         {
-            if (!_isEnsuringSelection && (_stateDirty || _suppressionDirty))
+            if (_topScope == null)
             {
-                FlushStateIfDirty(true);
+                return;
             }
 
-            if (_topScope != null && _topScope.IsSelectableOwnedAndValid(selectedObject))
+            EventSystem eventSystem = EventSystem.current;
+            GameObject selectedObject = eventSystem != null ? eventSystem.currentSelectedGameObject : null;
+            if (_topScope.IsSelectableOwnedAndValid(selectedObject))
             {
                 _topScope.RecordSelection(selectedObject);
             }
@@ -344,7 +338,7 @@ namespace UnityEngine.UI
         private void OnInputModeChanged(UXInputMode mode)
         {
             UXNavigationScope previousTopScope = _topScope;
-            if (mode == UXInputMode.Gamepad || mode == UXInputMode.Keyboard)
+            if (UXNavigationModeListener.RequiresSelectedForCurrentMode)
             {
                 FlushStateIfDirty(false, true);
             }
@@ -360,6 +354,7 @@ namespace UnityEngine.UI
             }
 
             UXNavigationScope previousTopScope = _topScope;
+            CaptureTopScopeSelection();
             _topScope = topScope;
             _suppressionDirty = true;
             if (notifyContext)
@@ -390,7 +385,7 @@ namespace UnityEngine.UI
                 _contextNotificationDirty = false;
             }
 
-            _cursorPolicy?.OnNavigationContextChanged(UXInputModeService.CurrentMode, previousTopScope, currentTopScope);
+            _cursorPolicy?.OnNavigationContextChanged(UXNavigationModeListener.CurrentMode, previousTopScope, currentTopScope);
         }
 
         private static bool IsHigherPriority(UXNavigationScope left, UXNavigationScope right)

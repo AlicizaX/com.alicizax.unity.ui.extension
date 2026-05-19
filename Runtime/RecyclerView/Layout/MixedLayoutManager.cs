@@ -1,6 +1,5 @@
 using System;
 using System.Buffers;
-using System.Collections.Generic;
 using UnityEngine;
 
 namespace AlicizaX.UI
@@ -15,15 +14,19 @@ namespace AlicizaX.UI
         private int cachedItemCount = -1;
         private bool positionCacheDirty = true;
 
-        private Dictionary<string, float> templateLengthByName;
+        private float[] templateLengthsById = Array.Empty<float>();
+        private byte[] templateLengthStates = Array.Empty<byte>();
         private Direction cachedTemplateDirection;
+        private bool hasCachedTemplateDirection;
 
         public MixedLayoutManager() { }
 
         public override void Release()
         {
             ReturnRentedArrays();
-            templateLengthByName?.Clear();
+            templateLengthsById = Array.Empty<float>();
+            templateLengthStates = Array.Empty<byte>();
+            hasCachedTemplateDirection = false;
         }
 
         private void ReturnRentedArrays()
@@ -222,26 +225,25 @@ namespace AlicizaX.UI
             RebuildPositionCache(itemCount);
         }
 
-        private float ResolveTemplateLength(string viewName)
+        private float ResolveTemplateLength(int templateId)
         {
-            if (templateLengthByName != null && cachedTemplateDirection == direction &&
-                templateLengthByName.TryGetValue(viewName, out float cached))
+            if (templateId < 0)
             {
-                return cached;
+                return 0f;
             }
 
-            if (templateLengthByName == null)
+            EnsureTemplateLengthCache();
+            if (templateId >= templateLengthsById.Length)
             {
-                templateLengthByName = new Dictionary<string, float>(4, StringComparer.Ordinal);
+                return 0f;
             }
 
-            if (cachedTemplateDirection != direction)
+            if (templateLengthStates[templateId] != 0)
             {
-                templateLengthByName.Clear();
-                cachedTemplateDirection = direction;
+                return templateLengthsById[templateId];
             }
 
-            ViewHolder template = viewProvider.GetTemplate(viewName);
+            ViewHolder template = viewProvider.GetTemplate(templateId);
             if (template == null)
             {
                 return 0f;
@@ -249,8 +251,27 @@ namespace AlicizaX.UI
 
             Vector2 size = template.SizeDelta;
             float length = direction == Direction.Vertical ? size.y : size.x;
-            templateLengthByName[viewName] = length;
+            templateLengthsById[templateId] = length;
+            templateLengthStates[templateId] = 1;
             return length;
+        }
+
+        private void EnsureTemplateLengthCache()
+        {
+            int templateCount = viewProvider != null ? viewProvider.TemplateCount : 0;
+            if (templateLengthsById.Length != templateCount)
+            {
+                templateLengthsById = templateCount > 0 ? new float[templateCount] : Array.Empty<float>();
+                templateLengthStates = templateCount > 0 ? new byte[templateCount] : Array.Empty<byte>();
+                hasCachedTemplateDirection = false;
+            }
+
+            if (!hasCachedTemplateDirection || cachedTemplateDirection != direction)
+            {
+                Array.Clear(templateLengthStates, 0, templateLengthStates.Length);
+                cachedTemplateDirection = direction;
+                hasCachedTemplateDirection = true;
+            }
         }
 
         private void RebuildPositionCache(int itemCount)
@@ -275,8 +296,8 @@ namespace AlicizaX.UI
 
             for (int i = 0; i < itemCount; i++)
             {
-                string viewName = adapter.GetViewName(i);
-                float templateLength = ResolveTemplateLength(viewName);
+                int templateId = adapter.GetTemplateId(i);
+                float templateLength = ResolveTemplateLength(templateId);
                 float len = i < lastIndex ? templateLength + spacingValue : templateLength;
 
                 itemPositions[i] = position;

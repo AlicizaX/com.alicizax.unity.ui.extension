@@ -6,7 +6,10 @@ namespace AlicizaX.UI
 
     public interface IMixedViewData : ISimpleViewData
     {
-        string TemplateName { get; set; }
+        /// <summary>
+        /// Inspector界面模板顺序下标
+        /// </summary>
+        int TemplateId { get; set; }
     }
 
     public interface IGroupViewData : IMixedViewData

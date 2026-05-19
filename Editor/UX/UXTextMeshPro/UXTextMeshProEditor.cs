@@ -97,6 +97,7 @@ namespace UnityEngine.UI
     {
         private SerializedProperty localizationID;
         private SerializedProperty m_localizationKey;
+        private SerializedProperty m_localizationFormatArgs;
 
         private readonly Dictionary<int, TableSelectionData> selectionById = new();
         private readonly Dictionary<string, TableSelectionData> selectionByKey = new(StringComparer.Ordinal);
@@ -169,6 +170,7 @@ namespace UnityEngine.UI
         {
             localizationID = serializedObject.FindProperty("m_localizationID");
             m_localizationKey = serializedObject.FindProperty("m_localizationKey");
+            m_localizationFormatArgs = serializedObject.FindProperty("m_localizationFormatArgs");
 
             RefreshLocalizationData();
             FindSelectSelection();
@@ -181,12 +183,16 @@ namespace UnityEngine.UI
             serializedObject.Update();
             RefreshLocalizationData();
             FindSelectSelection();
+            string previewLabel = GetPreviewLabel();
 
             using (new EditorGUI.DisabledScope(true))
             {
                 EditorGUILayout.PropertyField(m_localizationKey);
-                EditorGUILayout.LabelField("Text", GetPreviewLabel());
+                EditorGUILayout.LabelField("Text", previewLabel);
             }
+
+            SyncLocalizationFormatArgs(previewLabel);
+            DrawLocalizationFormatArgs();
 
             if (!localizationID.hasMultipleDifferentValues &&
                 localizationID.intValue > 0 &&
@@ -209,6 +215,98 @@ namespace UnityEngine.UI
 
             serializedObject.ApplyModifiedProperties();
             base.OnInspectorGUI();
+        }
+
+        private void SyncLocalizationFormatArgs(string previewLabel)
+        {
+            if (m_localizationFormatArgs == null ||
+                m_localizationKey == null ||
+                m_localizationKey.hasMultipleDifferentValues ||
+                m_localizationFormatArgs.hasMultipleDifferentValues)
+            {
+                return;
+            }
+
+            int count = GetFormatArgumentCount(previewLabel);
+            if (m_localizationFormatArgs.arraySize != count)
+            {
+                m_localizationFormatArgs.arraySize = count;
+            }
+        }
+
+        private void DrawLocalizationFormatArgs()
+        {
+            if (m_localizationFormatArgs == null ||
+                m_localizationFormatArgs.hasMultipleDifferentValues ||
+                m_localizationFormatArgs.arraySize == 0)
+            {
+                return;
+            }
+
+            EditorGUILayout.Space(2f);
+            EditorGUILayout.LabelField("Format Args", EditorStyles.boldLabel);
+
+            using (new EditorGUI.IndentLevelScope())
+            {
+                for (int i = 0; i < m_localizationFormatArgs.arraySize; i++)
+                {
+                    SerializedProperty element = m_localizationFormatArgs.GetArrayElementAtIndex(i);
+                    EditorGUILayout.PropertyField(element, new GUIContent($"{{{i}}}"));
+                }
+            }
+        }
+
+        private static int GetFormatArgumentCount(string format)
+        {
+            if (string.IsNullOrEmpty(format))
+            {
+                return 0;
+            }
+
+            int maxIndex = -1;
+            for (int i = 0; i < format.Length; i++)
+            {
+                if (format[i] != '{')
+                {
+                    continue;
+                }
+
+                if (i + 1 < format.Length && format[i + 1] == '{')
+                {
+                    i++;
+                    continue;
+                }
+
+                if (TryParseFormatArgument(format, i, out int index))
+                {
+                    maxIndex = Math.Max(maxIndex, index);
+                }
+            }
+
+            return maxIndex + 1;
+        }
+
+        private static bool TryParseFormatArgument(string format, int startIndex, out int index)
+        {
+            index = 0;
+
+            if (string.IsNullOrEmpty(format) || startIndex < 0 || startIndex >= format.Length || format[startIndex] != '{')
+            {
+                return false;
+            }
+
+            int currentIndex = startIndex + 1;
+            bool hasIndex = false;
+            while (currentIndex < format.Length && char.IsDigit(format[currentIndex]))
+            {
+                hasIndex = true;
+                index = index * 10 + format[currentIndex] - '0';
+                currentIndex++;
+            }
+
+            return hasIndex &&
+                   currentIndex < format.Length &&
+                   (format[currentIndex] == '}' || format[currentIndex] == ':' || format[currentIndex] == ',');
         }
 
         private void ApplySelection(string selectedKey)

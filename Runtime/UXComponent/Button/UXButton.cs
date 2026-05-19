@@ -34,9 +34,6 @@ namespace UnityEngine.UI
         public override void OnSelect(BaseEventData eventData)
         {
             base.OnSelect(eventData);
-#if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
-            UXNavigationRuntime.NotifySelection(gameObject);
-#endif
             if (eventData is PointerEventData)
                 return;
             PlayAudio(hoverAudioClip);
@@ -70,8 +67,8 @@ namespace UnityEngine.UI
 
         private void PlayAudio(AudioClip clip)
         {
-            if (clip && UXComponentExtensionsHelper.AudioHelper != null)
-                UXComponentExtensionsHelper.AudioHelper.PlayAudio(clip);
+            if (clip != null)
+                UXComponentExtensionsHelper.PlayAudio(clip);
         }
 
         [SerializeField] private Button.ButtonClickedEvent m_OnClick = new Button.ButtonClickedEvent();

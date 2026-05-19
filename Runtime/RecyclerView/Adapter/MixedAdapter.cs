@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace AlicizaX.UI
 {
-    public class MixedAdapter<TData> : Adapter<TData> where TData : IMixedViewData
+    public class MixedAdapter<TData> : Adapter<TData> where TData : class, IMixedViewData
     {
         public MixedAdapter(RecyclerView recyclerView) : base(recyclerView)
         {
@@ -12,11 +12,11 @@ namespace AlicizaX.UI
         {
         }
 
-        public override string GetViewName(int index)
+        public override int GetTemplateId(int index)
         {
             return index >= 0 && list != null && index < list.Count
-                ? list[index].TemplateName
-                : string.Empty;
+                ? list[index].TemplateId
+                : -1;
         }
     }
 }

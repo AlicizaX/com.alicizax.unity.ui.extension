@@ -2,12 +2,12 @@ namespace AlicizaX.UI
 {
     public interface IMixedObjectFactory<T> where T : class
     {
-        T Create(string typeName);
+        T Create(int templateId);
 
-        void Destroy(string typeName, T obj);
+        void Destroy(int templateId, T obj);
 
-        void Reset(string typeName, T obj);
+        void Reset(int templateId, T obj);
 
-        bool Validate(string typeName, T obj);
+        bool Validate(int templateId, T obj);
     }
 }

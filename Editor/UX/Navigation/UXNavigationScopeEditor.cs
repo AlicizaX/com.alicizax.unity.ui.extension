@@ -6,13 +6,12 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace AlicizaX.UI.Extension.Editor
+namespace AlicizaX.UI.UXNavigation
 {
     [CustomEditor(typeof(UXNavigationScope))]
     public sealed class UXNavigationScopeEditor : UnityEditor.Editor
     {
         private const float ToolbarHeight = 30f;
-        private const float SummaryRowHeight = 24f;
         private const float FieldRowHeight = 46f;
         private const float PolicyRowHeight = 24f;
         private const float BakedRowHeight = 22f;
@@ -23,39 +22,25 @@ namespace AlicizaX.UI.Extension.Editor
         private const float HeaderButtonWidth = 64f;
         private const float SymbolButtonWidth = 22f;
         private const float FieldLabelWidth = 54f;
-        private const float StatusStripeWidth = 3f;
 
         private readonly List<Selectable> _selectableBuffer = new List<Selectable>(64);
         private int _selectedBakedIndex = -1;
         private SerializedProperty _defaultSelectable;
         private SerializedProperty _holder;
         private SerializedProperty _bakedSelectables;
-        private SerializedProperty _runtimeSelectableCapacity;
         private SerializedProperty _rememberLastSelection;
-        private SerializedProperty _requireSelectionWhenGamepad;
         private SerializedProperty _blockLowerScopes;
-        private SerializedProperty _autoSelectFirstAvailable;
         private GUIContent _refreshCurrentContent;
         private GUIContent _refreshAllContent;
         private GUIContent _validateContent;
-
-        private enum StatusLevel
-        {
-            Ok,
-            Warning,
-            Error
-        }
 
         private void OnEnable()
         {
             _defaultSelectable = serializedObject.FindProperty("_defaultSelectable");
             _holder = serializedObject.FindProperty("_holder");
             _bakedSelectables = serializedObject.FindProperty("_bakedSelectables");
-            _runtimeSelectableCapacity = serializedObject.FindProperty("_runtimeSelectableCapacity");
             _rememberLastSelection = serializedObject.FindProperty("_rememberLastSelection");
-            _requireSelectionWhenGamepad = serializedObject.FindProperty("_requireSelectionWhenGamepad");
             _blockLowerScopes = serializedObject.FindProperty("_blockLowerScopes");
-            _autoSelectFirstAvailable = serializedObject.FindProperty("_autoSelectFirstAvailable");
             _refreshCurrentContent = new GUIContent("Refresh", "Refresh baked data for this scope");
             _refreshAllContent = new GUIContent("All", "Refresh all UXNavigationScope components under the prefab root");
             _validateContent = new GUIContent("Validate", "Validate all UXNavigationScope components under the prefab root");
@@ -70,7 +55,6 @@ namespace AlicizaX.UI.Extension.Editor
             EditorGUILayout.Space(6f);
             EditorGUILayout.BeginVertical(AlicizaEditorGUI.Styles.Panel);
             DrawToolbar(scope);
-            DrawSummary(scope);
             DrawReferenceRow();
             DrawPolicyRows();
             DrawBakedSelectableList();
@@ -109,45 +93,7 @@ namespace AlicizaX.UI.Extension.Editor
 
         private string BuildToolbarTitle(UXNavigationScope scope)
         {
-            int capacity = Mathf.Max(0, _runtimeSelectableCapacity.intValue);
-            return $"UX Navigation Scope    baked {_bakedSelectables.arraySize}    runtime {scope.RuntimeSelectableCount}/{capacity}";
-        }
-
-        private void DrawSummary(UXNavigationScope scope)
-        {
-            Rect rect = EditorGUILayout.GetControlRect(false, SummaryRowHeight);
-            AlicizaEditorGUI.DrawListItemBackground(rect, false, rect.Contains(Event.current.mousePosition));
-
-            bool skipped = scope.GetComponentInParent<UXNavigationSkip>(true) != null;
-            bool holderBound = _holder.objectReferenceValue != null;
-            bool defaultBound = _defaultSelectable.objectReferenceValue != null;
-
-            float x = rect.x + 8f;
-            float y = rect.y + 3f;
-            x = DrawInfoPill(new Rect(x, y, 78f, 18f), "Skip", skipped ? "On" : "Off", skipped ? StatusLevel.Warning : StatusLevel.Ok).xMax + 5f;
-            x = DrawInfoPill(new Rect(x, y, 92f, 18f), "Holder", holderBound ? "Bound" : "Missing", holderBound ? StatusLevel.Ok : StatusLevel.Error).xMax + 5f;
-            x = DrawInfoPill(new Rect(x, y, 96f, 18f), "Default", defaultBound ? "Set" : "Auto", defaultBound ? StatusLevel.Ok : StatusLevel.Warning).xMax + 5f;
-
-            if (x + 126f <= rect.xMax - 6f)
-            {
-                DrawInfoPill(new Rect(x, y, 126f, 18f), "Selectable", _bakedSelectables.arraySize.ToString(), _bakedSelectables.arraySize > 0 ? StatusLevel.Ok : StatusLevel.Warning);
-            }
-        }
-
-        private Rect DrawInfoPill(Rect rect, string label, string value, StatusLevel level)
-        {
-            if (Event.current.type == EventType.Repaint)
-            {
-                EditorGUI.DrawRect(rect, AlicizaEditorGUI.Colors.FieldRow);
-                EditorGUI.DrawRect(new Rect(rect.x, rect.y, StatusStripeWidth, rect.height), GetStatusColor(level));
-                AlicizaEditorGUI.DrawOutline(rect);
-            }
-
-            Rect labelRect = new Rect(rect.x + 7f, rect.y + 1f, rect.width * 0.48f, rect.height - 2f);
-            Rect valueRect = new Rect(labelRect.xMax, labelRect.y, rect.xMax - labelRect.xMax - 4f, labelRect.height);
-            GUI.Label(labelRect, label, AlicizaEditorGUI.Styles.MutedMiniLabel);
-            GUI.Label(valueRect, value, AlicizaEditorGUI.Styles.RowLabel);
-            return rect;
+            return $"UX Navigation Scope    baked {_bakedSelectables.arraySize}    runtime {scope.RuntimeSelectableCount}/{scope.RuntimeSelectableCapacity}";
         }
 
         private void DrawReferenceRow()
@@ -168,17 +114,10 @@ namespace AlicizaX.UI.Extension.Editor
             DrawFieldRowBackground(rect);
 
             Rect rowRect = new Rect(rect.x + 6f, rect.y + 3f, rect.width - 12f, 18f);
-            Rect capacityRect = new Rect(rowRect.x, rowRect.y, 132f, rowRect.height);
-            DrawInlineIntProperty(capacityRect, "Capacity", _runtimeSelectableCapacity);
-
-            float toggleX = capacityRect.xMax + 10f;
             float gap = 8f;
-            float remainingWidth = Mathf.Max(0f, rowRect.xMax - toggleX);
-            float toggleWidth = Mathf.Max(74f, Mathf.Floor((remainingWidth - gap * 3f) * 0.25f));
-            DrawInlineToggle(new Rect(toggleX, rowRect.y, toggleWidth, rowRect.height), _rememberLastSelection, "Remember");
-            DrawInlineToggle(new Rect(toggleX + (toggleWidth + gap), rowRect.y, toggleWidth, rowRect.height), _requireSelectionWhenGamepad, "Require");
-            DrawInlineToggle(new Rect(toggleX + (toggleWidth + gap) * 2f, rowRect.y, toggleWidth, rowRect.height), _blockLowerScopes, "Block");
-            DrawInlineToggle(new Rect(toggleX + (toggleWidth + gap) * 3f, rowRect.y, toggleWidth, rowRect.height), _autoSelectFirstAvailable, "Auto First");
+            float toggleWidth = Mathf.Max(86f, Mathf.Floor((rowRect.width - gap) / 2f));
+            DrawInlineToggle(new Rect(rowRect.x, rowRect.y, toggleWidth, rowRect.height), _rememberLastSelection, "Remember");
+            DrawInlineToggle(new Rect(rowRect.x + (toggleWidth + gap), rowRect.y, toggleWidth, rowRect.height), _blockLowerScopes, "Block");
         }
 
         private static void DrawFieldRowBackground(Rect rect)
@@ -193,14 +132,6 @@ namespace AlicizaX.UI.Extension.Editor
             Rect fieldRect = new Rect(labelRect.xMax + 4f, rect.y, rect.xMax - labelRect.xMax - 4f, rect.height);
             GUI.Label(labelRect, label, AlicizaEditorGUI.Styles.FieldLabel);
             property.objectReferenceValue = EditorGUI.ObjectField(fieldRect, property.objectReferenceValue, objectType, true);
-        }
-
-        private static void DrawInlineIntProperty(Rect rect, string label, SerializedProperty property)
-        {
-            Rect labelRect = new Rect(rect.x, rect.y, FieldLabelWidth, rect.height);
-            Rect fieldRect = new Rect(labelRect.xMax + 4f, rect.y, rect.xMax - labelRect.xMax - 4f, rect.height);
-            GUI.Label(labelRect, label, AlicizaEditorGUI.Styles.FieldLabel);
-            property.intValue = EditorGUI.IntField(fieldRect, property.intValue);
         }
 
         private static void DrawInlineToggle(Rect rect, SerializedProperty property, string label)
@@ -322,21 +253,6 @@ namespace AlicizaX.UI.Extension.Editor
             serializedObject.ApplyModifiedProperties();
             EditorUtility.SetDirty(target);
             GUIUtility.ExitGUI();
-        }
-
-        private static Color GetStatusColor(StatusLevel level)
-        {
-            switch (level)
-            {
-                case StatusLevel.Ok:
-                    return new Color(0.42f, 0.86f, 0.36f, 1f);
-                case StatusLevel.Warning:
-                    return new Color(0.96f, 0.72f, 0.22f, 1f);
-                case StatusLevel.Error:
-                    return new Color(0.94f, 0.32f, 0.30f, 1f);
-                default:
-                    return new Color(0.35f, 0.64f, 0.96f, 1f);
-            }
         }
 
         private void RefreshCurrentScopeBakeData()

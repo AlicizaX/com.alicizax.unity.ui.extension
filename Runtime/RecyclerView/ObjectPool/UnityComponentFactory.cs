@@ -15,13 +15,7 @@ namespace AlicizaX.UI
 
         public T Create()
         {
-            T obj = Object.Instantiate(template, parent);
-            if (obj is ViewHolder viewHolder)
-            {
-                viewHolder.RefreshInteractionCache();
-            }
-
-            return obj;
+            return Object.Instantiate(template, parent);
         }
 
         public void Destroy(T obj)

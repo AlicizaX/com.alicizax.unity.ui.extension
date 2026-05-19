@@ -65,6 +65,16 @@ namespace AlicizaX.UI
             return value;
         }
 
+        protected override float GetOverscroll(float pos)
+        {
+            return 0f;
+        }
+
+        protected override bool IsInBounds(float pos)
+        {
+            return true;
+        }
+
         protected override float GetScrollRate()
         {
             return 1f;

@@ -403,10 +403,10 @@ namespace AlicizaX.UI.Editor
             var recyclerView = target as RecyclerView;
             if (recyclerView == null) return;
 
-            var scrollerComponent = recyclerView.GetComponent<IScroller>();
+            var scrollerComponent = recyclerView.GetComponent<Scroller>();
             if (scrollerComponent != null)
             {
-                DrawComponentProperties(scrollerComponent as MonoBehaviour, "Scroller Properties");
+                DrawComponentProperties(scrollerComponent, "Scroller Properties");
             }
             else
             {
@@ -424,7 +424,7 @@ namespace AlicizaX.UI.Editor
         private void RefreshScrollerTypes()
         {
             _scrollerTypes = TypeCache.GetTypesDerivedFrom<IScroller>()
-                .Where(t => t.IsSubclassOf(typeof(MonoBehaviour)))
+                .Where(t => typeof(Scroller).IsAssignableFrom(t) && !t.IsAbstract)
                 .ToList();
 
             _scrollerTypeNames = _scrollerTypes
@@ -439,10 +439,10 @@ namespace AlicizaX.UI.Editor
             var recyclerView = target as RecyclerView;
             if (recyclerView == null) return;
 
-            var existingScroller = recyclerView.GetComponent<IScroller>();
+            var existingScroller = recyclerView.GetComponent<Scroller>();
             if (existingScroller != null)
             {
-                _scroller.objectReferenceValue = existingScroller as MonoBehaviour;
+                _scroller.objectReferenceValue = existingScroller;
                 _scrollerTypeName.stringValue = existingScroller.GetType().FullName;
                 _selectedScrollerIndex = _scrollerTypeNames.IndexOf(_scrollerTypeName.stringValue);
             }
@@ -481,19 +481,19 @@ namespace AlicizaX.UI.Editor
 
         private void RemoveExistingScroller(RecyclerView recyclerView)
         {
-            var oldScroller = recyclerView.GetComponent<IScroller>();
+            var oldScroller = recyclerView.GetComponent<Scroller>();
             if (oldScroller != null)
             {
-                Undo.DestroyObjectImmediate(oldScroller as MonoBehaviour);
+                Undo.DestroyObjectImmediate(oldScroller);
             }
         }
 
         private void AddNewScroller(RecyclerView recyclerView, int selectedIndex)
         {
             Type selectedType = _scrollerTypes[selectedIndex - 1];
-            var newScroller = Undo.AddComponent(recyclerView.gameObject, selectedType) as IScroller;
+            var newScroller = Undo.AddComponent(recyclerView.gameObject, selectedType) as Scroller;
 
-            _scroller.objectReferenceValue = newScroller as MonoBehaviour;
+            _scroller.objectReferenceValue = newScroller;
             _scrollerTypeName.stringValue = selectedType.FullName;
             _selectedScrollerIndex = selectedIndex;
 
@@ -978,9 +978,9 @@ namespace AlicizaX.UI.Editor
                     return;
                 }
 
-                if (!typeof(MonoBehaviour).IsAssignableFrom(type) || !typeof(IScroller).IsAssignableFrom(type))
+                if (!typeof(Scroller).IsAssignableFrom(type))
                 {
-                    Debug.LogWarning($"Type '{typeName}' is not a MonoBehaviour implementing IScroller. Cannot restore scroller.");
+                    Debug.LogWarning($"Type '{typeName}' is not a Scroller. Cannot restore scroller.");
                     _scrollerTypeName.stringValue = "";
                     return;
                 }
@@ -989,7 +989,7 @@ namespace AlicizaX.UI.Editor
                 if (recyclerView == null) return;
 
                 // 给目标 GameObject 添加组件（使用 Undo 以支持撤销）
-                var newComp = Undo.AddComponent(recyclerView.gameObject, type) as MonoBehaviour;
+                var newComp = Undo.AddComponent(recyclerView.gameObject, type) as Scroller;
                 if (newComp == null)
                 {
                     Debug.LogError($"Failed to add scroller component of type '{typeName}' to GameObject '{recyclerView.gameObject.name}'.");

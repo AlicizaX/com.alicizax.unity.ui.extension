@@ -708,6 +708,7 @@ namespace UnityEngine.UI
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void Dispatch(InputAction action, EHotkeyPressType pressType)
         {
+            RebuildTopLeafScopeImmediate();
             HotkeyScope leafScope = _topLeafScope;
             if (leafScope == null)
             {
@@ -769,11 +770,7 @@ namespace UnityEngine.UI
                     continue;
                 }
 
-                if (!IsScopeActive(scope)
-#if UX_NAVIGATION
-                    || !UXNavigationRuntime.IsHolderWithinTopScope(scope.Holder)
-#endif
-                   )
+                if (!IsScopeActive(scope))
                 {
                     continue;
                 }
@@ -802,9 +799,6 @@ namespace UnityEngine.UI
                 }
 
                 if (IsScopeActive(scope)
-#if UX_NAVIGATION
-                    && UXNavigationRuntime.IsHolderWithinTopScope(scope.Holder)
-#endif
                     && !_ancestorHolders.TryGetValue(scope.Holder, out _)
                     && (bestScope == null || CompareScopePriority(scope, bestScope) < 0))
                 {

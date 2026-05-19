@@ -7,10 +7,10 @@ namespace AlicizaX.UI
     {
         private const int DEFAULT_MAX_SIZE_PER_TYPE = 10;
 
-        private readonly Dictionary<string, Stack<T>> entries;
-        private readonly Dictionary<string, int> typeSize;
-        private readonly Dictionary<string, int> activeCountByType;
-        private readonly Dictionary<string, int> peakActiveByType;
+        private Stack<T>[] entries = Array.Empty<Stack<T>>();
+        private int[] typeSize = Array.Empty<int>();
+        private int[] activeCountByType = Array.Empty<int>();
+        private int[] peakActiveByType = Array.Empty<int>();
         private readonly IMixedObjectFactory<T> factory;
 
         private readonly int defaultMaxSizePerType;
@@ -32,64 +32,74 @@ namespace AlicizaX.UI
             {
                 throw new ArgumentException("The maxSize must be greater than 0.");
             }
-
-            entries = new Dictionary<string, Stack<T>>(StringComparer.Ordinal);
-            typeSize = new Dictionary<string, int>(StringComparer.Ordinal);
-            activeCountByType = new Dictionary<string, int>(StringComparer.Ordinal);
-            peakActiveByType = new Dictionary<string, int>(StringComparer.Ordinal);
         }
 
-        public T Allocate(string typeName)
+        public T Allocate(int templateId)
         {
-            if (disposed)
+            if (disposed || templateId < 0)
             {
                 return null;
             }
 
-            Stack<T> stack = GetOrCreateStack(typeName);
-            if (stack.Count > 0)
+            if (templateId < entries.Length)
             {
-                T obj = stack.Pop();
-                hitCount++;
-                TrackAllocate(typeName);
-                return obj;
+                Stack<T> stack = entries[templateId];
+                if (stack != null && stack.Count > 0)
+                {
+                    T obj = stack.Pop();
+                    hitCount++;
+                    TrackAllocate(templateId);
+                    return obj;
+                }
             }
 
             missCount++;
-            T created = factory.Create(typeName);
-            TrackAllocate(typeName);
+            T created = factory.Create(templateId);
+            if (created == null)
+            {
+                return null;
+            }
+
+            TrackAllocate(templateId);
             return created;
         }
 
-        public void Free(string typeName, T obj)
+        public void Free(int templateId, T obj)
         {
             if (obj == null) return;
 
-            if (!factory.Validate(typeName, obj))
+            if (templateId < 0)
             {
-                factory.Destroy(typeName, obj);
+                factory.Destroy(templateId, obj);
                 destroyCount++;
-                TrackFree(typeName);
+                return;
+            }
+
+            if (!factory.Validate(templateId, obj))
+            {
+                factory.Destroy(templateId, obj);
+                destroyCount++;
+                TrackFree(templateId);
                 return;
             }
 
             if (disposed)
             {
-                factory.Destroy(typeName, obj);
+                factory.Destroy(templateId, obj);
                 destroyCount++;
-                TrackFree(typeName);
+                TrackFree(templateId);
                 return;
             }
 
-            int maxSize = GetMaxSize(typeName);
-            Stack<T> stack = GetOrCreateStack(typeName);
+            int maxSize = GetMaxSize(templateId);
+            Stack<T> stack = GetOrCreateStack(templateId);
 
-            factory.Reset(typeName, obj);
-            TrackFree(typeName);
+            factory.Reset(templateId, obj);
+            TrackFree(templateId);
 
             if (stack.Count >= maxSize)
             {
-                factory.Destroy(typeName, obj);
+                factory.Destroy(templateId, obj);
                 destroyCount++;
                 return;
             }
@@ -97,24 +107,31 @@ namespace AlicizaX.UI
             stack.Push(obj);
         }
 
-        public int GetMaxSize(string typeName)
+        public int GetMaxSize(int templateId)
         {
-            if (typeSize.TryGetValue(typeName, out int size))
+            if (templateId < 0 || templateId >= typeSize.Length)
             {
-                return size;
+                return defaultMaxSizePerType;
             }
 
-            return defaultMaxSizePerType;
+            int size = typeSize[templateId];
+            return size > 0 ? size : defaultMaxSizePerType;
         }
 
-        public void SetMaxSize(string typeName, int value)
+        public void SetMaxSize(int templateId, int value)
         {
-            typeSize[typeName] = value;
+            if (templateId < 0)
+            {
+                return;
+            }
+
+            EnsureTemplateCapacity(templateId + 1);
+            typeSize[templateId] = value;
         }
 
-        public void EnsureCapacity(string typeName, int value)
+        public void EnsureCapacity(int templateId, int value)
         {
-            if (disposed)
+            if (disposed || templateId < 0)
             {
                 return;
             }
@@ -124,16 +141,17 @@ namespace AlicizaX.UI
                 throw new ArgumentOutOfRangeException(nameof(value));
             }
 
-            int current = GetMaxSize(typeName);
+            EnsureTemplateCapacity(templateId + 1);
+            int current = GetMaxSize(templateId);
             if (value > current)
             {
-                typeSize[typeName] = value;
+                typeSize[templateId] = value;
             }
         }
 
-        public void Warm(string typeName, int count)
+        public void Warm(int templateId, int count)
         {
-            if (disposed)
+            if (disposed || templateId < 0)
             {
                 return;
             }
@@ -143,27 +161,33 @@ namespace AlicizaX.UI
                 return;
             }
 
-            int maxSize = GetMaxSize(typeName);
+            int maxSize = GetMaxSize(templateId);
             if (count > maxSize)
             {
                 count = maxSize;
             }
 
-            Stack<T> stack = GetOrCreateStack(typeName);
+            Stack<T> stack = GetOrCreateStack(templateId);
             while (stack.Count < count)
             {
-                stack.Push(factory.Create(typeName));
+                T created = factory.Create(templateId);
+                if (created == null)
+                {
+                    break;
+                }
+
+                stack.Push(created);
             }
         }
 
-        public int GetActiveCount(string typeName)
+        public int GetActiveCount(int templateId)
         {
-            return activeCountByType.TryGetValue(typeName, out int count) ? count : 0;
+            return templateId >= 0 && templateId < activeCountByType.Length ? activeCountByType[templateId] : 0;
         }
 
-        public int GetPeakActiveCount(string typeName)
+        public int GetPeakActiveCount(int templateId)
         {
-            return peakActiveByType.TryGetValue(typeName, out int count) ? count : 0;
+            return templateId >= 0 && templateId < peakActiveByType.Length ? peakActiveByType[templateId] : 0;
         }
 
         public int HitCount => hitCount;
@@ -174,27 +198,39 @@ namespace AlicizaX.UI
 
         protected virtual void Clear()
         {
-            foreach (var kv in entries)
-            {
-                string typeName = kv.Key;
-                Stack<T> stack = kv.Value;
+            ClearInactiveStacks();
+        }
 
+        private void ClearInactiveStacks()
+        {
+            for (int templateId = 0; templateId < entries.Length; templateId++)
+            {
+                Stack<T> stack = entries[templateId];
                 if (stack == null || stack.Count <= 0) continue;
 
                 while (stack.Count > 0)
                 {
-                    factory.Destroy(typeName, stack.Pop());
+                    factory.Destroy(templateId, stack.Pop());
                     destroyCount++;
                 }
             }
+        }
 
-            entries.Clear();
-            typeSize.Clear();
-            activeCountByType.Clear();
-            peakActiveByType.Clear();
+        private void ClearAllState()
+        {
+            ClearInactiveStacks();
+            Array.Clear(entries, 0, entries.Length);
+            Array.Clear(typeSize, 0, typeSize.Length);
+            Array.Clear(activeCountByType, 0, activeCountByType.Length);
+            Array.Clear(peakActiveByType, 0, peakActiveByType.Length);
         }
 
         public void ClearInactive()
+        {
+            TrimInactive();
+        }
+
+        public void TrimInactive()
         {
             Clear();
         }
@@ -202,55 +238,66 @@ namespace AlicizaX.UI
         public void Dispose()
         {
             disposed = true;
-            Clear();
+            ClearAllState();
             GC.SuppressFinalize(this);
         }
 
-        private Stack<T> GetOrCreateStack(string typeName)
+        private Stack<T> GetOrCreateStack(int templateId)
         {
-            if (!entries.TryGetValue(typeName, out Stack<T> stack))
+            EnsureTemplateCapacity(templateId + 1);
+            Stack<T> stack = entries[templateId];
+            if (stack == null)
             {
-                stack = new Stack<T>(GetMaxSize(typeName));
-                entries[typeName] = stack;
+                stack = new Stack<T>(GetMaxSize(templateId));
+                entries[templateId] = stack;
             }
 
             return stack;
         }
 
-        private void TrackAllocate(string typeName)
+        private void TrackAllocate(int templateId)
         {
-            activeCountByType.TryGetValue(typeName, out int active);
-            active++;
-            activeCountByType[typeName] = active;
+            EnsureTemplateCapacity(templateId + 1);
+            int active = activeCountByType[templateId] + 1;
+            activeCountByType[templateId] = active;
 
-            peakActiveByType.TryGetValue(typeName, out int peak);
-            if (active > peak)
+            if (active > peakActiveByType[templateId])
             {
-                peakActiveByType[typeName] = active;
+                peakActiveByType[templateId] = active;
             }
         }
 
-        private void TrackFree(string typeName)
+        private void TrackFree(int templateId)
         {
-            activeCountByType.TryGetValue(typeName, out int active);
+            if (templateId < 0 || templateId >= activeCountByType.Length)
+            {
+                return;
+            }
+
+            int active = activeCountByType[templateId];
             if (active > 0)
             {
-                activeCountByType[typeName] = active - 1;
-            }
-
-            peakActiveByType.TryGetValue(typeName, out int peak);
-            int recommendedMax = peak + 1;
-            typeSize.TryGetValue(typeName, out int currentMax);
-            if (currentMax <= 0)
-            {
-                currentMax = defaultMaxSizePerType;
-            }
-
-            if (recommendedMax > currentMax)
-            {
-                typeSize[typeName] = recommendedMax;
+                activeCountByType[templateId] = active - 1;
             }
         }
-    }
 
+        private void EnsureTemplateCapacity(int required)
+        {
+            if (required <= entries.Length)
+            {
+                return;
+            }
+
+            int capacity = entries.Length > 0 ? entries.Length : 4;
+            while (capacity < required)
+            {
+                capacity <<= 1;
+            }
+
+            Array.Resize(ref entries, capacity);
+            Array.Resize(ref typeSize, capacity);
+            Array.Resize(ref activeCountByType, capacity);
+            Array.Resize(ref peakActiveByType, capacity);
+        }
+    }
 }

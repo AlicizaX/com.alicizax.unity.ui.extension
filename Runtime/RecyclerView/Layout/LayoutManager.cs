@@ -6,6 +6,7 @@ namespace AlicizaX.UI
     public abstract class LayoutManager : ILayoutManager
     {
         protected Vector2 viewportSize;
+
         public Vector2 ViewportSize
         {
             get => viewportSize;
@@ -13,6 +14,7 @@ namespace AlicizaX.UI
         }
 
         protected Vector2 contentSize;
+
         public Vector2 ContentSize
         {
             get => contentSize;
@@ -20,6 +22,7 @@ namespace AlicizaX.UI
         }
 
         protected Vector2 contentOffset;
+
         public Vector2 ContentOffset
         {
             get => contentOffset;
@@ -27,6 +30,7 @@ namespace AlicizaX.UI
         }
 
         protected Vector2 viewportOffset;
+
         public Vector2 ViewportOffset
         {
             get => viewportOffset;
@@ -34,14 +38,16 @@ namespace AlicizaX.UI
         }
 
         protected IAdapter adapter;
+
         public IAdapter Adapter
         {
             get => adapter;
-            set => adapter = value;
+            internal set => adapter = value;
         }
 
-        protected ViewProvider viewProvider;
-        public ViewProvider ViewProvider
+        internal ViewProvider viewProvider;
+
+        internal ViewProvider ViewProvider
         {
             get => viewProvider;
             set => viewProvider = value;
@@ -50,10 +56,11 @@ namespace AlicizaX.UI
         protected RectTransform cachedViewportRect;
 
         protected RecyclerView recyclerView;
+
         public virtual RecyclerView RecyclerView
         {
             get => recyclerView;
-            set
+            internal set
             {
                 recyclerView = value;
                 cachedViewportRect = value != null ? value.GetComponent<RectTransform>() : null;
@@ -61,6 +68,7 @@ namespace AlicizaX.UI
         }
 
         protected Direction direction;
+
         public Direction Direction
         {
             get => direction;
@@ -68,6 +76,7 @@ namespace AlicizaX.UI
         }
 
         protected Alignment alignment;
+
         public Alignment Alignment
         {
             get => alignment;
@@ -75,6 +84,7 @@ namespace AlicizaX.UI
         }
 
         protected Vector2 spacing;
+
         public Vector2 Spacing
         {
             get => spacing;
@@ -82,6 +92,7 @@ namespace AlicizaX.UI
         }
 
         protected Vector2 padding;
+
         public Vector2 Padding
         {
             get => padding;
@@ -89,6 +100,7 @@ namespace AlicizaX.UI
         }
 
         protected int unit = 1;
+
         public int Unit
         {
             get => unit;
@@ -100,9 +112,13 @@ namespace AlicizaX.UI
 
         public virtual bool UsesVirtualLayoutRange => false;
 
-        public LayoutManager() { }
+        public LayoutManager()
+        {
+        }
 
-        public virtual void Release() { }
+        public virtual void Release()
+        {
+        }
 
         public void SetContentSize()
         {
@@ -118,6 +134,11 @@ namespace AlicizaX.UI
 
         public void UpdateLayout()
         {
+            if (viewProvider == null)
+            {
+                return;
+            }
+
             int visibleCount = viewProvider.VisibleCount;
             for (int i = 0; i < visibleCount; i++)
             {
@@ -134,9 +155,7 @@ namespace AlicizaX.UI
         public virtual void Layout(ViewHolder viewHolder, int index)
         {
             Vector2 pos = CalculatePosition(index);
-            Vector3 position = direction == Direction.Vertical ?
-                                new Vector3(pos.x - contentOffset.x, -pos.y + contentOffset.y, 0) :
-                                new Vector3(pos.x - contentOffset.x, -pos.y + contentOffset.y, 0);
+            Vector3 position = direction == Direction.Vertical ? new Vector3(pos.x - contentOffset.x, -pos.y + contentOffset.y, 0) : new Vector3(pos.x - contentOffset.x, -pos.y + contentOffset.y, 0);
             viewHolder.RectTransform.anchoredPosition3D = position;
         }
 
@@ -207,7 +226,9 @@ namespace AlicizaX.UI
             return Mathf.Clamp(PositionToIndex(position), 0, adapter.GetItemCount() - 1);
         }
 
-        public virtual void DoItemAnimation() { }
+        public virtual void DoItemAnimation()
+        {
+        }
 
         protected static int WrapIndex(int index, int count)
         {
@@ -308,6 +329,7 @@ namespace AlicizaX.UI
             {
                 len = alignment == Alignment.Center ? Mathf.Min(contentSize.x, viewportSize.x) : viewportSize.x;
             }
+
             return len;
         }
 

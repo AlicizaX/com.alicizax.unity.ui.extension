@@ -2,7 +2,7 @@ namespace AlicizaX.UI
 {
     using Cysharp.Text;
 
-    public sealed class SimpleViewProvider : ViewProvider
+    internal sealed class SimpleViewProvider : ViewProvider
     {
         private readonly ObjectPool<ViewHolder> objectPool;
 
@@ -27,35 +27,33 @@ namespace AlicizaX.UI
 
         public SimpleViewProvider(RecyclerView recyclerView, ViewHolder[] templates) : base(recyclerView, templates)
         {
-            UnityComponentFactory<ViewHolder> factory = new(GetTemplate(), recyclerView.Content);
+            UnityComponentFactory<ViewHolder> factory = new(GetTemplate(0), recyclerView.Content);
             objectPool = new ObjectPool<ViewHolder>(factory, 0, 32);
         }
 
-        public override ViewHolder GetTemplate(string viewName = "")
+        public override ViewHolder GetTemplate(int templateId)
         {
             return templates != null && templates.Length > 0 ? templates[0] : null;
         }
 
-        public override ViewHolder Allocate(string viewName)
+        internal override ViewHolder Allocate(int templateId)
         {
             var viewHolder = objectPool.Allocate();
             viewHolder.SetPooledVisible(true);
             return viewHolder;
         }
 
-        public override void Free(string viewName, ViewHolder viewHolder)
+        internal override void Free(int templateId, ViewHolder viewHolder)
         {
             objectPool.Free(viewHolder);
         }
 
-        public override void Reset()
+        internal override void Reset()
         {
             Clear();
-            (Adapter as IItemRenderCacheOwner)?.ReleaseAllItemRenders();
-            objectPool.ClearInactive();
         }
 
-        public override void PreparePool()
+        internal override void PreparePool()
         {
             int warmCount = GetRecommendedWarmCount();
             if (warmCount <= 0)
@@ -63,10 +61,21 @@ namespace AlicizaX.UI
                 return;
             }
 
-            PrepareBucketPool(warmCount);
+            PrepareDataBucketStorage(warmCount);
 
             objectPool.EnsureCapacity(warmCount);
             objectPool.Warm(warmCount);
+        }
+
+        internal override void TrimInactive()
+        {
+            objectPool.TrimInactive();
+        }
+
+        internal override void Dispose()
+        {
+            Clear();
+            objectPool.Dispose();
         }
     }
 }

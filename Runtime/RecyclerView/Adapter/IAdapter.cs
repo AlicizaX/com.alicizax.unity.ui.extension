@@ -6,11 +6,13 @@ namespace AlicizaX.UI
 
         int GetRealCount();
 
-        string GetViewName(int index);
+        int GetTemplateId(int index);
 
         void OnBindViewHolder(ViewHolder viewHolder, int index);
 
         void OnRecycleViewHolder(ViewHolder viewHolder);
+
+        void SetChoiceIndex(int index);
 
         void NotifyDataChanged();
     }

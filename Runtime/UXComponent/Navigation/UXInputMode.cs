@@ -1,12 +1,11 @@
 #if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
-namespace UnityEngine.UI
+namespace AlicizaX.UI.UXNavigation
 {
     public enum UXInputMode : byte
     {
-        Pointer = 0,
+        Touch = 0,
         Keyboard = 1,
-        Gamepad = 2,
-        Touch = 3
+        Gamepad = 2
     }
 }
 #endif

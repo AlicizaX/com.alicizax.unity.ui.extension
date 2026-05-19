@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 using UnityEngine.EventSystems;
 
@@ -100,10 +101,6 @@ namespace AlicizaX.UI
             set => decelerationRate = Mathf.Clamp(value, 0.001f, 0.999f);
         }
 
-        protected ScrollerEvent scrollerEvent = new();
-        protected MoveStopEvent moveStopEvent = new();
-        protected DraggingEvent draggingEvent = new();
-
         private MotionState motionState;
         private float motionStartPosition;
         private float motionTargetPosition;
@@ -115,28 +112,17 @@ namespace AlicizaX.UI
         private bool notifyMoveStoppedOnComplete;
         private float dragStopTime;
         private float trackedVelocity;
+        private bool dragging;
 
         public float MaxPosition => direction == Direction.Vertical ? Mathf.Max(contentSize.y - viewSize.y, 0) : Mathf.Max(contentSize.x - viewSize.x, 0);
 
         public float ViewLength => direction == Direction.Vertical ? viewSize.y : viewSize.x;
 
-        public ScrollerEvent OnValueChanged
-        {
-            get => scrollerEvent;
-            set => scrollerEvent = value;
-        }
+        public event Action<float> OnValueChanged;
 
-        public MoveStopEvent OnMoveStoped
-        {
-            get => moveStopEvent;
-            set => moveStopEvent = value;
-        }
+        public event Action OnMoveStoped;
 
-        public DraggingEvent OnDragging
-        {
-            get => draggingEvent;
-            set => draggingEvent = value;
-        }
+        public event Action<bool> OnDragging;
 
         public bool InputEnabled { get; set; } = true;
 
@@ -178,6 +164,7 @@ namespace AlicizaX.UI
 
         public virtual void ScrollTo(float position, bool smooth = false)
         {
+            position = ClampPosition(position);
             if (Mathf.Approximately(position, this.position)) return;
 
             StopMovement();
@@ -194,6 +181,7 @@ namespace AlicizaX.UI
 
         public virtual void ScrollToDuration(float position, float duration)
         {
+            position = ClampPosition(position);
             if (Mathf.Approximately(position, this.position))
             {
                 return;
@@ -227,19 +215,36 @@ namespace AlicizaX.UI
                 return;
             }
 
-            OnDragging?.Invoke(true);
+            if (!dragging)
+            {
+                dragging = true;
+                OnDragging?.Invoke(true);
+            }
+
             StopMovement();
         }
 
         public void OnEndDrag(PointerEventData eventData)
         {
-            if (!InputEnabled)
+            if (dragging)
             {
+                dragging = false;
+                OnDragging?.Invoke(false);
+            }
+
+            if (InputEnabled)
+            {
+                StartReleaseMotion();
                 return;
             }
 
-            StartReleaseMotion();
-            OnDragging?.Invoke(false);
+            StopMovement();
+            float clampedPosition = ClampPosition(position);
+            if (!Mathf.Approximately(clampedPosition, position))
+            {
+                position = clampedPosition;
+                OnValueChanged?.Invoke(position);
+            }
         }
 
         public void OnDrag(PointerEventData eventData)
@@ -405,6 +410,23 @@ namespace AlicizaX.UI
             notifyMoveStoppedOnComplete = false;
         }
 
+        internal void ResetMotion(float position)
+        {
+            motionState = MotionState.Idle;
+            this.position = ClampPosition(position);
+            velocity = 0f;
+            inertiaVelocity = 0f;
+            trackedVelocity = 0f;
+            wheelTargetPosition = this.position;
+            notifyMoveStoppedOnComplete = false;
+            dragStopTime = 0f;
+            if (dragging)
+            {
+                dragging = false;
+                OnDragging?.Invoke(false);
+            }
+        }
+
         private void StartReleaseMotion()
         {
             if (StartElasticMotion())
@@ -513,14 +535,14 @@ namespace AlicizaX.UI
             }
         }
 
-        private float GetOverscroll(float pos)
+        protected virtual float GetOverscroll(float pos)
         {
             if (pos < 0f) return pos;
             if (pos > MaxPosition) return pos - MaxPosition;
             return 0f;
         }
 
-        private bool IsInBounds(float pos)
+        protected virtual bool IsInBounds(float pos)
         {
             return pos >= 0f && pos <= MaxPosition;
         }

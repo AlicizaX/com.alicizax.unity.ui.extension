@@ -1,6 +1,8 @@
 #if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
-namespace UnityEngine.UI
+namespace AlicizaX.UI.UXNavigation
 {
+    using UnityEngine;
+
     [DisallowMultipleComponent]
     [AddComponentMenu("UI/UX Navigation Skip")]
     public sealed class UXNavigationSkip : MonoBehaviour

@@ -128,7 +128,7 @@ namespace AlicizaX.UI
                 position = len + viewLength > contentSize.x ? contentSize.x - viewportSize.x : len;
             }
 
-            return position;
+            return Mathf.Max(position, 0f);
         }
 
         public override int PositionToIndex(float position)

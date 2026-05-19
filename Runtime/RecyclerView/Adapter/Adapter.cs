@@ -3,25 +3,30 @@ using System.Collections.Generic;
 
 namespace AlicizaX.UI
 {
-    internal interface IItemRenderCacheOwner
+    /// <summary>
+    /// RecyclerView 普通列表适配器，负责维护数据源并驱动列表项绑定、刷新和选择状态。
+    /// </summary>
+    /// <typeparam name="T">列表数据类型。</typeparam>
+    public class Adapter<T> : IAdapter where T : class, ISimpleViewData
     {
-        void ReleaseAllItemRenders();
-    }
-
-    internal interface IItemRenderPrewarmer
-    {
-        void PrewarmItemRender(ViewHolder viewHolder, string viewName);
-    }
-
-    public class Adapter<T> : IAdapter, IItemRenderCacheOwner, IItemRenderPrewarmer where T : ISimpleViewData
-    {
+        /// <summary>
+        /// 当前适配器绑定的 RecyclerView 组件。
+        /// </summary>
         protected RecyclerView recyclerView;
+
+        /// <summary>
+        /// 当前适配器维护的业务数据列表。
+        /// </summary>
         protected List<T> list;
 
+        /// <summary>
+        /// 当前业务选中索引，-1 表示没有选中项。
+        /// </summary>
         protected int choiceIndex = -1;
-        private readonly Dictionary<string, ItemRenderResolver.ItemRenderDefinition> itemRenderDefinitions = new(StringComparer.Ordinal);
-        private ItemRenderResolver.ItemRenderDefinition defaultItemRenderDefinition;
 
+        /// <summary>
+        /// 当前业务选中索引，赋值时会同步刷新可见项选中状态。
+        /// </summary>
         public int ChoiceIndex
         {
             get => choiceIndex;
@@ -30,66 +35,85 @@ namespace AlicizaX.UI
 
         internal Action<int> OnChoiceIndexChanged;
 
+        /// <summary>
+        /// 创建普通列表适配器。
+        /// </summary>
+        /// <param name="recyclerView">要绑定的 RecyclerView 组件。</param>
         public Adapter(RecyclerView recyclerView) : this(recyclerView, new List<T>())
         {
         }
 
+        /// <summary>
+        /// 使用指定数据源创建普通列表适配器。
+        /// </summary>
+        /// <param name="recyclerView">要绑定的 RecyclerView 组件。</param>
+        /// <param name="list">初始业务数据列表。</param>
         public Adapter(RecyclerView recyclerView, List<T> list)
         {
             this.recyclerView = recyclerView;
             this.list = list ?? new List<T>();
         }
 
+        /// <summary>
+        /// 获取当前适配器对外展示的列表项数量。
+        /// </summary>
+        /// <returns>列表项数量。</returns>
         public virtual int GetItemCount()
         {
             return list == null ? 0 : list.Count;
         }
 
+        /// <summary>
+        /// 获取真实业务数据数量，普通列表中与展示数量一致。
+        /// </summary>
+        /// <returns>真实业务数据数量。</returns>
         public virtual int GetRealCount()
         {
             return GetItemCount();
         }
 
-        public virtual string GetViewName(int index)
+        /// <summary>
+        /// 获取指定索引使用的模板 ID。
+        /// </summary>
+        /// <param name="index">数据索引。</param>
+        /// <returns>模板 ID。</returns>
+        public virtual int GetTemplateId(int index)
         {
-            return "";
+            return 0;
         }
 
+        /// <summary>
+        /// 将指定索引的数据绑定到列表项视图。
+        /// </summary>
+        /// <param name="viewHolder">要绑定的列表项视图持有者。</param>
+        /// <param name="index">数据索引。</param>
         public virtual void OnBindViewHolder(ViewHolder viewHolder, int index)
         {
             if (viewHolder == null) return;
-            if (!TryGetBindData(index, out var data)) return;
-
-            string viewName = GetViewName(index);
-            viewHolder.AdvanceBindingVersion();
-            viewHolder.DataIndex = index;
-            if (TryGetOrCreateItemRender(viewHolder, viewName, out var itemRender))
+            if (!TryGetBindData(index, out var data) || data == null)
             {
-                if (itemRender is ITypedItemRender<T> typedItemRender)
-                {
-                    typedItemRender.BindData(data, index);
-                }
-
-                bool selected = index == choiceIndex;
-                itemRender.SyncSelection(selected);
+                viewHolder.Bind(null, index);
                 return;
             }
 
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-            Log.Error("RecyclerView item render is missing.");
-#endif
+            viewHolder.Bind(data, index);
+            viewHolder.ApplySelection(index == choiceIndex, true);
         }
 
+        /// <summary>
+        /// 当列表项视图被回收时调用，用于清理视图状态。
+        /// </summary>
+        /// <param name="viewHolder">被回收的列表项视图持有者。</param>
         public virtual void OnRecycleViewHolder(ViewHolder viewHolder)
         {
             if (viewHolder == null) return;
 
-            if (TryGetItemRender(viewHolder, out var itemRender))
-            {
-                itemRender.Unbind();
-            }
+            viewHolder.Clear();
         }
 
+        /// <summary>
+        /// 通知列表数据整体发生变化，并重新布局刷新。
+        /// </summary>
         public virtual void NotifyDataChanged()
         {
             CoerceChoiceIndex();
@@ -97,6 +121,10 @@ namespace AlicizaX.UI
             recyclerView.Refresh();
         }
 
+        /// <summary>
+        /// 替换当前业务数据列表，并重置 RecyclerView 后刷新。
+        /// </summary>
+        /// <param name="list">新的业务数据列表。</param>
         public virtual void SetList(List<T> list)
         {
             this.list = list ?? new List<T>();
@@ -104,6 +132,11 @@ namespace AlicizaX.UI
             NotifyDataChanged();
         }
 
+        /// <summary>
+        /// 通知指定索引的数据发生变化。
+        /// </summary>
+        /// <param name="index">发生变化的数据索引。</param>
+        /// <param name="relayout">是否需要重新布局；当尺寸或位置可能变化时传入 true。</param>
         public virtual void NotifyItemChanged(int index, bool relayout = false)
         {
             if (index < 0 || index >= GetRealCount())
@@ -122,6 +155,12 @@ namespace AlicizaX.UI
             recyclerView.RebindVisibleDataIndex(index);
         }
 
+        /// <summary>
+        /// 通知指定范围内的数据发生变化。
+        /// </summary>
+        /// <param name="index">起始数据索引。</param>
+        /// <param name="count">变化的数据数量。</param>
+        /// <param name="relayout">是否需要重新布局；当尺寸或位置可能变化时传入 true。</param>
         public virtual void NotifyItemRangeChanged(int index, int count, bool relayout = false)
         {
             if (count <= 0 || index < 0 || index >= GetRealCount())
@@ -140,6 +179,9 @@ namespace AlicizaX.UI
             recyclerView.RebindVisibleDataRange(index, count);
         }
 
+        /// <summary>
+        /// 通知列表插入了一个数据项，并重新布局刷新。
+        /// </summary>
         public virtual void NotifyItemInserted()
         {
             CoerceChoiceIndex();
@@ -147,6 +189,10 @@ namespace AlicizaX.UI
             recyclerView.Refresh();
         }
 
+        /// <summary>
+        /// 通知列表插入了一段数据项，并重新布局刷新。
+        /// </summary>
+        /// <param name="count">插入的数据数量。</param>
         public virtual void NotifyItemRangeInserted(int count)
         {
             if (count <= 0)
@@ -159,6 +205,9 @@ namespace AlicizaX.UI
             recyclerView.Refresh();
         }
 
+        /// <summary>
+        /// 通知列表移除了一个数据项，并重新布局刷新。
+        /// </summary>
         public virtual void NotifyItemRemoved()
         {
             CoerceChoiceIndex();
@@ -166,6 +215,10 @@ namespace AlicizaX.UI
             recyclerView.Refresh();
         }
 
+        /// <summary>
+        /// 通知列表移除了一段数据项，并重新布局刷新。
+        /// </summary>
+        /// <param name="count">移除的数据数量。</param>
         public virtual void NotifyItemRangeRemoved(int count)
         {
             if (count <= 0)
@@ -178,62 +231,11 @@ namespace AlicizaX.UI
             recyclerView.Refresh();
         }
 
-        public void RegisterItemRender(Type itemRenderType)
-        {
-            var definition = ItemRenderResolver.GetOrCreate(itemRenderType);
-            if (string.IsNullOrEmpty(definition.HolderTypeName))
-            {
-                ReleaseCachedItemRenders(string.Empty);
-                defaultItemRenderDefinition = definition;
-                return;
-            }
-
-            ReleaseCachedItemRenders(definition.HolderTypeName);
-            itemRenderDefinitions[definition.HolderTypeName] = definition;
-        }
-
-
-        public bool UnregisterItemRender(Type itemRenderType)
-        {
-            if (itemRenderType == null)
-            {
-                return false;
-            }
-
-            if (defaultItemRenderDefinition != null && defaultItemRenderDefinition.ItemRenderType == itemRenderType)
-            {
-                defaultItemRenderDefinition = null;
-                ReleaseCachedItemRenders(string.Empty);
-                return true;
-            }
-
-            string removedViewName = null;
-            foreach (var pair in itemRenderDefinitions)
-            {
-                if (pair.Value != null && pair.Value.ItemRenderType == itemRenderType)
-                {
-                    removedViewName = pair.Key;
-                    break;
-                }
-            }
-
-            if (removedViewName != null)
-            {
-                itemRenderDefinitions.Remove(removedViewName);
-                ReleaseCachedItemRenders(removedViewName);
-                return true;
-            }
-
-            return false;
-        }
-
-        public void ClearItemRenderRegistrations()
-        {
-            ReleaseAllItemRenders();
-            itemRenderDefinitions.Clear();
-            defaultItemRenderDefinition = null;
-        }
-
+        /// <summary>
+        /// 获取指定索引对应的业务数据。
+        /// </summary>
+        /// <param name="index">数据索引。</param>
+        /// <returns>如果索引有效则返回业务数据；否则返回 null。</returns>
         public T GetData(int index)
         {
             if (index < 0 || index >= GetItemCount()) return default;
@@ -241,7 +243,11 @@ namespace AlicizaX.UI
             return list[index];
         }
 
-        public void Add(T item)
+        /// <summary>
+        /// 向列表末尾添加一个业务数据项，并刷新列表。
+        /// </summary>
+        /// <param name="item">要添加的业务数据。</param>
+        public virtual void Add(T item)
         {
             if (list == null)
             {
@@ -252,7 +258,7 @@ namespace AlicizaX.UI
             NotifyItemInserted();
         }
 
-        public void AddRange(IEnumerable<T> collection)
+        internal virtual void AddRange(IEnumerable<T> collection)
         {
             if (collection == null)
             {
@@ -269,13 +275,18 @@ namespace AlicizaX.UI
             NotifyDataChanged();
         }
 
-        public void Insert(int index, T item)
+        /// <summary>
+        /// 在指定索引插入一个业务数据项，并刷新列表。
+        /// </summary>
+        /// <param name="index">插入位置索引。</param>
+        /// <param name="item">要插入的业务数据。</param>
+        public virtual void Insert(int index, T item)
         {
             list.Insert(index, item);
             NotifyItemInserted();
         }
 
-        public void InsertRange(int index, IEnumerable<T> collection)
+        internal virtual void InsertRange(int index, IEnumerable<T> collection)
         {
             if (collection == null)
             {
@@ -292,13 +303,21 @@ namespace AlicizaX.UI
             NotifyDataChanged();
         }
 
-        public void Remove(T item)
+        /// <summary>
+        /// 移除指定业务数据项，并刷新列表。
+        /// </summary>
+        /// <param name="item">要移除的业务数据。</param>
+        public virtual void Remove(T item)
         {
             int index = list.IndexOf(item);
             RemoveAt(index);
         }
 
-        public void RemoveAt(int index)
+        /// <summary>
+        /// 移除指定索引处的业务数据项，并刷新列表。
+        /// </summary>
+        /// <param name="index">要移除的数据索引。</param>
+        public virtual void RemoveAt(int index)
         {
             if (index < 0 || index >= GetItemCount()) return;
 
@@ -306,19 +325,27 @@ namespace AlicizaX.UI
             NotifyItemRemoved();
         }
 
-        public void RemoveRange(int index, int count)
+        /// <summary>
+        /// 移除指定范围内的业务数据项，并刷新列表。
+        /// </summary>
+        /// <param name="index">起始数据索引。</param>
+        /// <param name="count">要移除的数据数量。</param>
+        public virtual void RemoveRange(int index, int count)
         {
             list.RemoveRange(index, count);
             NotifyItemRangeRemoved(count);
         }
 
-        public void RemoveAll(Predicate<T> match)
+        internal virtual void RemoveAll(Predicate<T> match)
         {
             list.RemoveAll(match);
             NotifyDataChanged();
         }
 
-        public void Clear()
+        /// <summary>
+        /// 清空所有业务数据，并刷新列表。
+        /// </summary>
+        public virtual void Clear()
         {
             if (list == null || list.Count == 0)
             {
@@ -330,25 +357,37 @@ namespace AlicizaX.UI
             NotifyItemRangeRemoved(count);
         }
 
-        public void Reverse(int index, int count)
+        /// <summary>
+        /// 反转指定范围内的业务数据顺序，并刷新列表。
+        /// </summary>
+        /// <param name="index">起始数据索引。</param>
+        /// <param name="count">要反转的数据数量。</param>
+        public virtual void Reverse(int index, int count)
         {
             list.Reverse(index, count);
             NotifyDataChanged();
         }
 
-        public void Reverse()
+        /// <summary>
+        /// 反转全部业务数据顺序，并刷新列表。
+        /// </summary>
+        public virtual void Reverse()
         {
             list.Reverse();
             NotifyDataChanged();
         }
 
-        public void Sort(Comparison<T> comparison)
+        internal virtual void Sort(Comparison<T> comparison)
         {
             list.Sort(comparison);
             NotifyDataChanged();
         }
 
-        protected void SetChoiceIndex(int index)
+        /// <summary>
+        /// 设置业务选中索引，并同步刷新旧选中项和新选中项的可见选中状态。
+        /// </summary>
+        /// <param name="index">目标选中索引；传入 -1 表示清除选择。</param>
+        public void SetChoiceIndex(int index)
         {
             int itemCount = GetRealCount();
             if (itemCount <= 0)
@@ -365,23 +404,36 @@ namespace AlicizaX.UI
             }
 
             if (index == choiceIndex) return;
-            int previousChoice = choiceIndex;
 
-            if (choiceIndex != -1 && TryGetViewHolder(choiceIndex, out var oldHolder))
-            {
-                UpdateSelectionState(oldHolder, false);
-            }
-
+            int previousIndex = choiceIndex;
             choiceIndex = index;
 
-            if (choiceIndex != -1 && TryGetViewHolder(choiceIndex, out var newHolder))
-            {
-                UpdateSelectionState(newHolder, true);
-            }
-
+            ApplySelection(previousIndex, false);
+            ApplySelection(choiceIndex, true);
             OnChoiceIndexChanged?.Invoke(choiceIndex);
         }
 
+        /// <summary>
+        /// 刷新指定索引可见列表项的选中状态。
+        /// </summary>
+        /// <param name="index">数据索引。</param>
+        /// <param name="selected">是否选中。</param>
+        protected void ApplySelection(int index, bool selected)
+        {
+            if (recyclerView == null || index < 0)
+            {
+                return;
+            }
+
+            recyclerView.ApplyVisibleSelection(index, selected);
+        }
+
+        /// <summary>
+        /// 尝试获取指定索引用于绑定视图的数据。
+        /// </summary>
+        /// <param name="index">数据索引。</param>
+        /// <param name="data">获取到的绑定数据。</param>
+        /// <returns>如果成功获取绑定数据，则返回 true；否则返回 false。</returns>
         protected virtual bool TryGetBindData(int index, out T data)
         {
             if (list == null || index < 0 || index >= list.Count)
@@ -392,142 +444,6 @@ namespace AlicizaX.UI
 
             data = list[index];
             return true;
-        }
-
-        private bool TryGetViewHolder(int index, out ViewHolder viewHolder)
-        {
-            viewHolder = recyclerView.ViewProvider.GetViewHolderByDataIndex(index);
-            return viewHolder != null;
-        }
-
-        private static bool TryGetItemRender(ViewHolder viewHolder, out IItemRender itemRender)
-        {
-            itemRender = viewHolder != null ? viewHolder.CachedItemRender : null;
-            return itemRender != null;
-        }
-
-        private static void ReleaseItemRender(ViewHolder viewHolder)
-        {
-            IItemRender itemRender = viewHolder != null ? viewHolder.CachedItemRender : null;
-            if (itemRender == null)
-            {
-                return;
-            }
-
-            itemRender.Unbind();
-            if (itemRender is ItemRenderBase itemRenderBase)
-            {
-                itemRenderBase.Detach();
-            }
-
-            viewHolder.CachedItemRender = null;
-            viewHolder.CachedItemRenderViewName = null;
-        }
-
-        private void UpdateSelectionState(ViewHolder viewHolder, bool selected)
-        {
-            if (TryGetItemRender(viewHolder, out IItemRender itemRender))
-            {
-                itemRender.UpdateSelection(selected);
-            }
-        }
-
-        private bool TryGetItemRenderDefinition(string viewName, out ItemRenderResolver.ItemRenderDefinition definition)
-        {
-            if (!string.IsNullOrEmpty(viewName) && itemRenderDefinitions.TryGetValue(viewName, out definition))
-            {
-                return definition != null;
-            }
-
-            if (string.IsNullOrEmpty(viewName) && defaultItemRenderDefinition == null && itemRenderDefinitions.Count == 1)
-            {
-                foreach (var pair in itemRenderDefinitions)
-                {
-                    definition = pair.Value;
-                    return definition != null;
-                }
-            }
-
-            definition = defaultItemRenderDefinition;
-            return definition != null;
-        }
-
-        private bool TryGetOrCreateItemRender(ViewHolder viewHolder, string viewName, out IItemRender itemRender)
-        {
-            if (viewHolder == null)
-            {
-                itemRender = null;
-                return false;
-            }
-
-            if (viewHolder.CachedItemRender != null)
-            {
-                if (string.Equals(viewHolder.CachedItemRenderViewName, viewName, StringComparison.Ordinal))
-                {
-                    itemRender = viewHolder.CachedItemRender;
-                    return true;
-                }
-
-                ReleaseItemRender(viewHolder);
-            }
-
-            if (!TryGetItemRenderDefinition(viewName, out var definition))
-            {
-                itemRender = null;
-                return false;
-            }
-
-            itemRender = definition.Create(viewHolder, recyclerView, this, SetChoiceIndex);
-            if (itemRender == null)
-            {
-                return false;
-            }
-
-            viewHolder.CachedItemRender = itemRender;
-            viewHolder.CachedItemRenderViewName = viewName;
-            return true;
-        }
-
-        void IItemRenderCacheOwner.ReleaseAllItemRenders()
-        {
-            ReleaseAllItemRenders();
-        }
-
-        void IItemRenderPrewarmer.PrewarmItemRender(ViewHolder viewHolder, string viewName)
-        {
-            TryGetOrCreateItemRender(viewHolder, viewName, out _);
-        }
-
-        private void ReleaseAllItemRenders()
-        {
-            if (recyclerView?.ViewProvider == null)
-            {
-                return;
-            }
-
-            for (int i = 0; i < recyclerView.ViewProvider.VisibleCount; i++)
-            {
-                ReleaseItemRender(recyclerView.ViewProvider.GetVisibleViewHolder(i));
-            }
-        }
-
-        private void ReleaseCachedItemRenders(string viewName)
-        {
-            if (recyclerView?.ViewProvider == null)
-            {
-                return;
-            }
-
-            for (int i = 0; i < recyclerView.ViewProvider.VisibleCount; i++)
-            {
-                ViewHolder viewHolder = recyclerView.ViewProvider.GetVisibleViewHolder(i);
-                if (viewHolder == null || !string.Equals(viewHolder.CachedItemRenderViewName, viewName, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                ReleaseItemRender(viewHolder);
-            }
         }
 
         private void CoerceChoiceIndex()

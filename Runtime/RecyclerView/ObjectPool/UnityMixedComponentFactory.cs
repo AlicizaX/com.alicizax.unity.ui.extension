@@ -1,15 +1,12 @@
 namespace AlicizaX.UI
 {
-    using System.Collections.Generic;
     using UnityEngine;
 
     public class UnityMixedComponentFactory<T> : IMixedObjectFactory<T> where T : Component
     {
         protected T template;
+        protected T[] templates;
         protected Transform parent;
-        protected List<T> list;
-
-        private Dictionary<string, T> dict = new();
 
         public UnityMixedComponentFactory(T template, Transform parent)
         {
@@ -17,26 +14,24 @@ namespace AlicizaX.UI
             this.parent = parent;
         }
 
-        public UnityMixedComponentFactory(List<T> list, Transform parent)
+        public UnityMixedComponentFactory(T[] templates, Transform parent)
         {
-            this.list = list;
+            this.templates = templates;
             this.parent = parent;
+        }
 
-            foreach (var data in list)
+        public T Create(int templateId)
+        {
+            T source = GetTemplate(templateId);
+            if (source == null)
             {
-                dict[data.name] = data;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                Log.Error("Mixed object template was not found.");
+#endif
+                return null;
             }
-        }
 
-        public UnityMixedComponentFactory(Dictionary<string, T> dict, Transform parent)
-        {
-            this.dict = dict;
-            this.parent = parent;
-        }
-
-        public T Create(string typeName)
-        {
-            T obj = Object.Instantiate(dict[typeName], parent);
+            T obj = Object.Instantiate(source, parent);
             if (obj.transform is RectTransform rectTransform)
             {
                 rectTransform.anchoredPosition3D = Vector3.zero;
@@ -50,20 +45,15 @@ namespace AlicizaX.UI
                 obj.transform.localScale = Vector3.one;
             }
 
-            if (obj is ViewHolder viewHolder)
-            {
-                viewHolder.RefreshInteractionCache();
-            }
-
             return obj;
         }
 
-        public void Destroy(string typeName, T obj)
+        public void Destroy(int templateId, T obj)
         {
             Object.Destroy(obj.gameObject);
         }
 
-        public void Reset(string typeName, T obj)
+        public void Reset(int templateId, T obj)
         {
             if (obj is ViewHolder viewHolder)
             {
@@ -74,9 +64,19 @@ namespace AlicizaX.UI
             obj.gameObject.SetActive(false);
         }
 
-        public bool Validate(string typeName, T obj)
+        public bool Validate(int templateId, T obj)
         {
             return true;
+        }
+
+        private T GetTemplate(int templateId)
+        {
+            if (templates != null && templateId >= 0 && templateId < templates.Length)
+            {
+                return templates[templateId];
+            }
+
+            return template;
         }
     }
 
