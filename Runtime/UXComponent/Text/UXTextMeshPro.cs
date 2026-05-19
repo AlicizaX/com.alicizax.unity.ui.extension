@@ -9,7 +9,9 @@ namespace UnityEngine.UI
 {
     public class UXTextMeshPro : TextMeshProUGUI
     {
+#pragma warning disable CS0414
         [SerializeField] private int m_localizationID;
+#pragma warning restore CS0414
         [SerializeField] private string m_localizationKey = "";
         [SerializeField] private string[] m_localizationFormatArgs = Array.Empty<string>();
 
