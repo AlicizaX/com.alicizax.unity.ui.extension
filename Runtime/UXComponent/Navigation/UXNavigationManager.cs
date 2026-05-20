@@ -7,6 +7,9 @@ namespace AlicizaX.UI.UXNavigation
     using UnityEngine;
     using UnityEngine.UI;
 
+    /// <summary>
+    /// 如有需要实现接口对接自己的业务逻辑
+    /// </summary>
     public interface IUXNavigationModeChangeProcessor
     {
         void OnNavigationModeChanged(UXInputMode mode, UXNavigationScope previousTopScope, UXNavigationScope currentTopScope);
@@ -15,14 +18,17 @@ namespace AlicizaX.UI.UXNavigation
     [System.Serializable]
     public sealed class DefaultUXNavigationModeChangeProcessor : IUXNavigationModeChangeProcessor
     {
-        [InspectorName("键盘模式禁用空白失焦")]
-        [SerializeField] private bool m_KeyboardDeselectOnBackgroundClick;
-        [InspectorName("手柄模式禁用空白失焦")]
-        [SerializeField] private bool m_GamepadDeselectOnBackgroundClick;
-        [InspectorName("键盘模式下是否显示鼠标")]
-        [SerializeField] private bool m_KeyboardCursorVisible = true;
-        [InspectorName("手柄模式下是否显示鼠标")]
-        [SerializeField] private bool m_GamepadCursorVisible;
+        [InspectorName("键盘模式禁用空白失焦")] [SerializeField]
+        private bool m_KeyboardDeselectOnBackgroundClick;
+
+        [InspectorName("手柄模式禁用空白失焦")] [SerializeField]
+        private bool m_GamepadDeselectOnBackgroundClick;
+
+        [InspectorName("键盘模式下是否显示鼠标")] [SerializeField]
+        private bool m_KeyboardCursorVisible = true;
+
+        [InspectorName("手柄模式下是否显示鼠标")] [SerializeField]
+        private bool m_GamepadCursorVisible;
 
         public void OnNavigationModeChanged(UXInputMode mode, UXNavigationScope previousTopScope, UXNavigationScope currentTopScope)
         {
@@ -35,15 +41,16 @@ namespace AlicizaX.UI.UXNavigation
         {
             if (mode == UXInputMode.Gamepad)
             {
-                Cursor.visible =  m_GamepadCursorVisible;
+                Cursor.visible = m_GamepadCursorVisible;
                 Cursor.lockState = CursorLockMode.Locked;
             }
 
             if (mode == UXInputMode.Keyboard)
             {
-                Cursor.visible =  m_KeyboardCursorVisible;
-                Cursor.lockState = CursorLockMode.Confined;
+                Cursor.visible = m_KeyboardCursorVisible;
             }
+
+            Cursor.lockState = CursorLockMode.None;
         }
 
         private void SetDeselectOnBackgroundClick(bool value)
@@ -121,6 +128,7 @@ namespace AlicizaX.UI.UXNavigation
         {
             Instance = this;
             DontDestroyOnLoad(gameObject);
+            RegisterLoadedScopes();
         }
 
         private void OnEnable()
@@ -155,6 +163,7 @@ namespace AlicizaX.UI.UXNavigation
             int index = _scopeCount++;
             _scopes[index] = scope;
             scope.RuntimeIndex = index;
+            scope.InvalidateSkipCacheOnly();
             MarkStateDirty();
         }
 
@@ -445,6 +454,15 @@ namespace AlicizaX.UI.UXNavigation
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             Debug.LogError("UXNavigationRuntime scope capacity exceeded.");
 #endif
+        }
+
+        private void RegisterLoadedScopes()
+        {
+            UXNavigationScope[] scopes = FindObjectsOfType<UXNavigationScope>(true);
+            for (int i = 0; i < scopes.Length; i++)
+            {
+                RegisterScope(scopes[i]);
+            }
         }
     }
 }

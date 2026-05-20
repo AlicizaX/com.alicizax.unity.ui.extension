@@ -117,7 +117,11 @@ namespace AlicizaX.UI.UXNavigation
             EnsureRuntimeBuffers(false);
             RefreshBaselineWhenUnsuppressed();
             SubscribeHolderEvents();
-            UXNavigationManager.Instance.RegisterScope(this);
+            UXNavigationManager manager = UXNavigationManager.Instance;
+            if (manager != null)
+            {
+                manager.RegisterScope(this);
+            }
         }
 
 
@@ -125,7 +129,15 @@ namespace AlicizaX.UI.UXNavigation
         {
             UnsubscribeHolderEvents();
             SetNavigationSuppressed(false);
-            UXNavigationManager.Instance.UnregisterScope(this);
+            UXNavigationManager manager = UXNavigationManager.Instance;
+            if (manager != null)
+            {
+                manager.UnregisterScope(this);
+            }
+            else
+            {
+                RuntimeIndex = InvalidIndex;
+            }
         }
 
         private void OnTransformChildrenChanged()
@@ -386,7 +398,12 @@ namespace AlicizaX.UI.UXNavigation
 
         private void ResizeRuntimeBuffers(int capacity, bool preserveRuntimeSelectables)
         {
-            if (_runtimeSelectables == null || _runtimeSelectables.Length != capacity)
+            if (_runtimeSelectables == null
+                || _runtimeSelectables.Length != capacity
+                || _runtimeBaselineNavigation == null
+                || _runtimeBaselineNavigation.Length != capacity
+                || _runtimeSelectableRememberable == null
+                || _runtimeSelectableRememberable.Length != capacity)
             {
                 Selectable[] previousSelectables = _runtimeSelectables;
                 Navigation[] previousBaseline = _runtimeBaselineNavigation;
@@ -774,7 +791,11 @@ namespace AlicizaX.UI.UXNavigation
 
         private void MarkRuntimeStateDirty()
         {
-            UXNavigationManager.Instance.MarkStateDirty();
+            UXNavigationManager manager = UXNavigationManager.Instance;
+            if (manager != null)
+            {
+                manager.MarkStateDirty();
+            }
         }
     }
 }
