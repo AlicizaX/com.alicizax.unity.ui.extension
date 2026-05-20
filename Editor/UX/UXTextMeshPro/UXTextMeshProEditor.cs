@@ -188,7 +188,6 @@ namespace UnityEngine.UI
             using (new EditorGUI.DisabledScope(true))
             {
                 EditorGUILayout.PropertyField(m_localizationKey);
-                EditorGUILayout.LabelField("Text", previewLabel);
             }
 
             SyncLocalizationFormatArgs(previewLabel);
@@ -244,14 +243,12 @@ namespace UnityEngine.UI
             }
 
             EditorGUILayout.Space(2f);
-            EditorGUILayout.LabelField("Format Args", EditorStyles.boldLabel);
-
-            using (new EditorGUI.IndentLevelScope())
+            using (new EditorGUILayout.VerticalScope())
             {
                 for (int i = 0; i < m_localizationFormatArgs.arraySize; i++)
                 {
                     SerializedProperty element = m_localizationFormatArgs.GetArrayElementAtIndex(i);
-                    EditorGUILayout.PropertyField(element, new GUIContent($"{{{i}}}"));
+                    EditorGUILayout.PropertyField(element, new GUIContent($"Format Args{{{i}}}"));
                 }
             }
         }

@@ -532,6 +532,9 @@ namespace AlicizaX.UI
         /// 当拖拽状态变化时触发。
         /// </summary>
         public Action<bool> OnScrollDraggingChanged;
+#if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
+        internal Action OnNavigationDataChanged;
+#endif
 
         #endregion
 
@@ -658,7 +661,6 @@ namespace AlicizaX.UI
                     isValid = false;
                     return;
                 }
-
             }
         }
 
@@ -1034,7 +1036,7 @@ namespace AlicizaX.UI
                 return false;
             }
 
-            layoutIndex = layoutManager.GetLayoutIndex(index);
+            layoutIndex = isLoop && index >= realCount ? index : layoutManager.GetLayoutIndex(index);
             if (!layoutManager.UsesVirtualLayoutRange && (layoutIndex < 0 || layoutIndex >= itemCount))
             {
                 return false;
@@ -1633,6 +1635,14 @@ namespace AlicizaX.UI
         {
             return ViewProvider.ApplyVisibleSelection(dataIndex, selected);
         }
+
+#if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
+        internal void NotifyNavigationDataChanged()
+        {
+            OnNavigationDataChanged?.Invoke();
+        }
+
+#endif
 
         #endregion
     }

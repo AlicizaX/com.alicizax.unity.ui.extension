@@ -16,7 +16,7 @@ namespace AlicizaX.UI.UXNavigation
         private UIHolderObjectBase _holder;
 
         [SerializeField, Header("编辑器烘焙导航控件")] private Selectable[] _bakedSelectables = System.Array.Empty<Selectable>();
-        [SerializeField, Header("记住上次选中")] private bool _rememberLastSelection = true;
+        [SerializeField, Header("记住上次选中")] private bool _rememberLastSelection = false;
 
         [SerializeField, Header("阻断下层导航域")] private bool _blockLowerScopes = true;
 

@@ -11,28 +11,26 @@ namespace AlicizaX.UI.UXNavigation
     [CustomEditor(typeof(UXNavigationScope))]
     public sealed class UXNavigationScopeEditor : UnityEditor.Editor
     {
-        private const float ToolbarHeight = 30f;
         private const float FieldRowHeight = 46f;
-        private const float PolicyRowHeight = 24f;
+        private const float PolicyRowHeight = 46f;
         private const float BakedRowHeight = 22f;
         private const float BakedHeaderHeight = 22f;
         private const float BakedFooterHeight = 24f;
-        private const float HeaderButtonHeight = 20f;
-        private const float HeaderButtonGap = 4f;
-        private const float HeaderButtonWidth = 64f;
         private const float SymbolButtonWidth = 22f;
         private const float FieldLabelWidth = 54f;
+        private const float PolicyToggleWidth = 86f;
+        private const float CollectButtonSize = 22f;
 
         private readonly List<Selectable> _selectableBuffer = new List<Selectable>(64);
+        private readonly List<GUIContent> _defaultSelectableOptions = new List<GUIContent>(64);
         private int _selectedBakedIndex = -1;
+        private bool _bakedListHasKeyboardFocus;
         private SerializedProperty _defaultSelectable;
         private SerializedProperty _holder;
         private SerializedProperty _bakedSelectables;
         private SerializedProperty _rememberLastSelection;
         private SerializedProperty _blockLowerScopes;
-        private GUIContent _refreshCurrentContent;
-        private GUIContent _refreshAllContent;
-        private GUIContent _validateContent;
+        private GUIContent _collectContent;
 
         private void OnEnable()
         {
@@ -41,9 +39,7 @@ namespace AlicizaX.UI.UXNavigation
             _bakedSelectables = serializedObject.FindProperty("_bakedSelectables");
             _rememberLastSelection = serializedObject.FindProperty("_rememberLastSelection");
             _blockLowerScopes = serializedObject.FindProperty("_blockLowerScopes");
-            _refreshCurrentContent = new GUIContent("Refresh", "Refresh baked data for this scope");
-            _refreshAllContent = new GUIContent("All", "Refresh all UXNavigationScope components under the prefab root");
-            _validateContent = new GUIContent("Validate", "Validate all UXNavigationScope components under the prefab root");
+            _collectContent = EditorGUIUtility.IconContent("Refresh", "收集");
         }
 
         public override void OnInspectorGUI()
@@ -54,46 +50,13 @@ namespace AlicizaX.UI.UXNavigation
 
             EditorGUILayout.Space(6f);
             EditorGUILayout.BeginVertical(AlicizaEditorGUI.Styles.Panel);
-            DrawToolbar(scope);
             DrawReferenceRow();
             DrawPolicyRows();
             DrawBakedSelectableList();
+            ClearDefaultSelectableIfMissing();
             EditorGUILayout.EndVertical();
 
             serializedObject.ApplyModifiedProperties();
-        }
-
-        private void DrawToolbar(UXNavigationScope scope)
-        {
-            Rect toolbarRect = EditorGUILayout.GetControlRect(false, ToolbarHeight);
-            AlicizaEditorGUI.DrawToolbarBackground(toolbarRect);
-
-            Rect validateRect = new Rect(toolbarRect.xMax - HeaderButtonWidth - 6f, toolbarRect.y + 5f, HeaderButtonWidth, HeaderButtonHeight);
-            Rect allRect = new Rect(validateRect.x - HeaderButtonWidth - HeaderButtonGap, validateRect.y, HeaderButtonWidth, HeaderButtonHeight);
-            Rect refreshRect = new Rect(allRect.x - HeaderButtonWidth - HeaderButtonGap, validateRect.y, HeaderButtonWidth, HeaderButtonHeight);
-            Rect titleRect = new Rect(toolbarRect.x + 8f, toolbarRect.y + 5f, Mathf.Max(0f, refreshRect.x - toolbarRect.x - 12f), HeaderButtonHeight);
-
-            GUI.Label(titleRect, BuildToolbarTitle(scope), AlicizaEditorGUI.Styles.RowLabel);
-
-            if (AlicizaEditorGUI.DrawToolbarButton(refreshRect, _refreshCurrentContent))
-            {
-                RefreshCurrentScopeBakeData();
-            }
-
-            if (AlicizaEditorGUI.DrawToolbarButton(allRect, _refreshAllContent))
-            {
-                RefreshAllScopesInRoot();
-            }
-
-            if (AlicizaEditorGUI.DrawToolbarButton(validateRect, _validateContent))
-            {
-                ValidateAllScopesInRoot();
-            }
-        }
-
-        private string BuildToolbarTitle(UXNavigationScope scope)
-        {
-            return $"UX Navigation Scope    baked {_bakedSelectables.arraySize}    runtime {scope.RuntimeSelectableCount}/{scope.RuntimeSelectableCapacity}";
         }
 
         private void DrawReferenceRow()
@@ -101,11 +64,67 @@ namespace AlicizaX.UI.UXNavigation
             Rect rect = EditorGUILayout.GetControlRect(false, FieldRowHeight);
             DrawFieldRowBackground(rect);
 
-            Rect defaultRect = new Rect(rect.x + 6f, rect.y + 3f, rect.width - 12f, 18f);
+            Rect collectRect = new Rect(rect.xMax - CollectButtonSize - 6f, rect.y + 12f, CollectButtonSize, CollectButtonSize);
+            Rect defaultRect = new Rect(rect.x + 6f, rect.y + 3f, collectRect.x - rect.x - 16f, 18f);
             Rect holderRect = new Rect(defaultRect.x, defaultRect.yMax + 3f, defaultRect.width, 18f);
 
-            DrawObjectReferenceProperty(defaultRect, "Default", _defaultSelectable, typeof(Selectable));
+            DrawDefaultSelectablePopup(defaultRect);
             DrawObjectReferenceProperty(holderRect, "Holder", _holder, typeof(UIHolderObjectBase));
+            if (AlicizaEditorGUI.DrawToolbarButton(collectRect, _collectContent))
+            {
+                RefreshCurrentScopeBakeData();
+            }
+        }
+
+        private void DrawDefaultSelectablePopup(Rect rect)
+        {
+            Rect labelRect = new Rect(rect.x, rect.y, FieldLabelWidth, rect.height);
+            Rect fieldRect = new Rect(labelRect.xMax + 4f, rect.y, rect.xMax - labelRect.xMax - 4f, rect.height);
+            GUI.Label(labelRect, "Default", AlicizaEditorGUI.Styles.FieldLabel);
+
+            _defaultSelectableOptions.Clear();
+            _defaultSelectableOptions.Add(new GUIContent("无"));
+
+            Selectable currentDefault = _defaultSelectable.objectReferenceValue as Selectable;
+            int selectedIndex = 0;
+            for (int i = 0; i < _bakedSelectables.arraySize; i++)
+            {
+                Selectable selectable = _bakedSelectables.GetArrayElementAtIndex(i).objectReferenceValue as Selectable;
+                _defaultSelectableOptions.Add(new GUIContent(BuildSelectableOptionName(i, selectable)));
+                if (selectable != null && selectable == currentDefault)
+                {
+                    selectedIndex = i + 1;
+                }
+            }
+
+            if (currentDefault != null && selectedIndex == 0)
+            {
+                _defaultSelectable.objectReferenceValue = null;
+            }
+
+            int newIndex = EditorGUI.Popup(fieldRect, selectedIndex, _defaultSelectableOptions.ToArray());
+            if (newIndex != selectedIndex)
+            {
+                _defaultSelectable.objectReferenceValue = newIndex > 0
+                    ? _bakedSelectables.GetArrayElementAtIndex(newIndex - 1).objectReferenceValue
+                    : null;
+            }
+        }
+
+        private static string BuildSelectableOptionName(int index, Selectable selectable)
+        {
+            return selectable != null
+                ? $"{index}: {selectable.name}"
+                : $"{index}: 引用丢失";
+        }
+
+        private void ClearDefaultSelectableIfMissing()
+        {
+            Selectable currentDefault = _defaultSelectable.objectReferenceValue as Selectable;
+            if (currentDefault != null && !ContainsSelectable(_bakedSelectables, currentDefault))
+            {
+                _defaultSelectable.objectReferenceValue = null;
+            }
         }
 
         private void DrawPolicyRows()
@@ -114,10 +133,9 @@ namespace AlicizaX.UI.UXNavigation
             DrawFieldRowBackground(rect);
 
             Rect rowRect = new Rect(rect.x + 6f, rect.y + 3f, rect.width - 12f, 18f);
-            float gap = 8f;
-            float toggleWidth = Mathf.Max(86f, Mathf.Floor((rowRect.width - gap) / 2f));
-            DrawInlineToggle(new Rect(rowRect.x, rowRect.y, toggleWidth, rowRect.height), _rememberLastSelection, "Remember");
-            DrawInlineToggle(new Rect(rowRect.x + (toggleWidth + gap), rowRect.y, toggleWidth, rowRect.height), _blockLowerScopes, "Block");
+            Rect blockRect = new Rect(rowRect.x, rowRect.yMax + 3f, rowRect.width, rowRect.height);
+            DrawInlineToggleWithDescription(rowRect, _rememberLastSelection, "Remember", "重新打开时优先恢复上次选中的控件。");
+            DrawInlineToggleWithDescription(blockRect, _blockLowerScopes, "Block", "当前导航域激活时阻断下层导航域。");
         }
 
         private static void DrawFieldRowBackground(Rect rect)
@@ -139,6 +157,14 @@ namespace AlicizaX.UI.UXNavigation
             property.boolValue = EditorGUI.ToggleLeft(rect, label, property.boolValue, AlicizaEditorGUI.Styles.FieldLabel);
         }
 
+        private static void DrawInlineToggleWithDescription(Rect rect, SerializedProperty property, string label, string description)
+        {
+            Rect toggleRect = new Rect(rect.x, rect.y, PolicyToggleWidth, rect.height);
+            Rect descriptionRect = new Rect(toggleRect.xMax + 4f, rect.y + 1f, rect.xMax - toggleRect.xMax - 4f, rect.height - 2f);
+            DrawInlineToggle(toggleRect, property, label);
+            GUI.Label(descriptionRect, description, AlicizaEditorGUI.Styles.MutedMiniLabel);
+        }
+
         private void DrawBakedSelectableList()
         {
             int count = _bakedSelectables.arraySize;
@@ -156,11 +182,12 @@ namespace AlicizaX.UI.UXNavigation
             DrawBakedListHeader(headerRect, count);
 
             Rect rowsRect = new Rect(contentRect.x, headerRect.yMax, contentRect.width, Mathf.Max(1, count) * BakedRowHeight);
+            HandleBakedListMouseFocus(rowsRect);
             if (count == 0)
             {
                 Rect emptyRect = new Rect(rowsRect.x, rowsRect.y, rowsRect.width, BakedRowHeight);
                 AlicizaEditorGUI.DrawListItemBackground(emptyRect, false, false);
-                GUI.Label(new Rect(emptyRect.x + 8f, emptyRect.y + 2f, emptyRect.width - 16f, emptyRect.height - 4f), "No baked selectables", AlicizaEditorGUI.Styles.MutedMiniLabel);
+                GUI.Label(new Rect(emptyRect.x + 8f, emptyRect.y + 2f, emptyRect.width - 16f, emptyRect.height - 4f), "暂无烘焙控件", AlicizaEditorGUI.Styles.MutedMiniLabel);
             }
             else
             {
@@ -171,7 +198,36 @@ namespace AlicizaX.UI.UXNavigation
                 }
             }
 
+            HandleBakedListKeyboard(rowsRect, count);
             DrawBakedListFooter(contentRect);
+        }
+
+        private void HandleBakedListKeyboard(Rect rowsRect, int count)
+        {
+            Event currentEvent = Event.current;
+            if (currentEvent.type != EventType.KeyDown || !_bakedListHasKeyboardFocus || count == 0 || _selectedBakedIndex < 0 || _selectedBakedIndex >= count)
+            {
+                return;
+            }
+
+            if (currentEvent.keyCode != KeyCode.Delete && currentEvent.keyCode != KeyCode.Backspace)
+            {
+                return;
+            }
+
+            currentEvent.Use();
+            RemoveBakedSelectableAt(_selectedBakedIndex);
+        }
+
+        private void HandleBakedListMouseFocus(Rect rowsRect)
+        {
+            Event currentEvent = Event.current;
+            if (currentEvent.type != EventType.MouseDown || currentEvent.button != 0)
+            {
+                return;
+            }
+
+            _bakedListHasKeyboardFocus = rowsRect.Contains(currentEvent.mousePosition);
         }
 
         private void DrawBakedListHeader(Rect rect, int count)
@@ -203,6 +259,7 @@ namespace AlicizaX.UI.UXNavigation
             if (currentEvent.type == EventType.MouseDown && currentEvent.button == 0 && rowRect.Contains(currentEvent.mousePosition))
             {
                 _selectedBakedIndex = index;
+                _bakedListHasKeyboardFocus = true;
                 GUI.FocusControl(string.Empty);
                 currentEvent.Use();
             }
@@ -214,7 +271,7 @@ namespace AlicizaX.UI.UXNavigation
             AlicizaEditorGUI.DrawToolbarBackground(footerRect);
             Rect addRect = new Rect(footerRect.xMax - SymbolButtonWidth, footerRect.y + 1f, SymbolButtonWidth, footerRect.height - 2f);
 
-            GUI.Label(new Rect(footerRect.x + 8f, footerRect.y + 2f, footerRect.width - 40f, footerRect.height - 4f), "Refresh auto-binds Holder and sorts selectables by hierarchy.", AlicizaEditorGUI.Styles.MutedMiniLabel);
+            GUI.Label(new Rect(footerRect.x + 8f, footerRect.y + 2f, footerRect.width - 40f, footerRect.height - 4f), "刷新会自动绑定 Holder，并按层级顺序排序控件。", AlicizaEditorGUI.Styles.MutedMiniLabel);
 
             if (AlicizaEditorGUI.DrawSymbolButton(addRect, "+"))
             {
@@ -224,7 +281,7 @@ namespace AlicizaX.UI.UXNavigation
 
         private void AddBakedSelectableSlot()
         {
-            Undo.RecordObject(target, "Add UX Navigation Selectable Slot");
+            Undo.RecordObject(target, "添加 UX 导航控件槽位");
             int index = _bakedSelectables.arraySize;
             _bakedSelectables.arraySize++;
             _bakedSelectables.GetArrayElementAtIndex(index).objectReferenceValue = null;
@@ -241,12 +298,18 @@ namespace AlicizaX.UI.UXNavigation
                 return;
             }
 
-            Undo.RecordObject(target, "Remove UX Navigation Selectable Slot");
+            Undo.RecordObject(target, "移除 UX 导航控件槽位");
+            Selectable removedSelectable = _bakedSelectables.GetArrayElementAtIndex(index).objectReferenceValue as Selectable;
             int oldSize = _bakedSelectables.arraySize;
             _bakedSelectables.DeleteArrayElementAtIndex(index);
             if (_bakedSelectables.arraySize == oldSize)
             {
                 _bakedSelectables.DeleteArrayElementAtIndex(index);
+            }
+
+            if (_defaultSelectable.objectReferenceValue == removedSelectable)
+            {
+                _defaultSelectable.objectReferenceValue = null;
             }
 
             _selectedBakedIndex = Mathf.Min(index, _bakedSelectables.arraySize - 1);
@@ -259,43 +322,6 @@ namespace AlicizaX.UI.UXNavigation
         {
             UXNavigationScope scope = (UXNavigationScope)target;
             RefreshScopeBakeData(scope, serializedObject, _holder, _bakedSelectables, _selectableBuffer);
-        }
-
-        private void RefreshAllScopesInRoot()
-        {
-            GameObject root = GetRootGameObject(((UXNavigationScope)target).gameObject);
-            UXNavigationScope[] scopes = root.GetComponentsInChildren<UXNavigationScope>(true);
-            for (int i = 0; i < scopes.Length; i++)
-            {
-                UXNavigationScope scope = scopes[i];
-                SerializedObject scopeObject = new SerializedObject(scope);
-                SerializedProperty holder = scopeObject.FindProperty("_holder");
-                SerializedProperty bakedSelectables = scopeObject.FindProperty("_bakedSelectables");
-                RefreshScopeBakeData(scope, scopeObject, holder, bakedSelectables);
-            }
-        }
-
-        private void ValidateAllScopesInRoot()
-        {
-            GameObject root = GetRootGameObject(((UXNavigationScope)target).gameObject);
-            UXNavigationScope[] scopes = root.GetComponentsInChildren<UXNavigationScope>(true);
-            int errorCount = 0;
-            for (int i = 0; i < scopes.Length; i++)
-            {
-                if (!ValidateScope(scopes[i]))
-                {
-                    errorCount++;
-                }
-            }
-
-            if (errorCount == 0)
-            {
-                Debug.Log("UXNavigationScope validation passed.", root);
-            }
-            else
-            {
-                Debug.LogErrorFormat(root, "UXNavigationScope validation failed. Error count: {0}", errorCount);
-            }
         }
 
         private static readonly List<Selectable> StaticSelectableBuffer = new List<Selectable>(64);
@@ -314,18 +340,25 @@ namespace AlicizaX.UI.UXNavigation
             for (int i = 0; i < allSelectables.Length; i++)
             {
                 Selectable selectable = allSelectables[i];
-                if (selectable != null && selectable.GetComponentInParent<UXNavigationScope>(true) == scope)
+                if (selectable != null && selectable.GetComponentInParent<UXNavigationScope>(true) == scope && HasValidNavigation(selectable))
                 {
                     ownedSelectables.Add(selectable);
                 }
             }
 
             ownedSelectables.Sort(CompareSiblingPath);
-            Undo.RecordObject(scope, "Refresh UX Navigation Scope Bake Data");
+            Undo.RecordObject(scope, "刷新 UX 导航域烘焙数据");
             bakedSelectables.arraySize = ownedSelectables.Count;
             for (int i = 0; i < ownedSelectables.Count; i++)
             {
                 bakedSelectables.GetArrayElementAtIndex(i).objectReferenceValue = ownedSelectables[i];
+            }
+
+            SerializedProperty defaultSelectableProperty = scopeObject.FindProperty("_defaultSelectable");
+            Selectable defaultSelectable = defaultSelectableProperty.objectReferenceValue as Selectable;
+            if (defaultSelectable != null && !ownedSelectables.Contains(defaultSelectable))
+            {
+                defaultSelectableProperty.objectReferenceValue = null;
             }
 
             scopeObject.ApplyModifiedProperties();
@@ -350,87 +383,47 @@ namespace AlicizaX.UI.UXNavigation
                 return;
             }
 
-            Undo.RecordObject(scope, "Bind UX Navigation Scope Holder");
+            Undo.RecordObject(scope, "绑定 UX 导航域 Holder");
             holder.objectReferenceValue = foundHolder;
             scopeObject.ApplyModifiedProperties();
             EditorUtility.SetDirty(scope);
         }
 
-        private static bool ValidateScope(UXNavigationScope scope)
+        private static bool ContainsSelectable(SerializedProperty selectables, Selectable targetSelectable)
         {
-            SerializedObject scopeObject = new SerializedObject(scope);
-            SerializedProperty holderProperty = scopeObject.FindProperty("_holder");
-            SerializedProperty defaultSelectableProperty = scopeObject.FindProperty("_defaultSelectable");
-            SerializedProperty bakedSelectables = scopeObject.FindProperty("_bakedSelectables");
-            UIHolderObjectBase holder = holderProperty.objectReferenceValue as UIHolderObjectBase;
-            Selectable defaultSelectable = defaultSelectableProperty.objectReferenceValue as Selectable;
-            bool valid = true;
-
-            if (holder == null)
+            for (int i = 0; i < selectables.arraySize; i++)
             {
-                Debug.LogError("UXNavigationScope holder is not bound.", scope);
-                valid = false;
-            }
-            else if (!IsSameRoot(scope.transform, holder.transform))
-            {
-                Debug.LogError("UXNavigationScope holder crosses root.", scope);
-                valid = false;
-            }
-
-            if (defaultSelectable != null && defaultSelectable.GetComponentInParent<UXNavigationScope>(true) != scope)
-            {
-                Debug.LogError("UXNavigationScope default selectable crosses scope.", scope);
-                valid = false;
-            }
-
-            for (int i = 0; i < bakedSelectables.arraySize; i++)
-            {
-                Selectable selectable = bakedSelectables.GetArrayElementAtIndex(i).objectReferenceValue as Selectable;
-                if (selectable == null)
+                if (selectables.GetArrayElementAtIndex(i).objectReferenceValue == targetSelectable)
                 {
-                    Debug.LogWarning("UXNavigationScope baked selectables contain null entry.", scope);
-                    valid = false;
-                    continue;
-                }
-
-                if (selectable.GetComponentInParent<UXNavigationScope>(true) != scope)
-                {
-                    Debug.LogError("UXNavigationScope baked selectable crosses scope.", selectable);
-                    valid = false;
-                }
-
-                for (int j = i + 1; j < bakedSelectables.arraySize; j++)
-                {
-                    if (bakedSelectables.GetArrayElementAtIndex(j).objectReferenceValue == selectable)
-                    {
-                        Debug.LogError("UXNavigationScope baked selectables contain duplicate entry.", selectable);
-                        valid = false;
-                    }
+                    return true;
                 }
             }
 
-            return valid;
+            return false;
         }
 
-        private static GameObject GetRootGameObject(GameObject gameObject)
+        private static bool HasValidNavigation(Selectable selectable)
         {
-            Transform current = gameObject.transform;
-            while (current.parent != null)
-            {
-                current = current.parent;
-            }
-
-            return current.gameObject;
-        }
-
-        private static bool IsSameRoot(Transform left, Transform right)
-        {
-            if (left == null || right == null)
+            if (selectable == null)
             {
                 return false;
             }
 
-            return left.root == right.root;
+            Navigation navigation = selectable.navigation;
+            if (navigation.mode == Navigation.Mode.None)
+            {
+                return false;
+            }
+
+            if (navigation.mode != Navigation.Mode.Explicit)
+            {
+                return true;
+            }
+
+            return navigation.selectOnUp != null
+                   || navigation.selectOnDown != null
+                   || navigation.selectOnLeft != null
+                   || navigation.selectOnRight != null;
         }
 
         private static int CompareSiblingPath(Selectable left, Selectable right)

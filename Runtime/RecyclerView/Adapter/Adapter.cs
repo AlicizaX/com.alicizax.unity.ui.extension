@@ -119,6 +119,9 @@ namespace AlicizaX.UI
             CoerceChoiceIndex();
             recyclerView.RequestLayout();
             recyclerView.Refresh();
+#if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
+            NotifyNavigationDataChanged();
+#endif
         }
 
         /// <summary>
@@ -149,10 +152,16 @@ namespace AlicizaX.UI
             {
                 recyclerView.RequestLayout();
                 recyclerView.Refresh();
+#if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
+                NotifyNavigationDataChanged();
+#endif
                 return;
             }
 
             recyclerView.RebindVisibleDataIndex(index);
+#if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
+            NotifyNavigationDataChanged();
+#endif
         }
 
         /// <summary>
@@ -173,10 +182,16 @@ namespace AlicizaX.UI
             {
                 recyclerView.RequestLayout();
                 recyclerView.Refresh();
+#if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
+                NotifyNavigationDataChanged();
+#endif
                 return;
             }
 
             recyclerView.RebindVisibleDataRange(index, count);
+#if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
+            NotifyNavigationDataChanged();
+#endif
         }
 
         /// <summary>
@@ -187,6 +202,9 @@ namespace AlicizaX.UI
             CoerceChoiceIndex();
             recyclerView.RequestLayout();
             recyclerView.Refresh();
+#if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
+            NotifyNavigationDataChanged();
+#endif
         }
 
         /// <summary>
@@ -203,6 +221,9 @@ namespace AlicizaX.UI
             CoerceChoiceIndex();
             recyclerView.RequestLayout();
             recyclerView.Refresh();
+#if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
+            NotifyNavigationDataChanged();
+#endif
         }
 
         /// <summary>
@@ -213,6 +234,9 @@ namespace AlicizaX.UI
             CoerceChoiceIndex();
             recyclerView.RequestLayout();
             recyclerView.Refresh();
+#if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
+            NotifyNavigationDataChanged();
+#endif
         }
 
         /// <summary>
@@ -229,6 +253,9 @@ namespace AlicizaX.UI
             CoerceChoiceIndex();
             recyclerView.RequestLayout();
             recyclerView.Refresh();
+#if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
+            NotifyNavigationDataChanged();
+#endif
         }
 
         /// <summary>
@@ -460,5 +487,12 @@ namespace AlicizaX.UI
                 SetChoiceIndex(itemCount - 1);
             }
         }
+
+#if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
+        private void NotifyNavigationDataChanged()
+        {
+            recyclerView?.NotifyNavigationDataChanged();
+        }
+#endif
     }
 }

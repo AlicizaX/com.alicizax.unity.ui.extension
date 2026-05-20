@@ -57,9 +57,9 @@ namespace AlicizaX.UI.UXNavigation
         /// <summary>
         /// 必须保证存在可导航焦点
         /// </summary>
-        public static bool GamepadRequireLowFocus;
+        public static bool GamepadRequireLowFocus = true;
 
-        public static bool KeyBoardRequireLowFocus;
+        public static bool KeyBoardRequireLowFocus = true;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         internal static void EnsureInstance()

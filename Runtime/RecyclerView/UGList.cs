@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using UnityEngine;
 
 namespace AlicizaX.UI
 {
@@ -24,6 +25,7 @@ namespace AlicizaX.UI
 
         private List<TData> _datas;
         private readonly bool _adapterBound;
+        protected bool AdapterBound => _adapterBound;
 
         /// <summary>
         /// 使用指定 RecyclerView 和适配器创建业务层列表封装。
@@ -56,7 +58,7 @@ namespace AlicizaX.UI
         /// <summary>
         /// 当前业务数据列表；赋值后会同步到适配器并刷新列表。
         /// </summary>
-        public List<TData> Data
+        public virtual List<TData> Data
         {
             get => _datas;
             set
@@ -198,7 +200,7 @@ namespace AlicizaX.UI
         /// </summary>
         /// <param name="index">目标数据索引。</param>
         /// <param name="smooth">是否使用平滑滚动。</param>
-        public void ScrollToIndex(int index, bool smooth = false)
+        public virtual void ScrollToIndex(int index, bool smooth = false)
         {
             _recyclerView?.ScrollTo(index, smooth);
         }
@@ -211,7 +213,7 @@ namespace AlicizaX.UI
         /// <param name="offset">对齐后的附加偏移。</param>
         /// <param name="smooth">是否使用平滑滚动。</param>
         /// <param name="duration">平滑滚动时长，单位为秒。</param>
-        public void ScrollTo(
+        public virtual void ScrollTo(
             int index,
             ScrollAlignment alignment = ScrollAlignment.Start,
             float offset = 0f,
@@ -457,6 +459,9 @@ namespace AlicizaX.UI
     /// <typeparam name="TData">列表数据类型。</typeparam>
     public class UGLoopList<TData> : UGListBase<TData, LoopAdapter<TData>> where TData : class, ISimpleViewData
     {
+        private const int LoopAnchorIndex = 30000;
+        private bool _hasLoopAnchor;
+
         /// <summary>
         /// 创建循环 RecyclerView 列表业务封装。
         /// </summary>
@@ -464,6 +469,135 @@ namespace AlicizaX.UI
         public UGLoopList(RecyclerView recyclerView)
             : base(recyclerView, new LoopAdapter<TData>(recyclerView))
         {
+        }
+
+        public override List<TData> Data
+        {
+            get => base.Data;
+            set
+            {
+                bool sameDataSource = ReferenceEquals(base.Data, value);
+                int previousDataIndex = _recyclerView?.CurrentScrollDataIndex ?? -1;
+
+                if (sameDataSource && AdapterBound)
+                {
+                    _adapter.NotifyDataChanged();
+                    if (DataCount <= 0)
+                    {
+                        _hasLoopAnchor = false;
+                        return;
+                    }
+
+                    if (!_hasLoopAnchor)
+                    {
+                        int dataIndex = previousDataIndex >= 0 && previousDataIndex < DataCount ? previousDataIndex : 0;
+                        ScrollToLoopAnchor(dataIndex);
+                    }
+
+                    return;
+                }
+
+                base.Data = value;
+                if (DataCount <= 0)
+                {
+                    _hasLoopAnchor = false;
+                    return;
+                }
+
+                int anchorDataIndex = previousDataIndex >= 0 && previousDataIndex < DataCount ? previousDataIndex : 0;
+                ScrollToLoopAnchor(anchorDataIndex);
+            }
+        }
+
+        public override void ScrollToIndex(int index, bool smooth = false)
+        {
+            base.ScrollToIndex(ResolveLoopIndex(index), smooth);
+        }
+
+        public override void ScrollTo(
+            int index,
+            ScrollAlignment alignment = ScrollAlignment.Start,
+            float offset = 0f,
+            bool smooth = false,
+            float duration = 0.3f)
+        {
+            base.ScrollTo(ResolveLoopIndex(index), alignment, offset, smooth, duration);
+        }
+
+        private void ScrollToLoopAnchor(int realIndex)
+        {
+            int count = DataCount;
+            if (count <= 0)
+            {
+                return;
+            }
+
+            base.ScrollTo(GetAnchoredLoopIndex(realIndex, count), ScrollAlignment.Start, 0f, false, 0.3f);
+            _hasLoopAnchor = true;
+        }
+
+        private int ResolveLoopIndex(int index)
+        {
+            int count = DataCount;
+            if (count <= 0)
+            {
+                return index;
+            }
+
+            if (index < 0 || index >= count)
+            {
+                return index;
+            }
+
+            int currentIndex = GetCurrentLayoutIndex();
+            if (currentIndex <= count)
+            {
+                return GetAnchoredLoopIndex(index, count);
+            }
+
+            return GetNearestLoopIndex(index, currentIndex, count);
+        }
+
+        private int GetCurrentLayoutIndex()
+        {
+            if (_recyclerView?.LayoutManager == null)
+            {
+                return 0;
+            }
+
+            return _recyclerView.LayoutManager.PositionToIndex(_recyclerView.GetScrollPosition());
+        }
+
+        private static int GetAnchoredLoopIndex(int realIndex, int count)
+        {
+            return GetNearestLoopIndex(realIndex, LoopAnchorIndex, count);
+        }
+
+        private static int GetNearestLoopIndex(int realIndex, int centerIndex, int count)
+        {
+            realIndex = WrapIndex(realIndex, count);
+            int cycle = Mathf.RoundToInt((centerIndex - realIndex) / (float)count);
+            int candidate = realIndex + cycle * count;
+            int previous = candidate - count;
+            int next = candidate + count;
+
+            if (previous >= 0 && Mathf.Abs(previous - centerIndex) < Mathf.Abs(candidate - centerIndex))
+            {
+                candidate = previous;
+            }
+
+            if (next >= 0 && Mathf.Abs(next - centerIndex) < Mathf.Abs(candidate - centerIndex))
+            {
+                candidate = next;
+            }
+
+            return Mathf.Max(candidate, 0);
+        }
+
+        private static int WrapIndex(int index, int count)
+        {
+            int wrapped = index % count;
+            return wrapped < 0 ? wrapped + count : wrapped;
         }
     }
 
