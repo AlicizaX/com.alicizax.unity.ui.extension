@@ -82,7 +82,7 @@ namespace AlicizaX.UI
 
         public override void OnMove(AxisEventData eventData)
         {
-            if (HandleMove(eventData.moveDir))
+            if (HandleMove(eventData))
             {
                 eventData.Use();
                 return;
@@ -107,9 +107,9 @@ namespace AlicizaX.UI
             }
         }
 
-        public bool HandleMove(MoveDirection direction)
+        public bool HandleMove(AxisEventData eventData)
         {
-            if (suppressed || recyclerView == null || direction == MoveDirection.None)
+            if (suppressed || recyclerView == null || eventData.moveDir == MoveDirection.None)
             {
                 return false;
             }
@@ -127,12 +127,12 @@ namespace AlicizaX.UI
                 return true;
             }
 
-            if (TryCurrentHolderConsumeMove(direction))
+            if (TryCurrentHolderConsumeMove(eventData))
             {
                 return true;
             }
 
-            MoveResult result = TryCalculateNextDataIndex(direction, count, out int nextDataIndex);
+            MoveResult result = TryCalculateNextDataIndex(eventData.moveDir, count, out int nextDataIndex);
             if (result == MoveResult.Moved)
             {
                 SetFocus(nextDataIndex, true);
@@ -141,7 +141,7 @@ namespace AlicizaX.UI
 
             if (result == MoveResult.Boundary)
             {
-                TrySelectExit(direction);
+                TrySelectExit(eventData.moveDir);
             }
 
             return true;
@@ -621,11 +621,11 @@ namespace AlicizaX.UI
             return -1;
         }
 
-        private bool TryCurrentHolderConsumeMove(MoveDirection direction)
+        private bool TryCurrentHolderConsumeMove(AxisEventData eventData)
         {
             ViewHolder holder = GetFocusedViewHolder();
             return holder is IRecyclerViewNavigationViewHolder navigationHolder &&
-                   navigationHolder.HandleNavigationMove(direction);
+                   navigationHolder.HandleNavigationMove(eventData);
         }
 
         private ViewHolder GetFocusedViewHolder()

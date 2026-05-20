@@ -17,7 +17,7 @@ namespace AlicizaX.UI
         /// 在 RecyclerView 移动焦点前，给当前聚焦的 ViewHolder 优先处理方向输入的机会。
         /// 返回 true 表示输入已处理，RecyclerView 不再移动焦点。
         /// </summary>
-        bool HandleNavigationMove(MoveDirection direction);
+        bool HandleNavigationMove(AxisEventData eventData);
     }
 }
 #endif
