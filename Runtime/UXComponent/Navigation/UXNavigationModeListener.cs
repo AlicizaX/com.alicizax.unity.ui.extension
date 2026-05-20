@@ -59,7 +59,7 @@ namespace AlicizaX.UI.UXNavigation
         /// </summary>
         public static bool GamepadRequireLowFocus = true;
 
-        public static bool KeyBoardRequireLowFocus = true;
+        public static bool KeyBoardRequireLowFocus = false;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         internal static void EnsureInstance()
@@ -406,7 +406,7 @@ namespace AlicizaX.UI.UXNavigation
             {
                 if (RequiresSelectedForCurrentMode)
                 {
-                    UXNavigationRuntime.RequestEnsureSelection();
+                    UXNavigationManager.RequestEnsureSelection();
                 }
 
                 return;

@@ -24,10 +24,7 @@ namespace AlicizaX.UI.UXNavigation
 
         private static void InvalidateNavigation()
         {
-            if (UXNavigationRuntime.TryGetInstance(out var runtime))
-            {
-                runtime.InvalidateSkipCaches();
-            }
+            UXNavigationManager.Instance.InvalidateSkipCaches();
         }
     }
 }

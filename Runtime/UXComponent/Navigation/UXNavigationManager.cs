@@ -2,25 +2,85 @@
 namespace AlicizaX.UI.UXNavigation
 {
     using AlicizaX.UI.Runtime;
+    using UnityEngine.InputSystem.UI;
     using UnityEngine.EventSystems;
     using UnityEngine;
     using UnityEngine.UI;
 
-    public interface IUXNavigationCursorPolicy
+    public interface IUXNavigationModeChangeProcessor
     {
-        void OnNavigationContextChanged(UXInputMode mode, UXNavigationScope previousTopScope, UXNavigationScope currentTopScope);
+        void OnNavigationModeChanged(UXInputMode mode, UXNavigationScope previousTopScope, UXNavigationScope currentTopScope);
     }
 
-    public sealed class UXNavigationRuntime : MonoBehaviour
+    [System.Serializable]
+    public sealed class DefaultUXNavigationModeChangeProcessor : IUXNavigationModeChangeProcessor
+    {
+        [InspectorName("键盘模式禁用空白失焦")]
+        [SerializeField] private bool m_KeyboardDeselectOnBackgroundClick;
+        [InspectorName("手柄模式禁用空白失焦")]
+        [SerializeField] private bool m_GamepadDeselectOnBackgroundClick;
+        [InspectorName("键盘模式下是否显示鼠标")]
+        [SerializeField] private bool m_KeyboardCursorVisible = true;
+        [InspectorName("手柄模式下是否显示鼠标")]
+        [SerializeField] private bool m_GamepadCursorVisible;
+
+        public void OnNavigationModeChanged(UXInputMode mode, UXNavigationScope previousTopScope, UXNavigationScope currentTopScope)
+        {
+            ShouldShowCursor(mode);
+            SetDeselectOnBackgroundClick((mode == UXInputMode.Gamepad && !m_GamepadDeselectOnBackgroundClick)
+                                         || (mode == UXInputMode.Keyboard && !m_KeyboardDeselectOnBackgroundClick));
+        }
+
+        private void ShouldShowCursor(UXInputMode mode)
+        {
+            if (mode == UXInputMode.Gamepad)
+            {
+                Cursor.visible =  m_GamepadCursorVisible;
+                Cursor.lockState = CursorLockMode.Locked;
+            }
+
+            if (mode == UXInputMode.Keyboard)
+            {
+                Cursor.visible =  m_KeyboardCursorVisible;
+                Cursor.lockState = CursorLockMode.Confined;
+            }
+        }
+
+        private void SetDeselectOnBackgroundClick(bool value)
+        {
+            EventSystem eventSystem = EventSystem.current;
+            if (eventSystem == null)
+            {
+                return;
+            }
+
+            InputSystemUIInputModule inputModule = eventSystem.currentInputModule as InputSystemUIInputModule;
+            if (inputModule == null)
+            {
+                inputModule = eventSystem.GetComponent<InputSystemUIInputModule>();
+            }
+
+            if (inputModule != null)
+            {
+                inputModule.deselectOnBackgroundClick = value;
+            }
+        }
+    }
+
+    [DisallowMultipleComponent]
+    [AddComponentMenu("UI/UX Navigation Manager")]
+    public sealed class UXNavigationManager : MonoServiceBehaviour<GameplayScope>
     {
         private const int ScopeCapacity = 128;
         private const int InvalidIndex = -1;
 
-        private static UXNavigationRuntime _instance;
-        private static IUXNavigationCursorPolicy _cursorPolicy;
+        internal static UXNavigationManager Instance;
 
         private readonly UXNavigationScope[] _scopes = new UXNavigationScope[ScopeCapacity];
         private int _scopeCount;
+
+        [SerializeReference] private IUXNavigationModeChangeProcessor _modeChangeProcessor = new DefaultUXNavigationModeChangeProcessor();
+        [SerializeField, HideInInspector] private string _modeChangeProcessorTypeName = typeof(DefaultUXNavigationModeChangeProcessor).FullName;
 
         private UXNavigationScope _topScope;
         private ulong _activationSerial;
@@ -30,73 +90,37 @@ namespace AlicizaX.UI.UXNavigation
         private bool _contextNotificationDirty;
         private UXNavigationScope _pendingPreviousTopScope;
 
-        internal static UXNavigationRuntime EnsureInstance()
-        {
-            if (_instance != null)
-            {
-                return _instance;
-            }
-
-            GameObject go = new GameObject("[UXNavigationRuntime]");
-            go.hideFlags = HideFlags.HideAndDontSave;
-            DontDestroyOnLoad(go);
-            _instance = go.AddComponent<UXNavigationRuntime>();
-            return _instance;
-        }
-
-        internal static bool TryGetInstance(out UXNavigationRuntime runtime)
-        {
-            runtime = _instance;
-            return runtime != null;
-        }
-
-        public static void SetCursorPolicy(IUXNavigationCursorPolicy cursorPolicy)
-        {
-            _cursorPolicy = cursorPolicy;
-            if (_instance != null)
-            {
-                _cursorPolicy?.OnNavigationContextChanged(UXNavigationModeListener.CurrentMode, _instance._topScope, _instance._topScope);
-            }
-        }
-
         internal static void RequestRefresh(bool ensureSelection)
         {
-            if (_instance != null)
+            if (Instance != null)
             {
-                _instance.RequestRefreshInternal(ensureSelection);
+                Instance.RequestRefreshInternal(ensureSelection);
             }
         }
 
         internal static void RequestEnsureSelection()
         {
-            if (_instance != null)
+            if (Instance != null)
             {
-                _instance.FlushStateIfDirty(false, true);
+                Instance.FlushStateIfDirty(false, true);
             }
         }
 
         public static bool IsHolderWithinTopScope(UIHolderObjectBase holder)
         {
-            if (_instance == null || _instance._topScope == null || holder == null)
+            if (Instance == null || Instance._topScope == null || holder == null)
             {
                 return true;
             }
 
             UXNavigationScope scope = holder.GetComponentInParent<UXNavigationScope>(true);
-            return scope == _instance._topScope;
+            return scope == Instance._topScope;
         }
 
-        private void Awake()
+        protected override void OnInitialize()
         {
-            if (_instance != null && _instance != this)
-            {
-                Destroy(gameObject);
-                return;
-            }
-
-            _instance = this;
+            Instance = this;
             DontDestroyOnLoad(gameObject);
-            hideFlags = HideFlags.HideAndDontSave;
         }
 
         private void OnEnable()
@@ -109,14 +133,10 @@ namespace AlicizaX.UI.UXNavigation
             UXNavigationModeListener.OnModeChanged -= OnInputModeChanged;
         }
 
-        private void OnDestroy()
+        protected override void OnDestroyService()
         {
             UXNavigationModeListener.OnModeChanged -= OnInputModeChanged;
-            if (_instance == this)
-            {
-                _instance = null;
-                _cursorPolicy = null;
-            }
+            Instance = null;
         }
 
         internal void RegisterScope(UXNavigationScope scope)
@@ -224,7 +244,7 @@ namespace AlicizaX.UI.UXNavigation
                 _suppressionDirty = false;
             }
 
-            if (ensureSelection && UXNavigationModeListener.RequiresSelectedForCurrentMode)
+            if (ensureSelection && ShouldEnsureSelection())
             {
                 EnsureNavigationSelection();
             }
@@ -299,7 +319,7 @@ namespace AlicizaX.UI.UXNavigation
         private void EnsureNavigationSelection()
         {
             EventSystem eventSystem = EventSystem.current;
-            if (eventSystem == null || _topScope == null || !UXNavigationModeListener.RequiresSelectedForCurrentMode)
+            if (eventSystem == null || _topScope == null || !ShouldEnsureSelection())
             {
                 return;
             }
@@ -338,12 +358,20 @@ namespace AlicizaX.UI.UXNavigation
         private void OnInputModeChanged(UXInputMode mode)
         {
             UXNavigationScope previousTopScope = _topScope;
-            if (UXNavigationModeListener.RequiresSelectedForCurrentMode)
+            if (ShouldEnsureSelection())
             {
                 FlushStateIfDirty(false, true);
             }
 
             NotifyContextIfChanged(previousTopScope, _topScope);
+        }
+
+        private bool ShouldEnsureSelection()
+        {
+            return UXNavigationModeListener.RequiresSelectedForCurrentMode
+                   || (_topScope != null
+                       && UXNavigationModeListener.CurrentMode == UXInputMode.Keyboard
+                       && _topScope.HasValidDefaultSelectable());
         }
 
         private void SetTopScope(UXNavigationScope topScope, bool notifyContext)
@@ -385,7 +413,12 @@ namespace AlicizaX.UI.UXNavigation
                 _contextNotificationDirty = false;
             }
 
-            _cursorPolicy?.OnNavigationContextChanged(UXNavigationModeListener.CurrentMode, previousTopScope, currentTopScope);
+            NotifyModeChangeProcessor(UXNavigationModeListener.CurrentMode, previousTopScope, currentTopScope);
+        }
+
+        private void NotifyModeChangeProcessor(UXInputMode mode, UXNavigationScope previousTopScope, UXNavigationScope currentTopScope)
+        {
+            _modeChangeProcessor?.OnNavigationModeChanged(mode, previousTopScope, currentTopScope);
         }
 
         private static bool IsHigherPriority(UXNavigationScope left, UXNavigationScope right)

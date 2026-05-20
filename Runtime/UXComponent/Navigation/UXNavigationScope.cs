@@ -117,7 +117,7 @@ namespace AlicizaX.UI.UXNavigation
             EnsureRuntimeBuffers(false);
             RefreshBaselineWhenUnsuppressed();
             SubscribeHolderEvents();
-            UXNavigationRuntime.EnsureInstance().RegisterScope(this);
+            UXNavigationManager.Instance.RegisterScope(this);
         }
 
 
@@ -125,10 +125,7 @@ namespace AlicizaX.UI.UXNavigation
         {
             UnsubscribeHolderEvents();
             SetNavigationSuppressed(false);
-            if (UXNavigationRuntime.TryGetInstance(out var runtime))
-            {
-                runtime.UnregisterScope(this);
-            }
+            UXNavigationManager.Instance.UnregisterScope(this);
         }
 
         private void OnTransformChildrenChanged()
@@ -266,13 +263,13 @@ namespace AlicizaX.UI.UXNavigation
         private void OnWindowShown()
         {
             MarkSelectableAvailabilityDirty();
-            UXNavigationRuntime.RequestRefresh(true);
+            UXNavigationManager.RequestRefresh(true);
         }
 
         private void OnWindowClosed()
         {
             MarkSelectableAvailabilityDirty();
-            UXNavigationRuntime.RequestRefresh(true);
+            UXNavigationManager.RequestRefresh(true);
         }
 
         internal int GetHierarchyDepth()
@@ -330,6 +327,11 @@ namespace AlicizaX.UI.UXNavigation
             }
 
             return _availableSelectableCount > 0;
+        }
+
+        internal bool HasValidDefaultSelectable()
+        {
+            return IsSelectableValid(_defaultSelectable);
         }
 
         internal void RecordSelection(GameObject selectedObject)
@@ -772,10 +774,7 @@ namespace AlicizaX.UI.UXNavigation
 
         private void MarkRuntimeStateDirty()
         {
-            if (UXNavigationRuntime.TryGetInstance(out var runtime))
-            {
-                runtime.MarkStateDirty();
-            }
+            UXNavigationManager.Instance.MarkStateDirty();
         }
     }
 }
