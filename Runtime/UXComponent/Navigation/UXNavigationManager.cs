@@ -124,6 +124,12 @@ namespace AlicizaX.UI.UXNavigation
             return scope == Instance._topScope;
         }
 
+        protected override void Awake()
+        {
+            base.Awake();
+            DontDestroyOnLoad(gameObject);
+        }
+
         protected override void OnInitialize()
         {
             Instance = this;
