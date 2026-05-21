@@ -16,12 +16,10 @@ public sealed class InputBindingManager : MonoServiceBehaviour<AppScope>
     private const string MOUSE_SCROLL_Y = "<Mouse>/scroll/y";
     private const string KEYBOARD_ESCAPE = "<Keyboard>/escape";
 
-    [Tooltip("InputActionAsset to manage")]
-    public InputActionAsset actions;
-
     private const string FILE_NAME = "input_bindings.json";
     public bool debugMode = false;
 
+    private InputActionAsset actions;
     private InputActionRebindingExtensions.RebindingOperation rebindOperation;
     private InputAction rebindAction;
     private int rebindBindingIndex = -1;
@@ -44,7 +42,6 @@ public sealed class InputBindingManager : MonoServiceBehaviour<AppScope>
 
     public IReadOnlyDictionary<string, ActionMap> ActionMaps => actionMap;
     public IReadOnlyCollection<RebindContext> PreparedRebinds => preparedRebinds;
-
     private string SavePath
     {
         get
@@ -69,14 +66,20 @@ public sealed class InputBindingManager : MonoServiceBehaviour<AppScope>
             Directory.CreateDirectory(directory);
     }
 
+    protected override void Awake()
+    {
+        base.Awake();
+    }
 
     protected override void OnInitialize()
     {
-        if (actions == null)
+        if (!AppServices.TryGet(out IInputActionProvider provider) || provider.Actions == null)
         {
-            Log.Error("InputBindingManager: InputActionAsset not assigned.");
+            Log.Error("InputBindingManager: IInputActionProvider with InputActionAsset is required.");
             return;
         }
+
+        actions = provider.Actions;
 
         BuildActionMap();
 
@@ -100,7 +103,7 @@ public sealed class InputBindingManager : MonoServiceBehaviour<AppScope>
         actions.Enable();
     }
 
-    private void OnDestroy()
+    protected override void OnDestroyService()
     {
         rebindOperation?.Dispose();
         rebindOperation = null;
@@ -562,20 +565,7 @@ public sealed class InputBindingManager : MonoServiceBehaviour<AppScope>
     /// </summary>
     public static InputAction Action(string actionName)
     {
-        var instance= AppServices.Require<InputBindingManager>();
-        if (instance.TryGetAction(actionName, out InputAction action))
-        {
-            return action;
-        }
-
-        if (instance.ambiguousActionNames.Contains(actionName))
-        {
-            Log.Error($"[InputBindingManager] Action name '{actionName}' is ambiguous. Use 'MapName/{actionName}' instead.");
-            return null;
-        }
-
-        Log.Error($"[InputBindingManager] Could not find action '{actionName}'");
-        return null;
+        return InputActionResolver.Action(actionName);
     }
 
     public bool TryGetAction(string actionName, out InputAction action)
@@ -594,6 +584,11 @@ public sealed class InputBindingManager : MonoServiceBehaviour<AppScope>
 
         action = null;
         return false;
+    }
+
+    public bool IsActionNameAmbiguous(string actionName)
+    {
+        return !string.IsNullOrWhiteSpace(actionName) && ambiguousActionNames.Contains(actionName);
     }
     /// <summary>
     /// ??? Action ???????????

@@ -5,9 +5,9 @@ using UnityEngine.InputSystem;
 
 /// <summary>
 /// 将 Input System 绑定路径解析为 UI Sprite 或 TMP Sprite Tag。
-/// 运行时只使用外部注入的 Glyph 数据库，不再通过 Resources.Load 自动加载。
+/// 运行时只使用外部注入的 Glyph 数据库
 /// </summary>
-public static class GlyphService
+public static class InputGlyphService
 {
     private static readonly string[] KeyboardGroupHints = { "keyboard", "mouse", "keyboard&mouse", "keyboardmouse", "kbm" };
     private static readonly string[] XboxGroupHints = { "xbox", "xinput", "gamepad", "controller" };
@@ -27,20 +27,12 @@ public static class GlyphService
 
     /// <summary>
     /// 设置 Glyph 数据库。
-    /// 调用方负责管理数据库生命周期，本服务不会执行 Resources.Load。
     /// </summary>
     public static void SetDatabase(InputGlyphDatabase database)
     {
         _database = database;
     }
 
-    /// <summary>
-    /// 清除当前 Glyph 数据库引用。
-    /// </summary>
-    public static void ClearDatabase()
-    {
-        _database = null;
-    }
 
     static InputGlyphDatabase Database
     {

@@ -51,7 +51,6 @@ internal sealed class InputGlyphDatabaseWindow : EditorWindow
     private const float EntryRowPadding = 8f;
     private const float EntryLeftColumnWidth = 56f;
     private const float EntryColumnGap = 10f;
-    private const float EntryOverlayButtonSize = 16f;
     private const float FieldLabelWidth = 108f;
     private const float ParseButtonWidth = 72f;
     private const int SettingsIndex = -1;
@@ -97,6 +96,7 @@ internal sealed class InputGlyphDatabaseWindow : EditorWindow
     private ListView _entryListView;
     private SerializedProperty _currentEntriesProperty;
     private bool _entryListRefreshScheduled;
+    private int _selectedEntryIndex = -1;
 
     [MenuItem(MenuPath, false, 80)]
     private static void OpenFromMenu()
@@ -250,10 +250,12 @@ internal sealed class InputGlyphDatabaseWindow : EditorWindow
             fixedItemHeight = EntryRowMinHeight,
             makeItem = MakeEntryListItem,
             bindItem = BindEntryListItem,
-            selectionType = SelectionType.None,
+            selectionType = SelectionType.Single,
             showBorder = false,
             showAlternatingRowBackgrounds = AlternatingRowBackground.None,
         };
+        _entryListView.focusable = true;
+        _entryListView.RegisterCallback<KeyDownEvent>(HandleEntryListKeyDown, TrickleDown.TrickleDown);
         _entryListView.style.flexGrow = 1f;
         _entryListView.showBoundCollectionSize = false;
         _entryListView.showAddRemoveFooter = false;
@@ -367,7 +369,7 @@ internal sealed class InputGlyphDatabaseWindow : EditorWindow
         SerializedProperty entry = _currentEntriesProperty.GetArrayElementAtIndex(entryIndex);
         float rowHeight = GetEntryRowHeight(entry);
         Rect rowRect = GUILayoutUtility.GetRect(1f, rowHeight, GUILayout.ExpandWidth(true));
-        DrawEntryRow(rowRect, _currentEntriesProperty, entryIndex, entry);
+        DrawEntryRow(rowRect, _currentEntriesProperty, itemIndex, entryIndex, entry);
         ApplyGuiChanges();
     }
 
@@ -415,8 +417,15 @@ internal sealed class InputGlyphDatabaseWindow : EditorWindow
             }
         }
 
+        if (_selectedEntryIndex >= _currentEntriesProperty.arraySize
+            || (_selectedEntryIndex >= 0 && !_visibleEntryIndices.Contains(_selectedEntryIndex)))
+        {
+            _selectedEntryIndex = -1;
+        }
+
         _entryListView.itemsSource = _visibleEntryIndices;
         _entryListView.Rebuild();
+        SyncListViewSelection();
     }
 
     private void EnsureDatabaseForWindow(bool promptCreate)
@@ -718,52 +727,41 @@ internal sealed class InputGlyphDatabaseWindow : EditorWindow
     private void DrawTableHeader(SerializedProperty sheetProperty, SerializedProperty entriesProperty)
     {
         EditorGUILayout.BeginVertical(_entryBodyStyle);
-        DrawSpriteSheetRow(sheetProperty, entriesProperty);
         EditorUtils.TrHelpIconText("Tables are fixed to PlayStation, Xbox, Switch, and Keyboard. Parse adds missing sprites from the sheet.", MessageType.None);
         EditorGUILayout.EndVertical();
     }
 
-    private void DrawSpriteSheetRow(SerializedProperty sheetProperty, SerializedProperty entriesProperty)
-    {
-        EditorGUILayout.BeginHorizontal(_fieldRowStyle);
-        EditorGUILayout.LabelField("Sprite Sheet", _fieldLabelStyle, GUILayout.Width(FieldLabelWidth));
-        EditorGUILayout.PropertyField(sheetProperty, GUIContent.none);
-        bool parseClicked = AlicizaEditorGUI.DrawInlineButton("Parse", ParseButtonWidth);
-        EditorGUILayout.EndHorizontal();
 
-        if (parseClicked)
-        {
-            ParseSpriteSheet(sheetProperty, entriesProperty);
-        }
-    }
-
-    private void DrawEntryRow(Rect rowRect, SerializedProperty entriesProperty, int index, SerializedProperty entry)
+    private void DrawEntryRow(Rect rowRect, SerializedProperty entriesProperty, int itemIndex, int index, SerializedProperty entry)
     {
         Event currentEvent = Event.current;
+        bool selected = _selectedEntryIndex == index;
         bool hovered = rowRect.Contains(currentEvent.mousePosition);
-        AlicizaEditorGUI.DrawListItemBackground(rowRect, false, hovered);
+        AlicizaEditorGUI.DrawListItemBackground(rowRect, selected, hovered);
+
+        if (currentEvent.type == EventType.MouseDown && currentEvent.button == 0 && rowRect.Contains(currentEvent.mousePosition))
+        {
+            SelectEntry(itemIndex, index);
+        }
 
         SerializedProperty spriteProperty = entry.FindPropertyRelative(EntrySpritePropertyName);
         SerializedProperty actionProperty = entry.FindPropertyRelative(EntryActionPropertyName);
 
         Rect previewRect = new Rect(rowRect.x + EntryRowPadding, rowRect.y + EntryRowPadding, PreviewSize, PreviewSize);
+        Rect deleteRect = new Rect(rowRect.xMax - EntryRowPadding - EntryActionButtonSize, rowRect.y + EntryRowPadding, EntryActionButtonSize, EntryActionButtonSize);
 
         float leftColumnX = rowRect.x + EntryRowPadding;
         float leftColumnWidth = EntryLeftColumnWidth;
         float actionX = leftColumnX + leftColumnWidth + EntryColumnGap;
-        float actionWidth = Mathf.Max(160f, rowRect.xMax - actionX - 8f);
+        float actionWidth = Mathf.Max(160f, deleteRect.x - actionX - EntryColumnGap);
         float actionHeight = EditorGUI.GetPropertyHeight(actionProperty, GUIContent.none, true);
         Rect actionRect = new Rect(actionX, rowRect.y + EntryRowPadding, actionWidth, actionHeight);
         DrawSpriteObjectField(previewRect, spriteProperty);
         EditorGUI.PropertyField(actionRect, actionProperty, GUIContent.none, true);
 
-        if (hovered)
+        if (AlicizaEditorGUI.DrawSymbolButton(deleteRect, "-"))
         {
-            Rect deleteRect = new Rect(previewRect.xMax - EntryOverlayButtonSize + 1f, previewRect.y - 1f, EntryOverlayButtonSize, EntryOverlayButtonSize);
-            if (AlicizaEditorGUI.DrawSymbolButton(deleteRect, "-"))
-            {
-                DeleteEntry(entriesProperty, index);
-            }
+            DeleteEntry(entriesProperty, index, true);
         }
     }
 
@@ -823,92 +821,6 @@ internal sealed class InputGlyphDatabaseWindow : EditorWindow
         table.FindPropertyRelative(EntriesPropertyName).ClearArray();
     }
 
-    private void ParseSpriteSheet(SerializedProperty sheetProperty, SerializedProperty entriesProperty)
-    {
-        Texture2D texture = sheetProperty.objectReferenceValue as Texture2D;
-        if (texture == null)
-        {
-            EditorUtility.DisplayDialog("Parse Sprite Sheet", "Assign a Sprite Sheet texture first.", "OK");
-            return;
-        }
-
-        string path = AssetDatabase.GetAssetPath(texture);
-        if (string.IsNullOrEmpty(path))
-        {
-            EditorUtility.DisplayDialog("Parse Sprite Sheet", "The Sprite Sheet must be a project asset.", "OK");
-            return;
-        }
-
-        Sprite[] sprites = LoadSpritesAtPath(path);
-        if (sprites.Length == 0)
-        {
-            EditorUtility.DisplayDialog("Parse Sprite Sheet", "No Sprite sub-assets were found on this texture.", "OK");
-            return;
-        }
-
-        Undo.RecordObject(_database, "Parse Input Glyph Sprite Sheet");
-        int added = 0;
-        for (int i = 0; i < sprites.Length; i++)
-        {
-            Sprite sprite = sprites[i];
-            if (sprite == null || HasEntrySprite(entriesProperty, sprite))
-            {
-                continue;
-            }
-
-            int index = entriesProperty.arraySize;
-            entriesProperty.InsertArrayElementAtIndex(index);
-            SerializedProperty entry = entriesProperty.GetArrayElementAtIndex(index);
-            entry.FindPropertyRelative(EntrySpritePropertyName).objectReferenceValue = sprite;
-            ClearInputAction(entry.FindPropertyRelative(EntryActionPropertyName));
-            added++;
-        }
-
-        _serializedDatabase.ApplyModifiedProperties();
-        MarkDirty();
-        RefreshEntryList();
-        ShowNotification(new GUIContent(added == 0 ? "No missing sprites" : $"Added {added} sprites"));
-    }
-
-    private static Sprite[] LoadSpritesAtPath(string path)
-    {
-        Object[] assets = AssetDatabase.LoadAllAssetsAtPath(path);
-        int count = 0;
-        for (int i = 0; i < assets.Length; i++)
-        {
-            if (assets[i] is Sprite)
-            {
-                count++;
-            }
-        }
-
-        Sprite[] sprites = new Sprite[count];
-        int spriteIndex = 0;
-        for (int i = 0; i < assets.Length; i++)
-        {
-            if (assets[i] is Sprite sprite)
-            {
-                sprites[spriteIndex++] = sprite;
-            }
-        }
-
-        return sprites;
-    }
-
-    private static bool HasEntrySprite(SerializedProperty entriesProperty, Sprite sprite)
-    {
-        for (int i = 0; i < entriesProperty.arraySize; i++)
-        {
-            SerializedProperty entry = entriesProperty.GetArrayElementAtIndex(i);
-            SerializedProperty spriteProperty = entry.FindPropertyRelative(EntrySpritePropertyName);
-            if (spriteProperty.objectReferenceValue == sprite)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
 
     private void AddEntry(SerializedProperty entriesProperty)
     {
@@ -924,19 +836,85 @@ internal sealed class InputGlyphDatabaseWindow : EditorWindow
         _entryListView?.ScrollToItem(_visibleEntryIndices.Count - 1);
     }
 
-    private void DeleteEntry(SerializedProperty entriesProperty, int index)
+    private void DeleteEntry(SerializedProperty entriesProperty, int index, bool exitGui = false)
     {
         if (index < 0 || index >= entriesProperty.arraySize)
         {
             return;
         }
 
+        int originalCount = entriesProperty.arraySize;
         Undo.RecordObject(_database, "Delete Input Glyph Entry");
         entriesProperty.DeleteArrayElementAtIndex(index);
+        _selectedEntryIndex = GetNextSelectionAfterDelete(index, originalCount);
         _serializedDatabase.ApplyModifiedProperties();
         MarkDirty();
         RefreshEntryList();
-        GUIUtility.ExitGUI();
+        if (exitGui)
+        {
+            GUIUtility.ExitGUI();
+        }
+    }
+
+    private void HandleEntryListKeyDown(KeyDownEvent evt)
+    {
+        if (evt.keyCode != KeyCode.Delete && evt.keyCode != KeyCode.Backspace)
+        {
+            return;
+        }
+
+        if (_currentEntriesProperty == null || _selectedEntryIndex < 0)
+        {
+            return;
+        }
+
+        _serializedDatabase.Update();
+        DeleteEntry(_currentEntriesProperty, _selectedEntryIndex);
+        evt.StopPropagation();
+    }
+
+    private void SelectEntry(int itemIndex, int entryIndex)
+    {
+        _selectedEntryIndex = entryIndex;
+        _entryListView?.Focus();
+        if (_entryListView != null && itemIndex >= 0 && itemIndex < _visibleEntryIndices.Count)
+        {
+            _entryListView.SetSelectionWithoutNotify(new[] { itemIndex });
+        }
+    }
+
+    private void SyncListViewSelection()
+    {
+        if (_entryListView == null)
+        {
+            return;
+        }
+
+        int itemIndex = _selectedEntryIndex >= 0 ? _visibleEntryIndices.IndexOf(_selectedEntryIndex) : -1;
+        if (itemIndex >= 0)
+        {
+            _entryListView.SetSelectionWithoutNotify(new[] { itemIndex });
+        }
+        else
+        {
+            _entryListView.ClearSelection();
+        }
+    }
+
+    private int GetNextSelectionAfterDelete(int deletedIndex, int originalCount)
+    {
+        int nextCount = originalCount - 1;
+        if (nextCount <= 0)
+        {
+            return -1;
+        }
+
+        if (deletedIndex < nextCount)
+        {
+            return deletedIndex;
+        }
+
+        return nextCount - 1;
     }
 
     private static float GetEntryRowHeight(SerializedProperty entry)

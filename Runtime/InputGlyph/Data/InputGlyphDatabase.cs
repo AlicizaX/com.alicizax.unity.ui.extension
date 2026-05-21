@@ -14,7 +14,6 @@ public sealed class GlyphEntry
 public sealed class DeviceGlyphTable
 {
     public string deviceName;
-    public Texture2D spriteSheetTexture;
     public Sprite platformIcons;
     public List<GlyphEntry> entries = new List<GlyphEntry>();
 }

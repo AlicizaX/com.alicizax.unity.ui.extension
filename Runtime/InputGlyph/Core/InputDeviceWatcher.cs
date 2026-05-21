@@ -111,7 +111,7 @@ public static class InputDeviceWatcher
         }
 
         _initialized = true;
-        SetCurrentContext(ResolveInitialContext());
+        SetCurrentContext(ResolveInitialContext(), true);
 
         _anyInputAction = new InputAction("AnyDevice", InputActionType.PassThrough);
         _anyInputAction.AddBinding("<Keyboard>/anyKey");
@@ -322,12 +322,17 @@ public static class InputDeviceWatcher
         SetCurrentContext(CreateDefaultContext());
     }
 
-    private static void SetCurrentContext(DeviceContext context)
+    private static void SetCurrentContext(DeviceContext context, bool forceEmit = false)
     {
+        if (!forceEmit && CurrentContext.Equals(context))
+        {
+            return;
+        }
+
         bool categoryChanged = CurrentCategory != context.Category;
         ApplyContext(context, true);
 
-        if (!_lastEmittedContext.Equals(context))
+        if (forceEmit || !_lastEmittedContext.Equals(context))
         {
             OnDeviceContextChanged?.Invoke(context);
             if (categoryChanged)
@@ -359,6 +364,11 @@ public static class InputDeviceWatcher
     private static DeviceContext BuildContext(InputDevice device)
     {
         if (device == null)
+        {
+            return CreateDefaultContext();
+        }
+
+        if (IsKeyboardMouseDevice(device))
         {
             return CreateDefaultContext();
         }
@@ -428,7 +438,7 @@ public static class InputDeviceWatcher
 
     private static DeviceContext CreateDefaultContext()
     {
-        return new DeviceContext(InputDeviceCategory.Keyboard, -1, 0, 0, DefaultKeyboardDeviceName, Keyboard.current != null ? Keyboard.current.layout : string.Empty);
+        return new DeviceContext(InputDeviceCategory.Keyboard, -1, 0, 0, DefaultKeyboardDeviceName, DefaultKeyboardDeviceName);
     }
 
     private static DeviceContext ResolveInitialContext()
@@ -484,7 +494,7 @@ public static class InputDeviceWatcher
             return InputDeviceCategory.Keyboard;
         }
 
-        if (device is Keyboard || device is Mouse)
+        if (IsKeyboardMouseDevice(device))
         {
             return InputDeviceCategory.Keyboard;
         }
@@ -519,7 +529,12 @@ public static class InputDeviceWatcher
 
     private static bool IsRelevantDevice(InputDevice device)
     {
-        return device is Keyboard || device is Mouse || IsGamepadLike(device);
+        return IsKeyboardMouseDevice(device) || IsGamepadLike(device);
+    }
+
+    private static bool IsKeyboardMouseDevice(InputDevice device)
+    {
+        return device is Keyboard || device is Mouse;
     }
 
     private static bool IsRelevantControl(InputControl control)

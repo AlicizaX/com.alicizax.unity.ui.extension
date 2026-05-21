@@ -7,7 +7,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-[CustomEditor(typeof(InputGlyph))]
+[CustomEditor(typeof(InputGlyphComponent))]
 [CanEditMultipleObjects]
 public sealed class InputGlyphEditor : Editor
 {
@@ -125,15 +125,15 @@ public sealed class InputGlyphEditor : Editor
 
     private void DrawSourceFields()
     {
-        InputGlyph.ActionSourceMode mode = (InputGlyph.ActionSourceMode)_actionSourceMode.enumValueIndex;
+        InputGlyphComponent.ActionSourceMode mode = (InputGlyphComponent.ActionSourceMode)_actionSourceMode.enumValueIndex;
         switch (mode)
         {
-            case InputGlyph.ActionSourceMode.ActionReference:
+            case InputGlyphComponent.ActionSourceMode.ActionReference:
                 DrawPropertyRow("Action Reference", _actionReference);
                 EditorUtils.TrHelpIconText("Use a direct InputActionReference.", MessageType.None);
                 break;
 
-            case InputGlyph.ActionSourceMode.HotkeyTrigger:
+            case InputGlyphComponent.ActionSourceMode.HotkeyTrigger:
                 DrawPropertyRow("Hotkey Trigger", _hotkeyTrigger);
                 Component component = _hotkeyTrigger.objectReferenceValue as Component;
                 if (component != null && !(component is UnityEngine.UI.IHotkeyTrigger))
@@ -147,7 +147,7 @@ public sealed class InputGlyphEditor : Editor
 
                 break;
 
-            case InputGlyph.ActionSourceMode.ActionName:
+            case InputGlyphComponent.ActionSourceMode.ActionName:
                 DrawPropertyRow("Action Name", _actionName);
                 EditorGUILayout.BeginHorizontal(_fieldRowStyle);
                 GUILayout.FlexibleSpace();
@@ -172,15 +172,15 @@ public sealed class InputGlyphEditor : Editor
 
     private void DrawOutputFields()
     {
-        InputGlyph.OutputMode mode = (InputGlyph.OutputMode)_outputMode.enumValueIndex;
+        InputGlyphComponent.OutputMode mode = (InputGlyphComponent.OutputMode)_outputMode.enumValueIndex;
         switch (mode)
         {
-            case InputGlyph.OutputMode.Image:
+            case InputGlyphComponent.OutputMode.Image:
                 DrawPropertyRow("Target Image", _targetImage);
                 EditorUtils.TrHelpIconText("Shows the resolved sprite on a Unity UI Image.", MessageType.None);
                 break;
 
-            case InputGlyph.OutputMode.Text:
+            case InputGlyphComponent.OutputMode.Text:
                 DrawPropertyRow("Target TMP Text", _targetText);
                 EditorUtils.TrHelpIconText("Uses the current TMP text as a template and replaces {0}.", MessageType.None);
                 TMP_Text text = _targetText.objectReferenceValue as TMP_Text;
@@ -542,14 +542,14 @@ public sealed class InputGlyphEditor : Editor
 
     private InputAction ResolveSelectedAction()
     {
-        InputGlyph.ActionSourceMode mode = (InputGlyph.ActionSourceMode)_actionSourceMode.enumValueIndex;
+        InputGlyphComponent.ActionSourceMode mode = (InputGlyphComponent.ActionSourceMode)_actionSourceMode.enumValueIndex;
         switch (mode)
         {
-            case InputGlyph.ActionSourceMode.ActionReference:
+            case InputGlyphComponent.ActionSourceMode.ActionReference:
                 InputActionReference actionReference = _actionReference.objectReferenceValue as InputActionReference;
                 return actionReference != null ? actionReference.action : null;
 
-            case InputGlyph.ActionSourceMode.HotkeyTrigger:
+            case InputGlyphComponent.ActionSourceMode.HotkeyTrigger:
                 Component component = _hotkeyTrigger.objectReferenceValue as Component;
                 if (component is UnityEngine.UI.IHotkeyTrigger trigger && trigger.HotkeyAction != null)
                 {
@@ -558,7 +558,7 @@ public sealed class InputGlyphEditor : Editor
 
                 return null;
 
-            case InputGlyph.ActionSourceMode.ActionName:
+            case InputGlyphComponent.ActionSourceMode.ActionName:
                 return ResolveActionByName(_actionName.stringValue);
 
             default:
@@ -608,10 +608,10 @@ public sealed class InputGlyphEditor : Editor
 
         _actionAssetCacheDirty = false;
         CachedActionAssets.Clear();
-        InputBindingManager[] managers = Resources.FindObjectsOfTypeAll<InputBindingManager>();
-        for (int i = 0; i < managers.Length; i++)
+        InputActionProvider[] providers = Resources.FindObjectsOfTypeAll<InputActionProvider>();
+        for (int i = 0; i < providers.Length; i++)
         {
-            InputActionAsset asset = managers[i] != null ? managers[i].actions : null;
+            InputActionAsset asset = providers[i] != null ? providers[i].Actions : null;
             if (asset != null && !CachedActionAssets.Contains(asset))
             {
                 CachedActionAssets.Add(asset);

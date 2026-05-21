@@ -8,7 +8,7 @@ using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 [AddComponentMenu("UI/Input Glyph")]
-public sealed class InputGlyph : InputGlyphBehaviourBase
+public sealed class InputGlyphComponent : InputGlyphBehaviourBase
 {
     public enum ActionSourceMode
     {
@@ -107,7 +107,7 @@ public sealed class InputGlyph : InputGlyphBehaviourBase
             return;
         }
 
-        bool hasSprite = GlyphService.TryGetUISpriteForActionPath(action, compositePartName, CurrentCategory, out Sprite sprite);
+        bool hasSprite = InputGlyphService.TryGetUISpriteForActionPath(action, compositePartName, CurrentCategory, out Sprite sprite);
         if (!hasSprite)
         {
             sprite = null;
@@ -135,7 +135,7 @@ public sealed class InputGlyph : InputGlyphBehaviourBase
         }
 
         string replacementToken;
-        if (GlyphService.TryGetTMPTagForActionPath(action, compositePartName, CurrentCategory, out string tag, out string displayFallback))
+        if (InputGlyphService.TryGetTMPTagForActionPath(action, compositePartName, CurrentCategory, out string tag, out string displayFallback))
         {
             replacementToken = tag;
         }
@@ -181,7 +181,7 @@ public sealed class InputGlyph : InputGlyphBehaviourBase
             case ActionSourceMode.HotkeyTrigger:
                 return ResolveHotkeyAction();
             case ActionSourceMode.ActionName:
-                return InputBindingManager.Action(actionName);
+                return InputActionResolver.Action(actionName);
             default:
                 return null;
         }
