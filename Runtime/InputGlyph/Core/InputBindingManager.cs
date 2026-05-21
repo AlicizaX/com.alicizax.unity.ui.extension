@@ -73,6 +73,11 @@ public sealed class InputBindingManager : MonoServiceBehaviour<AppScope>
 
     protected override void OnInitialize()
     {
+        if (IsMobilePlatform())
+        {
+            return;
+        }
+
         if (!AppServices.TryGet(out IInputActionProvider provider) || provider.Actions == null)
         {
             Log.Error("InputBindingManager: IInputActionProvider with InputActionAsset is required.");
@@ -101,6 +106,15 @@ public sealed class InputBindingManager : MonoServiceBehaviour<AppScope>
         }
 
         actions.Enable();
+    }
+
+    private static bool IsMobilePlatform()
+    {
+#if UNITY_ANDROID || UNITY_IOS
+        return true;
+#else
+        return Application.isMobilePlatform;
+#endif
     }
 
     protected override void OnDestroyService()

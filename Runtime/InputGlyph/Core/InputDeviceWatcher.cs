@@ -105,6 +105,11 @@ public static class InputDeviceWatcher
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
     public static void Initialize()
     {
+        if (IsMobilePlatform())
+        {
+            return;
+        }
+
         if (_initialized)
         {
             return;
@@ -140,6 +145,15 @@ public static class InputDeviceWatcher
         InputSystem.onAfterUpdate += OnAfterInputUpdate;
 #if UNITY_EDITOR
         UnityEditor.EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+#endif
+    }
+
+    private static bool IsMobilePlatform()
+    {
+#if UNITY_ANDROID || UNITY_IOS
+        return true;
+#else
+        return Application.isMobilePlatform;
 #endif
     }
 
