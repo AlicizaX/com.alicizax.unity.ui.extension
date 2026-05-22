@@ -16,6 +16,7 @@ namespace UnityEngine.UI
     public class UXSelectable : Selectable
     {
         [SerializeField] private List<TransitionData> m_ChildTransitions = new();
+        private SelectionState m_SelectionState;
 
         void StartChildColorTween(TransitionData transitionData, Color targetColor, bool instant)
         {
@@ -67,6 +68,12 @@ namespace UnityEngine.UI
 
         protected override void DoStateTransition(SelectionState state, bool instant)
         {
+            if (Application.isPlaying)
+            {
+                if (m_SelectionState == state) return;
+                m_SelectionState = state;
+            }
+
             base.DoStateTransition(state, instant);
             for (int i = 0; i < m_ChildTransitions.Count; i++)
             {
