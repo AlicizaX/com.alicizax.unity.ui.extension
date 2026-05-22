@@ -40,6 +40,7 @@ namespace AlicizaX.UI.UXNavigation
         private int _availableSelectableCount;
         private Selectable _firstAvailableSelectable;
         private UIHolderObjectBase _subscribedHolder;
+        private Coroutine _refreshAfterEnableCoroutine;
 
         internal int RuntimeIndex { get; set; } = InvalidIndex;
         internal ulong ActivationSerial { get; set; }
@@ -122,6 +123,32 @@ namespace AlicizaX.UI.UXNavigation
             {
                 manager.RegisterScope(this);
             }
+        }
+
+        private void OnEnable()
+        {
+            MarkSelectableAvailabilityDirty();
+            _refreshAfterEnableCoroutine = StartCoroutine(RefreshNavigationAfterEnable());
+        }
+
+        private void OnDisable()
+        {
+            if (_refreshAfterEnableCoroutine != null)
+            {
+                StopCoroutine(_refreshAfterEnableCoroutine);
+                _refreshAfterEnableCoroutine = null;
+            }
+
+            MarkSelectableAvailabilityDirty();
+            UXNavigationManager.RequestRefresh(true);
+        }
+
+        private System.Collections.IEnumerator RefreshNavigationAfterEnable()
+        {
+            yield return null;
+            _refreshAfterEnableCoroutine = null;
+            MarkSelectableAvailabilityDirty();
+            UXNavigationManager.RequestRefresh(true);
         }
 
 
