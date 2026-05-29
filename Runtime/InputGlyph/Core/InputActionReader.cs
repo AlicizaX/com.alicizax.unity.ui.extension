@@ -1,6 +1,8 @@
+#if INPUTSYSTEM_SUPPORT
 using System;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using Object = UnityEngine.Object;
 
 /// <summary>
 /// 输入读取工具。
@@ -47,10 +49,10 @@ public static class InputActionReader
         public bool Equals(InputReadKey other)
         {
             return ActionId.Equals(other.ActionId)
-                && OwnerId == other.OwnerId
-                && string.Equals(ActionName, other.ActionName, StringComparison.Ordinal)
-                && string.Equals(CompositePartName, other.CompositePartName, StringComparison.Ordinal)
-                && string.Equals(OwnerKey, other.OwnerKey, StringComparison.Ordinal);
+                   && OwnerId == other.OwnerId
+                   && string.Equals(ActionName, other.ActionName, StringComparison.Ordinal)
+                   && string.Equals(CompositePartName, other.CompositePartName, StringComparison.Ordinal)
+                   && string.Equals(OwnerKey, other.OwnerKey, StringComparison.Ordinal);
         }
 
         public override bool Equals(object obj)
@@ -122,7 +124,7 @@ public static class InputActionReader
     /// 只在本次按下的第一帧返回 true，并输出当前值。
     /// owner 用来隔离不同对象的读取状态。
     /// </summary>
-    public static bool TryReadValueOnce<T>(UnityEngine.Object owner, InputAction action, out T value) where T : struct
+    public static bool TryReadValueOnce<T>(Object owner, InputAction action, out T value) where T : struct
     {
         if (owner == null)
         {
@@ -137,7 +139,7 @@ public static class InputActionReader
     /// 只在本次按下的第一帧返回 true，并输出指定 Action 名称对应的当前值。
     /// owner 用来隔离不同对象的读取状态。
     /// </summary>
-    public static bool TryReadValueOnce<T>(UnityEngine.Object owner, string actionName, out T value) where T : struct
+    public static bool TryReadValueOnce<T>(Object owner, string actionName, out T value) where T : struct
     {
         if (owner == null)
         {
@@ -195,7 +197,7 @@ public static class InputActionReader
     /// <summary>
     /// 对 Unity 对象做一次性按下态读取，支持 Button、Value、PassThrough 和 Composite Action。
     /// </summary>
-    public static bool ReadPressedOnce(UnityEngine.Object owner, InputAction action)
+    public static bool ReadPressedOnce(Object owner, InputAction action)
     {
         return owner != null && ReadPressedOnce(owner.GetInstanceID(), action);
     }
@@ -203,7 +205,7 @@ public static class InputActionReader
     /// <summary>
     /// 对 Unity 对象做一次性按下态读取，支持 Button、Value、PassThrough 和 Composite Action。
     /// </summary>
-    public static bool ReadPressedOnce(UnityEngine.Object owner, string actionName)
+    public static bool ReadPressedOnce(Object owner, string actionName)
     {
         return owner != null && ReadPressedOnce(owner.GetInstanceID(), actionName);
     }
@@ -245,7 +247,7 @@ public static class InputActionReader
     /// <summary>
     /// 对 Unity 对象读取按下切换态，支持 Button、Value、PassThrough 和 Composite Action。
     /// </summary>
-    public static bool ReadPressedToggle(UnityEngine.Object owner, InputAction action)
+    public static bool ReadPressedToggle(Object owner, InputAction action)
     {
         return owner != null && ReadPressedToggle(owner.GetInstanceID(), action);
     }
@@ -253,7 +255,7 @@ public static class InputActionReader
     /// <summary>
     /// 对 Unity 对象读取按下切换态，支持 Button、Value、PassThrough 和 Composite Action。
     /// </summary>
-    public static bool ReadPressedToggle(UnityEngine.Object owner, string actionName)
+    public static bool ReadPressedToggle(Object owner, string actionName)
     {
         return owner != null && ReadPressedToggle(owner.GetInstanceID(), actionName);
     }
@@ -295,7 +297,7 @@ public static class InputActionReader
     /// <summary>
     /// 对 Unity 对象做一次性按钮读取。
     /// </summary>
-    public static bool ReadButtonOnce(UnityEngine.Object owner, InputAction action)
+    public static bool ReadButtonOnce(Object owner, InputAction action)
     {
         return owner != null && ReadButtonOnce(owner.GetInstanceID(), action);
     }
@@ -303,7 +305,7 @@ public static class InputActionReader
     /// <summary>
     /// 对 Unity 对象做一次性按钮读取。
     /// </summary>
-    public static bool ReadButtonOnce(UnityEngine.Object owner, string actionName)
+    public static bool ReadButtonOnce(Object owner, string actionName)
     {
         return owner != null && ReadButtonOnce(owner.GetInstanceID(), actionName);
     }
@@ -346,7 +348,7 @@ public static class InputActionReader
     /// 对 Unity 对象读取按钮切换态。
     /// 每次新的按下沿会在开/关之间切换。
     /// </summary>
-    public static bool ReadButtonToggle(UnityEngine.Object owner, InputAction action)
+    public static bool ReadButtonToggle(Object owner, InputAction action)
     {
         return owner != null && ReadButtonToggle(owner.GetInstanceID(), action);
     }
@@ -355,7 +357,7 @@ public static class InputActionReader
     /// 对 Unity 对象读取按钮切换态。
     /// 每次新的按下沿会在开/关之间切换。
     /// </summary>
-    public static bool ReadButtonToggle(UnityEngine.Object owner, string actionName)
+    public static bool ReadButtonToggle(Object owner, string actionName)
     {
         return owner != null && ReadButtonToggle(owner.GetInstanceID(), actionName);
     }
@@ -443,7 +445,7 @@ public static class InputActionReader
     /// <summary>
     /// 对 Unity 对象做一次性 Composite part 按钮读取。
     /// </summary>
-    public static bool ReadCompositePartButtonOnce(UnityEngine.Object owner, InputAction action, string compositePartName)
+    public static bool ReadCompositePartButtonOnce(Object owner, InputAction action, string compositePartName)
     {
         return owner != null && ReadCompositePartButtonOnce(owner.GetInstanceID(), action, compositePartName);
     }
@@ -451,7 +453,7 @@ public static class InputActionReader
     /// <summary>
     /// 对 Unity 对象做一次性 Composite part 按钮读取。
     /// </summary>
-    public static bool ReadCompositePartButtonOnce(UnityEngine.Object owner, string actionName, string compositePartName)
+    public static bool ReadCompositePartButtonOnce(Object owner, string actionName, string compositePartName)
     {
         return owner != null && ReadCompositePartButtonOnce(owner.GetInstanceID(), actionName, compositePartName);
     }
@@ -501,7 +503,7 @@ public static class InputActionReader
     /// <summary>
     /// 对 Unity 对象读取 Composite part 按钮切换态。
     /// </summary>
-    public static bool ReadCompositePartButtonToggle(UnityEngine.Object owner, InputAction action, string compositePartName)
+    public static bool ReadCompositePartButtonToggle(Object owner, InputAction action, string compositePartName)
     {
         return owner != null && ReadCompositePartButtonToggle(owner.GetInstanceID(), action, compositePartName);
     }
@@ -509,7 +511,7 @@ public static class InputActionReader
     /// <summary>
     /// 对 Unity 对象读取 Composite part 按钮切换态。
     /// </summary>
-    public static bool ReadCompositePartButtonToggle(UnityEngine.Object owner, string actionName, string compositePartName)
+    public static bool ReadCompositePartButtonToggle(Object owner, string actionName, string compositePartName)
     {
         return owner != null && ReadCompositePartButtonToggle(owner.GetInstanceID(), actionName, compositePartName);
     }
@@ -703,7 +705,7 @@ public static class InputActionReader
     private static bool IsCompositePart(InputBinding binding, string compositePartName)
     {
         return binding.isPartOfComposite
-            && string.Equals(binding.name, compositePartName, StringComparison.OrdinalIgnoreCase);
+               && string.Equals(binding.name, compositePartName, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string GetEffectivePath(InputBinding binding)
@@ -783,3 +785,5 @@ public static class InputActionReader
         return -1;
     }
 }
+
+#endif

@@ -1,3 +1,4 @@
+#if INPUTSYSTEM_SUPPORT
 using AlicizaX;
 using UnityEngine.InputSystem;
 
@@ -37,3 +38,5 @@ public static class InputActionResolver
         return AppServices.TryGet(out IInputActionProvider provider) && provider.IsActionNameAmbiguous(actionName);
     }
 }
+
+#endif

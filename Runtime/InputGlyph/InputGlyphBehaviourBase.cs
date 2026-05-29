@@ -1,3 +1,4 @@
+#if INPUTSYSTEM_SUPPORT
 using UnityEngine;
 
 public abstract class InputGlyphBehaviourBase : MonoBehaviour
@@ -39,3 +40,5 @@ public abstract class InputGlyphBehaviourBase : MonoBehaviour
 
     protected abstract void RefreshGlyph();
 }
+
+#endif

@@ -1,3 +1,4 @@
+#if INPUTSYSTEM_SUPPORT
 using System;
 using System.Collections.Generic;
 using AlicizaX;
@@ -6,6 +7,7 @@ using TMPro;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.UI;
 
 [CustomEditor(typeof(InputGlyphComponent))]
 [CanEditMultipleObjects]
@@ -136,7 +138,7 @@ public sealed class InputGlyphEditor : Editor
             case InputGlyphComponent.ActionSourceMode.HotkeyTrigger:
                 DrawPropertyRow("Hotkey Trigger", _hotkeyTrigger);
                 Component component = _hotkeyTrigger.objectReferenceValue as Component;
-                if (component != null && !(component is UnityEngine.UI.IHotkeyTrigger))
+                if (component != null && !(component is IHotkeyTrigger))
                 {
                     EditorUtils.TrHelpIconText("Hotkey Trigger must implement IHotkeyTrigger.", MessageType.Warning);
                 }
@@ -551,7 +553,7 @@ public sealed class InputGlyphEditor : Editor
 
             case InputGlyphComponent.ActionSourceMode.HotkeyTrigger:
                 Component component = _hotkeyTrigger.objectReferenceValue as Component;
-                if (component is UnityEngine.UI.IHotkeyTrigger trigger && trigger.HotkeyAction != null)
+                if (component is IHotkeyTrigger trigger && trigger.HotkeyAction != null)
                 {
                     return trigger.HotkeyAction.action;
                 }
@@ -679,3 +681,5 @@ public sealed class InputGlyphEditor : Editor
         return false;
     }
 }
+
+#endif

@@ -1,5 +1,8 @@
+#if INPUTSYSTEM_SUPPORT
 using System;
 using System.Collections.Generic;
+using AlicizaX;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.Controls;
@@ -144,7 +147,7 @@ public static class InputDeviceWatcher
         _initialDeviceProbeFramesRemaining = InitialDeviceProbeFrames;
         InputSystem.onAfterUpdate += OnAfterInputUpdate;
 #if UNITY_EDITOR
-        UnityEditor.EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+        EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
 #endif
     }
 
@@ -158,12 +161,12 @@ public static class InputDeviceWatcher
     }
 
 #if UNITY_EDITOR
-    private static void OnPlayModeStateChanged(UnityEditor.PlayModeStateChange state)
+    private static void OnPlayModeStateChanged(PlayModeStateChange state)
     {
-        if (state == UnityEditor.PlayModeStateChange.ExitingPlayMode)
+        if (state == PlayModeStateChange.ExitingPlayMode)
         {
             Dispose();
-            UnityEditor.EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+            EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
         }
     }
 #endif
@@ -370,7 +373,7 @@ public static class InputDeviceWatcher
 #if UNITY_EDITOR
         if (log)
         {
-            AlicizaX.Log.Info($"Input device -> {CurrentCategory} name={CurrentDeviceName} vid=0x{CurrentVendorId:X} pid=0x{CurrentProductId:X} id={CurrentDeviceId}");
+            Log.Info($"Input device -> {CurrentCategory} name={CurrentDeviceName} vid=0x{CurrentVendorId:X} pid=0x{CurrentProductId:X} id={CurrentDeviceId}");
         }
 #endif
     }
@@ -692,3 +695,5 @@ public static class InputDeviceWatcher
         return !string.IsNullOrEmpty(source) && source.IndexOf(value, StringComparison.OrdinalIgnoreCase) >= 0;
     }
 }
+
+#endif

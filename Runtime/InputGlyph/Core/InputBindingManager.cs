@@ -1,3 +1,4 @@
+#if INPUTSYSTEM_SUPPORT
 using System;
 using System.IO;
 using System.Collections.Generic;
@@ -765,3 +766,5 @@ public sealed class InputBindingManager : MonoServiceBehaviour<AppScope>
 
     #endregion
 }
+
+#endif

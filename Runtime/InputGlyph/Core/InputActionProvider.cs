@@ -1,3 +1,4 @@
+#if INPUTSYSTEM_SUPPORT
 using System;
 using System.Collections.Generic;
 using AlicizaX;
@@ -146,3 +147,5 @@ public sealed class InputActionProvider : MonoBehaviour
         }
     }
 }
+
+#endif

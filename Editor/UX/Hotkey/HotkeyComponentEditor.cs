@@ -1,3 +1,4 @@
+#if INPUTSYSTEM_SUPPORT
 using AlicizaX.UI.Runtime;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -6,7 +7,7 @@ using UnityEngine.UI;
 namespace UnityEditor.UI
 {
     [CustomEditor(typeof(HotkeyComponent), true)]
-    public class HotkeyComponentEditor : UnityEditor.Editor
+    public class HotkeyComponentEditor : Editor
     {
         private SerializedProperty _hotkeyAction;
         private SerializedProperty _hotkeyPressType;
@@ -76,3 +77,5 @@ namespace UnityEditor.UI
         }
     }
 }
+
+#endif

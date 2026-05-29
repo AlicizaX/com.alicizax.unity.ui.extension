@@ -1,9 +1,12 @@
+#if INPUTSYSTEM_SUPPORT
+using System;
 using AlicizaX.Editor;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Callbacks;
 using UnityEngine;
 using UnityEngine.UIElements;
+using Object = UnityEngine.Object;
 
 [CustomEditor(typeof(InputGlyphDatabase))]
 public sealed class InputGlyphDatabaseEditor : Editor
@@ -85,8 +88,8 @@ internal sealed class InputGlyphDatabaseWindow : EditorWindow
     private GUIContent _refreshContent;
     private GUIContent _addEntryContent;
     private GUIContent _settingsContent;
-    private InputGlyphDatabase[] _availableDatabases = System.Array.Empty<InputGlyphDatabase>();
-    private GUIContent[] _databaseOptions = System.Array.Empty<GUIContent>();
+    private InputGlyphDatabase[] _availableDatabases = Array.Empty<InputGlyphDatabase>();
+    private GUIContent[] _databaseOptions = Array.Empty<GUIContent>();
     private readonly List<int> _visibleEntryIndices = new List<int>(64);
     private VisualElement _root;
     private IMGUIContainer _chromeContainer;
@@ -377,7 +380,7 @@ internal sealed class InputGlyphDatabaseWindow : EditorWindow
     {
         string currentPath = _currentEntriesProperty != null ? _currentEntriesProperty.propertyPath : string.Empty;
         _currentEntriesProperty = entriesProperty.Copy();
-        if (!string.Equals(currentPath, _currentEntriesProperty.propertyPath, System.StringComparison.Ordinal))
+        if (!string.Equals(currentPath, _currentEntriesProperty.propertyPath, StringComparison.Ordinal))
         {
             RefreshEntryList();
         }
@@ -461,7 +464,7 @@ internal sealed class InputGlyphDatabaseWindow : EditorWindow
             paths[i] = AssetDatabase.GUIDToAssetPath(guids[i]);
         }
 
-        System.Array.Sort(paths, System.StringComparer.Ordinal);
+        Array.Sort(paths, StringComparer.Ordinal);
 
         InputGlyphDatabase[] databases = new InputGlyphDatabase[paths.Length];
         GUIContent[] options = new GUIContent[paths.Length];
@@ -481,8 +484,8 @@ internal sealed class InputGlyphDatabaseWindow : EditorWindow
 
         if (count != databases.Length)
         {
-            System.Array.Resize(ref databases, count);
-            System.Array.Resize(ref options, count);
+            Array.Resize(ref databases, count);
+            Array.Resize(ref options, count);
         }
 
         _availableDatabases = databases;
@@ -570,7 +573,7 @@ internal sealed class InputGlyphDatabaseWindow : EditorWindow
 
         DrawDatabasePopup(databaseRect);
         string nextSearch = AlicizaEditorGUI.DrawSearchField(searchRect, _search, "Search sprite or action...", SearchControlName, ref _focusSearch);
-        if (!string.Equals(_search, nextSearch, System.StringComparison.Ordinal))
+        if (!string.Equals(_search, nextSearch, StringComparison.Ordinal))
         {
             _search = nextSearch;
             RefreshEntryList();
@@ -802,7 +805,7 @@ internal sealed class InputGlyphDatabaseWindow : EditorWindow
         {
             SerializedProperty table = _tablesProperty.GetArrayElementAtIndex(i);
             SerializedProperty nameProperty = table.FindPropertyRelative(DeviceNamePropertyName);
-            if (string.Equals(nameProperty.stringValue, tableName, System.StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(nameProperty.stringValue, tableName, StringComparison.OrdinalIgnoreCase))
             {
                 return i;
             }
@@ -994,7 +997,7 @@ internal sealed class InputGlyphDatabaseWindow : EditorWindow
 
     private static bool Contains(string value, string search)
     {
-        return !string.IsNullOrEmpty(value) && value.IndexOf(search, System.StringComparison.OrdinalIgnoreCase) >= 0;
+        return !string.IsNullOrEmpty(value) && value.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     private static string EntryCountLabel(SerializedProperty table)
@@ -1135,3 +1138,5 @@ internal sealed class InputGlyphDatabaseWindow : EditorWindow
         _warningLabelStyle = AlicizaEditorGUI.Styles.WarningLabel;
     }
 }
+
+#endif

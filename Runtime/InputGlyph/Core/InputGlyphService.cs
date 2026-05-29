@@ -1,3 +1,4 @@
+#if INPUTSYSTEM_SUPPORT
 using System;
 using Cysharp.Text;
 using UnityEngine;
@@ -502,3 +503,5 @@ public static class InputGlyphService
         }
     }
 }
+
+#endif

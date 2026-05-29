@@ -1,3 +1,4 @@
+#if INPUTSYSTEM_SUPPORT
 using System;
 using System.Collections.Generic;
 using AlicizaX;
@@ -298,3 +299,5 @@ public sealed class InputGlyphComponent : InputGlyphBehaviourBase
         }
     }
 }
+
+#endif
