@@ -17,6 +17,7 @@ namespace UnityEngine.UI
     {
         [SerializeField] private List<TransitionData> m_ChildTransitions = new();
         private SelectionState m_SelectionState;
+        private bool m_HasSelectionState;
 
         void StartChildColorTween(TransitionData transitionData, Color targetColor, bool instant)
         {
@@ -52,6 +53,7 @@ namespace UnityEngine.UI
         protected override void InstantClearState()
         {
             base.InstantClearState();
+            m_HasSelectionState = false;
             for (int i = 0; i < m_ChildTransitions.Count; i++)
             {
                 switch (m_ChildTransitions[i].transition)
@@ -70,8 +72,9 @@ namespace UnityEngine.UI
         {
             if (Application.isPlaying)
             {
-                if (m_SelectionState == state) return;
+                if (m_HasSelectionState && m_SelectionState == state) return;
                 m_SelectionState = state;
+                m_HasSelectionState = true;
             }
 
             base.DoStateTransition(state, instant);

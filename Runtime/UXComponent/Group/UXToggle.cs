@@ -1,4 +1,5 @@
 using System;
+using AlicizaX;
 using UnityEngine.Events;
 using UnityEngine.EventSystems;
 
@@ -146,16 +147,18 @@ namespace UnityEngine.UI
 
         protected override void DoStateTransition(Selectable.SelectionState state, bool instant)
         {
-            if (state == Selectable.SelectionState.Disabled)
-            {
-                base.DoStateTransition(state, instant);
-                return;
-            }
-
-            if (m_IsOn)
-                state = Selectable.SelectionState.Selected;
-
+            state = ResolveVisualState(state);
             base.DoStateTransition(state, instant);
+        }
+
+        private Selectable.SelectionState ResolveVisualState(Selectable.SelectionState state)
+        {
+            if (m_IsOn)
+                return Selectable.SelectionState.Selected;
+
+            return state == Selectable.SelectionState.Disabled
+                ? Selectable.SelectionState.Normal
+                : state;
         }
 
         protected virtual void Set(bool value, bool sendCallback = true)
@@ -197,7 +200,7 @@ namespace UnityEngine.UI
         // 刷新当前视觉状态，根据 isOn 决定走 Selected 还是当前交互状态
         private void RefreshVisual()
         {
-            var state = m_IsOn ? Selectable.SelectionState.Selected : currentSelectionState;
+            var state = ResolveVisualState(currentSelectionState);
             DoStateTransition(state, true);
         }
 
