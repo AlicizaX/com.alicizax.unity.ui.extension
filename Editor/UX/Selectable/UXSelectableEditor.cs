@@ -396,26 +396,13 @@ namespace UnityEditor.UI
             {
                 case Selectable.Transition.ColorTint:
                     CheckAndSetColorDefaults(colorBlock);
-                    Rect colorRect = new Rect(position.x, y, position.width, EditorGUI.GetPropertyHeight(colorBlock));
-
-                    if (EditorGUILayout.BeginFadeGroup(m_ChildShowColorTint.faded))
-                    {
-                        EditorGUI.PropertyField(colorRect, colorBlock);
-                    }
-
-                    EditorGUILayout.EndFadeGroup();
+                    Rect colorRect = new Rect(position.x, y, position.width, EditorGUI.GetPropertyHeight(colorBlock, true));
+                    EditorGUI.PropertyField(colorRect, colorBlock, true);
                     break;
 
                 case Selectable.Transition.SpriteSwap:
-                    CheckAndSetColorDefaults(colorBlock);
-                    Rect spriteRect = new Rect(position.x, y, position.width, EditorGUI.GetPropertyHeight(spriteState));
-
-                    if (EditorGUILayout.BeginFadeGroup(m_ChildShowSpriteTrasition.faded))
-                    {
-                        EditorGUI.PropertyField(spriteRect, spriteState);
-                    }
-
-                    EditorGUILayout.EndFadeGroup();
+                    Rect spriteRect = new Rect(position.x, y, position.width, EditorGUI.GetPropertyHeight(spriteState, true));
+                    EditorGUI.PropertyField(spriteRect, spriteState, true);
                     break;
             }
 
@@ -463,10 +450,10 @@ namespace UnityEditor.UI
             switch (currentTransition)
             {
                 case Selectable.Transition.ColorTint:
-                    height += EditorGUI.GetPropertyHeight(transitionData.FindPropertyRelative("colors"));
+                    height += EditorGUI.GetPropertyHeight(transitionData.FindPropertyRelative("colors"), true);
                     break;
                 case Selectable.Transition.SpriteSwap:
-                    height += EditorGUI.GetPropertyHeight(transitionData.FindPropertyRelative("spriteState"));
+                    height += EditorGUI.GetPropertyHeight(transitionData.FindPropertyRelative("spriteState"), true);
                     break;
             }
 
