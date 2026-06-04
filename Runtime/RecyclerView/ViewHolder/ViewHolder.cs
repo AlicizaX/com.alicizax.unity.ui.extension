@@ -1,13 +1,14 @@
 using System;
 using Cysharp.Text;
 using UnityEngine;
+using UnityEngine.EventSystems;
 
 namespace AlicizaX.UI
 {
     /// <summary>
     /// RecyclerView 列表项视图持有者基类，负责承载单个可复用列表项的视图逻辑。
     /// </summary>
-    public abstract class ViewHolder : MonoBehaviour
+    public abstract class ViewHolder : MonoBehaviour, IPointerDownHandler, IPointerUpHandler
     {
         private RectTransform rectTransform;
         private bool isBound;
@@ -136,6 +137,40 @@ namespace AlicizaX.UI
             }
 
             RecyclerView.RecyclerViewAdapter.SetChoiceIndex(DataIndex);
+        }
+
+        public virtual void OnPointerDown(PointerEventData eventData)
+        {
+            //帮导航模块兼容做拦截事件....后续在考虑单独增加脚本绑定 或者自己fork下来改
+        }
+
+        public virtual void OnPointerUp(PointerEventData eventData)
+        {
+#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
+            if (eventData.button != PointerEventData.InputButton.Left ||
+                eventData.dragging ||
+                !eventData.eligibleForClick ||
+                !(this is IRecyclerViewNavigationViewHolder) ||
+                RecyclerView == null ||
+                DataIndex < 0)
+            {
+                return;
+            }
+
+            RecyclerViewNavigationController navigationController =
+                RecyclerView.GetComponent<RecyclerViewNavigationController>();
+            if (navigationController == null)
+            {
+                return;
+            }
+
+            navigationController.SetFocus(DataIndex, false);
+            EventSystem eventSystem = EventSystem.current;
+            if (eventSystem != null)
+            {
+                eventSystem.SetSelectedGameObject(navigationController.gameObject);
+            }
+#endif
         }
 
         /// <summary>

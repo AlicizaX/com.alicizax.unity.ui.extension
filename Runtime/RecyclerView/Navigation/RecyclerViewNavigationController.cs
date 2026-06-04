@@ -1,4 +1,5 @@
 #if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
+using System.Collections.Generic;
 using AlicizaX.UI.UXNavigation;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -33,6 +34,8 @@ namespace AlicizaX.UI
         private bool suppressed;
         private bool lastScopeSuppressed;
         private bool registeredInScope;
+        private readonly Dictionary<ViewHolder, NavigationFocusSnapshot> navigationFocusSnapshots =
+            new Dictionary<ViewHolder, NavigationFocusSnapshot>();
 
         public int FocusedDataIndex => hasFocus ? focusedDataIndex : -1;
         public bool HasFocus => hasFocus;
@@ -345,7 +348,7 @@ namespace AlicizaX.UI
             return recyclerView.LayoutManager.GetDataIndex(layoutIndex);
         }
 
-        private void SetFocus(int dataIndex, bool scroll)
+        public void SetFocus(int dataIndex, bool scroll)
         {
             if (!IsValidDataIndex(dataIndex))
             {
@@ -669,10 +672,7 @@ namespace AlicizaX.UI
                     }
 
                     bool focused = hasFocus && !suppressed && holder.DataIndex == focusedDataIndex;
-                    if (holder is IRecyclerViewNavigationViewHolder navigationHolder)
-                    {
-                        navigationHolder.HandleNavigationFocused(focused);
-                    }
+                    NotifyNavigationFocusChanged(holder, focused);
                 }
             }
         }
@@ -688,11 +688,35 @@ namespace AlicizaX.UI
             for (int i = 0; i < visibleCount; i++)
             {
                 ViewHolder holder = recyclerView.ViewProvider.GetVisibleViewHolder(i);
-                if (holder is IRecyclerViewNavigationViewHolder navigationHolder)
-                {
-                    navigationHolder.HandleNavigationFocused(focused && holder.DataIndex == focusedDataIndex);
-                }
+                NotifyNavigationFocusChanged(holder, focused && holder.DataIndex == focusedDataIndex);
             }
+        }
+
+        private void NotifyNavigationFocusChanged(ViewHolder holder, bool focused)
+        {
+            IRecyclerViewNavigationViewHolder navigationHolder = holder as IRecyclerViewNavigationViewHolder;
+            if (navigationHolder == null)
+            {
+                return;
+            }
+
+            NavigationFocusSnapshot snapshot = new NavigationFocusSnapshot
+            {
+                DataIndex = holder.DataIndex,
+                BindingVersion = holder.BindingVersion,
+                Focused = focused
+            };
+
+            if (navigationFocusSnapshots.TryGetValue(holder, out NavigationFocusSnapshot previous) &&
+                previous.DataIndex == snapshot.DataIndex &&
+                previous.BindingVersion == snapshot.BindingVersion &&
+                previous.Focused == snapshot.Focused)
+            {
+                return;
+            }
+
+            navigationFocusSnapshots[holder] = snapshot;
+            navigationHolder.HandleNavigationFocused(focused);
         }
 
         private void OnScrollValueChanged(float _)
@@ -821,6 +845,13 @@ namespace AlicizaX.UI
             Moved,
             Blocked,
             Boundary
+        }
+
+        private struct NavigationFocusSnapshot
+        {
+            public int DataIndex;
+            public uint BindingVersion;
+            public bool Focused;
         }
     }
 }
