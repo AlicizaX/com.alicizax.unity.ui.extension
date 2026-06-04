@@ -37,8 +37,19 @@ namespace AlicizaX.UI
         private readonly Dictionary<ViewHolder, NavigationFocusSnapshot> navigationFocusSnapshots =
             new Dictionary<ViewHolder, NavigationFocusSnapshot>();
 
+        /// <summary>
+        /// 当前导航焦点所在的数据索引；没有有效导航焦点时返回 -1。
+        /// </summary>
         public int FocusedDataIndex => hasFocus ? focusedDataIndex : -1;
+
+        /// <summary>
+        /// 当前 RecyclerView 是否持有有效的导航焦点。
+        /// </summary>
         public bool HasFocus => hasFocus;
+
+        /// <summary>
+        /// 当前导航是否被所属 UXNavigationScope 抑制。
+        /// </summary>
         public bool IsSuppressed => suppressed;
 
         protected override void Awake()
@@ -83,6 +94,10 @@ namespace AlicizaX.UI
             base.OnDisable();
         }
 
+        /// <summary>
+        /// 处理 Unity UI 的方向移动事件，并尝试在 RecyclerView 内移动导航焦点。
+        /// </summary>
+        /// <param name="eventData">方向移动事件数据。</param>
         public override void OnMove(AxisEventData eventData)
         {
             if (HandleMove(eventData))
@@ -94,6 +109,10 @@ namespace AlicizaX.UI
             base.OnMove(eventData);
         }
 
+        /// <summary>
+        /// 处理 Unity UI 的提交事件，将当前导航焦点提交为业务选中项。
+        /// </summary>
+        /// <param name="eventData">提交事件数据。</param>
         public void OnSubmit(BaseEventData eventData)
         {
             if (HandleSubmit())
@@ -102,6 +121,10 @@ namespace AlicizaX.UI
             }
         }
 
+        /// <summary>
+        /// 处理 Unity UI 的取消事件。
+        /// </summary>
+        /// <param name="eventData">取消事件数据。</param>
         public void OnCancel(BaseEventData eventData)
         {
             if (HandleCancel())
@@ -110,6 +133,11 @@ namespace AlicizaX.UI
             }
         }
 
+        /// <summary>
+        /// 手动处理一次方向移动输入。
+        /// </summary>
+        /// <param name="eventData">方向移动事件数据。</param>
+        /// <returns>返回 true 表示输入已被 RecyclerView 导航消耗。</returns>
         public bool HandleMove(AxisEventData eventData)
         {
             if (suppressed || recyclerView == null || eventData.moveDir == MoveDirection.None)
@@ -150,6 +178,10 @@ namespace AlicizaX.UI
             return true;
         }
 
+        /// <summary>
+        /// 手动提交当前导航焦点，将其同步为 Adapter 的业务选中索引。
+        /// </summary>
+        /// <returns>返回 true 表示提交已被 RecyclerView 导航处理。</returns>
         public bool HandleSubmit()
         {
             if (suppressed || recyclerView == null)
@@ -167,16 +199,28 @@ namespace AlicizaX.UI
             return true;
         }
 
+        /// <summary>
+        /// 手动处理取消输入。
+        /// </summary>
+        /// <returns>当前实现始终返回 false，表示取消输入未被 RecyclerView 导航消耗。</returns>
         public bool HandleCancel()
         {
             return false;
         }
 
+        /// <summary>
+        /// 设置导航焦点到指定数据索引，并按当前焦点对齐配置滚动到目标项。
+        /// </summary>
+        /// <param name="dataIndex">目标数据索引。</param>
         public void SetFocus(int dataIndex)
         {
             SetFocus(dataIndex, true);
         }
 
+        /// <summary>
+        /// 恢复导航焦点到指定数据索引，并将当前 EventSystem 选中对象切回本控制器。
+        /// </summary>
+        /// <param name="dataIndex">目标数据索引；无效或不可聚焦时会尝试选择最近的可聚焦项。</param>
         public void RestoreFocus(int dataIndex)
         {
             if (!IsValidDataIndex(dataIndex))
@@ -194,6 +238,9 @@ namespace AlicizaX.UI
             SelectSelf();
         }
 
+        /// <summary>
+        /// 清除 RecyclerView 内部导航焦点，并通知可见项取消导航高亮。
+        /// </summary>
         public void ClearFocus()
         {
             focusedDataIndex = -1;
@@ -294,6 +341,10 @@ namespace AlicizaX.UI
             SetNavigationSuppressed(currentSuppressed);
         }
 
+        /// <summary>
+        /// 设置导航抑制状态。抑制时会隐藏可见项导航焦点，解除抑制时会尝试恢复原焦点。
+        /// </summary>
+        /// <param name="value">是否抑制 RecyclerView 导航。</param>
         public void SetNavigationSuppressed(bool value)
         {
             if (suppressed == value)
@@ -348,6 +399,11 @@ namespace AlicizaX.UI
             return recyclerView.LayoutManager.GetDataIndex(layoutIndex);
         }
 
+        /// <summary>
+        /// 设置导航焦点到指定数据索引。
+        /// </summary>
+        /// <param name="dataIndex">目标数据索引。</param>
+        /// <param name="scroll">是否滚动列表以显示并对齐目标项。</param>
         public void SetFocus(int dataIndex, bool scroll)
         {
             if (!IsValidDataIndex(dataIndex))
