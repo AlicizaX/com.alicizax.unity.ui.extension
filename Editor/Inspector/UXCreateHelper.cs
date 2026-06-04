@@ -39,8 +39,7 @@ public class UXCreateHelper : Editor
         GameObject obj = Selection.activeGameObject;
         obj.name = "UXImage";
         DestroyImmediate(obj.GetComponent<Image>());
-        var image = obj.AddComponent<UXImage>();
-        image.material = AssetDatabase.LoadAssetAtPath<Material>(UXGUIConfig.UIDefaultMatPath);
+        obj.AddComponent<UXImage>();
     }
 
 #if !UNITY_6000_3_OR_NEWER

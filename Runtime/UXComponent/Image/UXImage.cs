@@ -16,11 +16,10 @@ namespace UnityEngine.UI
         {
             colorKeys = new GradientColorKey[2]
             {
-                // Add your colour and specify the stop point
                 new GradientColorKey(new Color(0, 0, 0), 0),
                 new GradientColorKey(new Color(1, 1, 1), 1)
             },
-            // This sets the alpha to 1 at both ends of the gradient
+
             alphaKeys = new GradientAlphaKey[2]
             {
                 new GradientAlphaKey(1, 0),
@@ -63,7 +62,199 @@ namespace UnityEngine.UI
             }
         }
 
+        [SerializeField] private bool m_EnableOutline;
+        [SerializeField] private bool m_EnableShadow;
+        [SerializeField] private Color m_OutlineEffectColor = Color.black;
+        [SerializeField] private Vector2 m_OutlineEffectDistance = new Vector2(1.5f, 1.5f);
+        [SerializeField] private float m_OutlineSoftness = 0.5f;
+        [SerializeField] private Color m_ShadowEffectColor = new Color(0f, 0f, 0f, 0.5f);
+        [SerializeField] private Vector2 m_ShadowEffectDistance = new Vector2(2f, -2f);
+        [SerializeField] private float m_ShadowSoftness = 1.5f;
+        [SerializeField] private bool m_UseGraphicAlpha = true;
+
+        public bool enableOutline
+        {
+            get { return m_EnableOutline; }
+            set
+            {
+                if (m_EnableOutline == value)
+                    return;
+
+                m_EnableOutline = value;
+                EnsureEffectCanvasChannels();
+                SetVerticesDirty();
+                SetMaterialDirty();
+            }
+        }
+
+        public bool enableShadow
+        {
+            get { return m_EnableShadow; }
+            set
+            {
+                if (m_EnableShadow == value)
+                    return;
+
+                m_EnableShadow = value;
+                EnsureEffectCanvasChannels();
+                SetVerticesDirty();
+                SetMaterialDirty();
+            }
+        }
+
+        public Color outlineEffectColor
+        {
+            get { return m_OutlineEffectColor; }
+            set
+            {
+                if (m_OutlineEffectColor == value)
+                    return;
+
+                m_OutlineEffectColor = value;
+                SetVerticesDirty();
+                SetMaterialDirty();
+            }
+        }
+
+        public Vector2 outlineEffectDistance
+        {
+            get { return m_OutlineEffectDistance; }
+            set
+            {
+                if (m_OutlineEffectDistance == value)
+                    return;
+
+                m_OutlineEffectDistance = value;
+                ResetRuntimeEffectCache();
+                SetVerticesDirty();
+            }
+        }
+
+        public float outlineSoftness
+        {
+            get { return m_OutlineSoftness; }
+            set
+            {
+                value = Mathf.Max(value, 0f);
+                if (Mathf.Approximately(m_OutlineSoftness, value))
+                    return;
+
+                m_OutlineSoftness = value;
+                ResetRuntimeEffectCache();
+                SetVerticesDirty();
+            }
+        }
+
+        public Color shadowEffectColor
+        {
+            get { return m_ShadowEffectColor; }
+            set
+            {
+                if (m_ShadowEffectColor == value)
+                    return;
+
+                m_ShadowEffectColor = value;
+                SetVerticesDirty();
+                SetMaterialDirty();
+            }
+        }
+
+        public Vector2 shadowEffectDistance
+        {
+            get { return m_ShadowEffectDistance; }
+            set
+            {
+                if (m_ShadowEffectDistance == value)
+                    return;
+
+                m_ShadowEffectDistance = value;
+                ResetRuntimeEffectCache();
+                SetVerticesDirty();
+            }
+        }
+
+        public float shadowSoftness
+        {
+            get { return m_ShadowSoftness; }
+            set
+            {
+                value = Mathf.Max(value, 0f);
+                if (Mathf.Approximately(m_ShadowSoftness, value))
+                    return;
+
+                m_ShadowSoftness = value;
+                ResetRuntimeEffectCache();
+                SetVerticesDirty();
+            }
+        }
+
+        public bool useGraphicAlpha
+        {
+            get { return m_UseGraphicAlpha; }
+            set
+            {
+                if (m_UseGraphicAlpha == value)
+                    return;
+
+                m_UseGraphicAlpha = value;
+                SetVerticesDirty();
+            }
+        }
+
+        private bool HasAdaptiveEffect
+        {
+            get { return m_EnableOutline || m_EnableShadow; }
+        }
+
+        private UXImageRuntimeAtlas.Entry m_RuntimeAtlasEntry;
+        private Sprite m_RuntimeAtlasSprite;
+        private int m_RuntimeAtlasPadding;
+        private Texture m_RuntimeSdfTexture;
+        private Texture m_PendingRuntimeSdfTexture;
+        private Texture m_RuntimeMaterialSdfTexture;
+
+        public override Texture mainTexture
+        {
+            get
+            {
+                if (HasAdaptiveEffect && TryGetRuntimeAtlasEntry(out var entry))
+                    return entry.Texture;
+
+                return base.mainTexture;
+            }
+        }
+
+        public override Material defaultMaterial
+        {
+            get
+            {
+                if (!HasAdaptiveEffect)
+                    return base.defaultMaterial;
+
+                Material effectMaterial = UXImageEffectSettings.GetEffectMaterial(m_RuntimeSdfTexture, m_OutlineEffectColor, m_ShadowEffectColor);
+                return effectMaterial != null ? effectMaterial : base.defaultMaterial;
+            }
+        }
+
         //这个用于标记属于哪个镜像区域
+        public override Material materialForRendering
+        {
+            get
+            {
+                if (!HasAdaptiveEffect)
+                    return base.materialForRendering;
+
+                if (m_PendingRuntimeSdfTexture != m_RuntimeMaterialSdfTexture)
+                {
+                    m_RuntimeSdfTexture = m_PendingRuntimeSdfTexture;
+                    m_RuntimeMaterialSdfTexture = m_PendingRuntimeSdfTexture;
+                }
+
+                Material effectMaterial = UXImageEffectSettings.GetEffectMaterial(m_RuntimeSdfTexture, m_OutlineEffectColor, m_ShadowEffectColor);
+                return effectMaterial != null ? GetModifiedMaterial(effectMaterial) : base.materialForRendering;
+            }
+        }
+
         public enum FlipPart
         {
             Part1 = 0,
@@ -764,6 +955,11 @@ namespace UnityEngine.UI
             {
                 ApplyGradientColor(toFill);
             }
+
+            if (HasAdaptiveEffect)
+            {
+                ApplyAdaptiveEffectData(toFill);
+            }
         }
 
         private void CacheGradientKeys()
@@ -783,6 +979,7 @@ namespace UnityEngine.UI
         {
             base.OnEnable();
             CacheGradientKeys();
+            EnsureEffectCanvasChannels();
         }
 
 #if UNITY_EDITOR
@@ -790,8 +987,24 @@ namespace UnityEngine.UI
         {
             base.OnValidate();
             CacheGradientKeys();
+            m_OutlineSoftness = Mathf.Max(m_OutlineSoftness, 0f);
+            m_ShadowSoftness = Mathf.Max(m_ShadowSoftness, 0f);
+            ResetRuntimeEffectCache(false);
+            EnsureEffectCanvasChannels();
         }
 #endif
+
+        protected override void OnCanvasHierarchyChanged()
+        {
+            base.OnCanvasHierarchyChanged();
+            EnsureEffectCanvasChannels();
+        }
+
+        protected override void OnTransformParentChanged()
+        {
+            base.OnTransformParentChanged();
+            EnsureEffectCanvasChannels();
+        }
 
         private void ApplyGradientColor(VertexHelper toFill)
         {
@@ -846,6 +1059,211 @@ namespace UnityEngine.UI
             Color result = EvaluateColor(time);
             result.a = EvaluateAlpha(time);
             return result;
+        }
+
+        private void ApplyAdaptiveEffectData(VertexHelper toFill)
+        {
+            int count = toFill.currentVertCount;
+            if (count == 0)
+                return;
+
+            Sprite sprite = overrideSprite;
+            float outlineEnabled = m_EnableOutline ? 1f : 0f;
+            float shadowEnabled = m_EnableShadow ? 1f : 0f;
+            Vector2 outlineDistance = m_OutlineEffectDistance;
+            float outlineSoftness = Mathf.Max(m_OutlineSoftness, 0.001f);
+            float shadowSoftness = Mathf.Max(m_ShadowSoftness, 0.001f);
+            Vector2 shadowOffset = m_ShadowEffectDistance;
+            float useRuntimeSdf = 0f;
+            Vector2 spriteTexelSize;
+            Vector4 sampleRect;
+            Vector4 sdfRect = Vector4.zero;
+            m_PendingRuntimeSdfTexture = null;
+            bool usingRuntimeAtlas = false;
+
+            if (TryGetRuntimeAtlasEntry(out var atlasEntry))
+            {
+                usingRuntimeAtlas = true;
+                spriteTexelSize = atlasEntry.TexelSize;
+                sampleRect = GetPaddedRuntimeAtlasRect(atlasEntry);
+                RemapVerticesToRuntimeAtlas(toFill, count, atlasEntry);
+            }
+            else
+            {
+                Texture texture = sprite != null ? sprite.texture : null;
+                Vector2 textureSize = texture != null
+                    ? new Vector2(texture.width, texture.height)
+                    : Vector2.one;
+
+                sampleRect = sprite != null
+                    ? Sprites.DataUtility.GetOuterUV(sprite)
+                    : new Vector4(0f, 0f, 1f, 1f);
+
+                float uvWidth = Mathf.Abs(sampleRect.z - sampleRect.x);
+                float uvHeight = Mathf.Abs(sampleRect.w - sampleRect.y);
+                spriteTexelSize = new Vector2(
+                    uvWidth > 0f ? 1f / (uvWidth * textureSize.x) : 0f,
+                    uvHeight > 0f ? 1f / (uvHeight * textureSize.y) : 0f);
+            }
+
+            if (usingRuntimeAtlas)
+                ExpandSimpleEffectGeometry(toFill, count, spriteTexelSize);
+
+            if (usingRuntimeAtlas && m_EnableShadow && UXImageRuntimeSDFCache.ShouldUse(shadowSoftness) &&
+                UXImageRuntimeSDFCache.TryGetOrRequest(sprite, shadowSoftness, atlasEntry.Padding, out var sdfEntry) && sdfEntry.IsValid)
+            {
+                useRuntimeSdf = 1f;
+                sdfRect = sdfEntry.UvRect;
+                m_PendingRuntimeSdfTexture = sdfEntry.Texture;
+            }
+
+            if (useRuntimeSdf > 0f)
+                shadowEnabled = 2f;
+
+            Vector4 uv2 = new Vector4(outlineEnabled, shadowEnabled, m_UseGraphicAlpha ? 1f : 0f, 0f);
+            Vector4 uv3 = new Vector4(outlineDistance.x, outlineDistance.y, shadowOffset.x, shadowOffset.y);
+            Vector4 tangent = new Vector4(
+                shadowSoftness,
+                sdfRect.w,
+                0f,
+                outlineSoftness);
+
+            for (int i = 0; i < count; i++)
+            {
+                toFill.PopulateUIVertex(ref m_WorkVert, i);
+                m_WorkVert.uv1 = sampleRect;
+                m_WorkVert.uv2 = uv2;
+                m_WorkVert.uv3 = uv3;
+                m_WorkVert.tangent = tangent;
+                m_WorkVert.normal = new Vector3(sdfRect.x, sdfRect.y, sdfRect.z);
+                toFill.SetUIVertex(m_WorkVert, i);
+            }
+        }
+
+        private void EnsureEffectCanvasChannels()
+        {
+            if (HasAdaptiveEffect)
+                UXImageEffectSettings.EnsureCanvasChannels(canvas);
+        }
+
+        private void ResetRuntimeEffectCache(bool setMaterialDirty = true)
+        {
+            m_RuntimeAtlasEntry = default;
+            m_RuntimeAtlasSprite = null;
+            m_RuntimeAtlasPadding = 0;
+            m_PendingRuntimeSdfTexture = null;
+            m_RuntimeSdfTexture = null;
+            m_RuntimeMaterialSdfTexture = null;
+            if (setMaterialDirty)
+                SetMaterialDirty();
+        }
+
+        private bool TryGetRuntimeAtlasEntry(out UXImageRuntimeAtlas.Entry entry)
+        {
+            entry = default;
+            if (!HasAdaptiveEffect || type == Type.Tiled)
+                return false;
+
+            Sprite sprite = overrideSprite;
+            int padding = GetEffectPadding();
+            if (m_RuntimeAtlasSprite == sprite && m_RuntimeAtlasPadding >= padding && m_RuntimeAtlasEntry.IsValid)
+            {
+                entry = m_RuntimeAtlasEntry;
+                return true;
+            }
+
+            if (!UXImageRuntimeAtlas.TryGet(sprite, padding, out entry))
+                return false;
+
+            m_RuntimeAtlasSprite = sprite;
+            m_RuntimeAtlasPadding = padding;
+            m_RuntimeAtlasEntry = entry;
+
+            return true;
+        }
+
+        private static Vector4 GetPaddedRuntimeAtlasRect(UXImageRuntimeAtlas.Entry entry)
+        {
+            Vector2 padding = entry.TexelSize * entry.Padding;
+            Vector4 rect = entry.SourceUvRect;
+            rect.x -= padding.x;
+            rect.y -= padding.y;
+            rect.z += padding.x;
+            rect.w += padding.y;
+            return rect;
+        }
+
+        private int GetEffectPadding()
+        {
+            float padding = 0f;
+            if (m_EnableOutline)
+            {
+                padding = Mathf.Max(padding, Mathf.Abs(m_OutlineEffectDistance.x) + m_OutlineSoftness);
+                padding = Mathf.Max(padding, Mathf.Abs(m_OutlineEffectDistance.y) + m_OutlineSoftness);
+            }
+            if (m_EnableShadow)
+            {
+                padding = Mathf.Max(padding, Mathf.Abs(m_ShadowEffectDistance.x) + m_ShadowSoftness);
+                padding = Mathf.Max(padding, Mathf.Abs(m_ShadowEffectDistance.y) + m_ShadowSoftness);
+            }
+
+            return Mathf.CeilToInt(padding) + 2;
+        }
+
+        private void RemapVerticesToRuntimeAtlas(VertexHelper toFill, int count, UXImageRuntimeAtlas.Entry entry)
+        {
+            Vector4 source = overrideSprite != null
+                ? Sprites.DataUtility.GetOuterUV(overrideSprite)
+                : new Vector4(0f, 0f, 1f, 1f);
+            Vector4 target = entry.SourceUvRect;
+            float sourceWidth = source.z - source.x;
+            float sourceHeight = source.w - source.y;
+
+            if (Mathf.Approximately(sourceWidth, 0f) || Mathf.Approximately(sourceHeight, 0f))
+                return;
+
+            for (int i = 0; i < count; i++)
+            {
+                toFill.PopulateUIVertex(ref m_WorkVert, i);
+                Vector2 uv = m_WorkVert.uv0;
+                float u = Mathf.InverseLerp(source.x, source.z, uv.x);
+                float v = Mathf.InverseLerp(source.y, source.w, uv.y);
+                m_WorkVert.uv0 = new Vector2(
+                    Mathf.Lerp(target.x, target.z, u),
+                    Mathf.Lerp(target.y, target.w, v));
+                toFill.SetUIVertex(m_WorkVert, i);
+            }
+        }
+
+        private void ExpandSimpleEffectGeometry(VertexHelper toFill, int count, Vector2 spriteTexelSize)
+        {
+            if (type != Type.Simple || count != 4)
+                return;
+
+            float padding = GetEffectPadding();
+            if (padding <= 0f)
+                return;
+
+            Rect bounds = GetGradientBounds(toFill, count);
+            if (Mathf.Approximately(bounds.width, 0f) || Mathf.Approximately(bounds.height, 0f))
+                return;
+
+            for (int i = 0; i < count; i++)
+            {
+                toFill.PopulateUIVertex(ref m_WorkVert, i);
+                Vector3 position = m_WorkVert.position;
+                float xSign = position.x < bounds.center.x ? -1f : 1f;
+                float ySign = position.y < bounds.center.y ? -1f : 1f;
+                position.x += xSign * padding;
+                position.y += ySign * padding;
+                m_WorkVert.position = position;
+                m_WorkVert.uv0 += new Vector4(
+                    xSign * padding * spriteTexelSize.x,
+                    ySign * padding * spriteTexelSize.y,
+                    0f,
+                    0f);
+                toFill.SetUIVertex(m_WorkVert, i);
+            }
         }
 
         private Color EvaluateColor(float time)

@@ -12,8 +12,6 @@ namespace UnityEngine.UI
     [CanEditMultipleObjects]
     internal class UXImageEditor : Editor
     {
-        private GameObject go;
-
         private SerializedProperty m_Color;
         private SerializedProperty m_RaycastTarget;
         protected SerializedProperty m_RaycastPadding;
@@ -24,6 +22,15 @@ namespace UnityEngine.UI
         private SerializedProperty m_sourceImage;
         private SerializedProperty m_ColorType;
         private SerializedProperty m_Direction;
+        private SerializedProperty m_EnableOutline;
+        private SerializedProperty m_EnableShadow;
+        private SerializedProperty m_OutlineEffectColor;
+        private SerializedProperty m_OutlineEffectDistance;
+        private SerializedProperty m_OutlineSoftness;
+        private SerializedProperty m_ShadowEffectColor;
+        private SerializedProperty m_ShadowEffectDistance;
+        private SerializedProperty m_ShadowSoftness;
+        private SerializedProperty m_UseGraphicAlpha;
 
         SerializedProperty m_UseSpriteMesh;
         SerializedProperty m_PreserveAspect;
@@ -116,9 +123,6 @@ namespace UnityEngine.UI
 
         private void OnEnable()
         {
-            Image image = target as Image;
-            go = image.gameObject;
-            UIEffectWrapDrawer.InitInspectorString();
             m_Color = serializedObject.FindProperty("m_Color");
             m_Sprite = serializedObject.FindProperty("m_Sprite");
             m_Type = serializedObject.FindProperty("m_Type");
@@ -135,6 +139,15 @@ namespace UnityEngine.UI
             m_ColorType = serializedObject.FindProperty("m_ColorType");
             m_GradientColor = serializedObject.FindProperty("m_GradientColor");
             m_Direction = serializedObject.FindProperty("m_Direction");
+            m_EnableOutline = serializedObject.FindProperty("m_EnableOutline");
+            m_EnableShadow = serializedObject.FindProperty("m_EnableShadow");
+            m_OutlineEffectColor = serializedObject.FindProperty("m_OutlineEffectColor");
+            m_OutlineEffectDistance = serializedObject.FindProperty("m_OutlineEffectDistance");
+            m_OutlineSoftness = serializedObject.FindProperty("m_OutlineSoftness");
+            m_ShadowEffectColor = serializedObject.FindProperty("m_ShadowEffectColor");
+            m_ShadowEffectDistance = serializedObject.FindProperty("m_ShadowEffectDistance");
+            m_ShadowSoftness = serializedObject.FindProperty("m_ShadowSoftness");
+            m_UseGraphicAlpha = serializedObject.FindProperty("m_UseGraphicAlpha");
 
             m_UseSpriteMesh = serializedObject.FindProperty("m_UseSpriteMesh");
             m_PreserveAspect = serializedObject.FindProperty("m_PreserveAspect");
@@ -170,7 +183,7 @@ namespace UnityEngine.UI
 
             m_ShowType = new AnimBool(m_Sprite.objectReferenceValue != null);
             m_ShowType.valueChanged.AddListener(Repaint);
-            m_ShowNativeSize = new AnimBool(false);
+            m_ShowNativeSize = new AnimBool(ShouldShowNativeSize());
             m_ShowNativeSize.valueChanged.AddListener(Repaint);
 
             var typeEnum = (Image.Type)m_Type.enumValueIndex;
@@ -203,17 +216,14 @@ namespace UnityEngine.UI
 
         public override void OnInspectorGUI()
         {
-            EditorGUI.BeginChangeCheck();
             serializedObject.Update();
 
-            serializedObject.ApplyModifiedProperties();
             //base.OnInspectorGUI();
             //CustomEditorGUILayout.PropertyField(sourceImage);
             //CustomEditorGUILayout.PropertyField(color);
             //CustomEditorGUILayout.PropertyField(material);
             //CustomEditorGUILayout.PropertyField(raycastTarget);
             //CustomEditorGUILayout.PropertyField(maskAble);
-            serializedObject.Update();
 
             Image image = target as Image;
             RectTransform rect = image.GetComponent<RectTransform>();
@@ -246,10 +256,8 @@ namespace UnityEngine.UI
             NativeSizeButtonGUI();
 
             FlipGUI();
+            EffectGUI();
             serializedObject.ApplyModifiedProperties();
-
-            Rect effectWarpRect = EditorGUILayout.GetControlRect();
-            UIEffectWrapDrawer.Draw(effectWarpRect, go);
         }
 
         protected void SpriteGUI()
@@ -290,27 +298,6 @@ namespace UnityEngine.UI
                 m_ColorType.intValue = (int)type;
             }
 
-            GUILayout.BeginHorizontal();
-            GUILayout.Space(EditorGUIUtility.labelWidth);
-            if (GUILayout.Button("UseUIColorConfig", EditorStyles.miniButton))
-            {
-                //弹窗
-                if (type == UXImage.ColorType.Solid_Color)
-                {
-                    // ColorChooseWindow.OpenWindow();
-                    // ColorChooseWindow.r_window.target = (UXImage)target;
-                }
-
-                if (type == UXImage.ColorType.Gradient_Color)
-                {
-                    // GradientChooseWindow.OpenWindow();
-                    // GradientChooseWindow.r_window.target = (UXImage)target;
-                }
-                //m_Color.colorValue = UIColorChooseWindow.r_window.usecolor;
-                //m_GradientColor.
-            }
-
-            GUILayout.EndHorizontal();
             if (type == UXImage.ColorType.Solid_Color)
             {
                 EditorGUILayout.PropertyField(m_Color);
@@ -330,6 +317,32 @@ namespace UnityEngine.UI
             }
 
             EditorGUILayout.PropertyField(m_Material);
+        }
+
+        private void EffectGUI()
+        {
+            EditorGUILayout.PropertyField(m_EnableOutline, new GUIContent("Outline"));
+            if (m_EnableOutline.boolValue)
+            {
+                ++EditorGUI.indentLevel;
+                EditorGUILayout.PropertyField(m_OutlineEffectColor, new GUIContent("Effect Color"));
+                EditorGUILayout.PropertyField(m_OutlineEffectDistance, new GUIContent("Effect Distance"));
+                EditorGUILayout.PropertyField(m_OutlineSoftness, new GUIContent("Softness"));
+                --EditorGUI.indentLevel;
+            }
+
+            EditorGUILayout.PropertyField(m_EnableShadow, new GUIContent("Shadow"));
+            if (m_EnableShadow.boolValue)
+            {
+                ++EditorGUI.indentLevel;
+                EditorGUILayout.PropertyField(m_ShadowEffectColor, new GUIContent("Effect Color"));
+                EditorGUILayout.PropertyField(m_ShadowEffectDistance, new GUIContent("Effect Distance"));
+                EditorGUILayout.PropertyField(m_ShadowSoftness, new GUIContent("Softness"));
+                --EditorGUI.indentLevel;
+            }
+
+            if (m_EnableOutline.boolValue || m_EnableShadow.boolValue)
+                EditorGUILayout.PropertyField(m_UseGraphicAlpha, new GUIContent("Use Graphic Alpha"));
         }
 
         protected void RaycastControlsGUI()
@@ -494,6 +507,9 @@ namespace UnityEngine.UI
         {
             EditorGUI.BeginChangeCheck();
             //EditorGUILayout.PropertyField(m_gradientMode, m_SpriteGradientContent);
+            RectTransform targetRectTransform = m_targetObject != null ? m_targetObject.rectTransform : null;
+            float targetWidth = targetRectTransform != null ? targetRectTransform.rect.width : 0f;
+            float targetHeight = targetRectTransform != null ? targetRectTransform.rect.height : 0f;
 
             UXImage.FlipMode flipmodeEnumOld = (UXImage.FlipMode)m_FlipMode.enumValueIndex;
             bool flipWithCopyOld = m_FlipWithCopy.boolValue;
@@ -523,11 +539,11 @@ namespace UnityEngine.UI
                     {
                         if (m_FlipEdgeHorizontal.intValue == 0)
                         {
-                            go.transform.Translate(Vector3.right * go.GetComponent<RectTransform>().rect.width / 4);
+                            TranslateTarget(targetRectTransform, Vector3.right, targetWidth / 4);
                         }
                         else if (m_FlipEdgeHorizontal.intValue == 2)
                         {
-                            go.transform.Translate(Vector3.left * go.GetComponent<RectTransform>().rect.width / 4);
+                            TranslateTarget(targetRectTransform, Vector3.left, targetWidth / 4);
                         }
                     }
 
@@ -538,11 +554,11 @@ namespace UnityEngine.UI
                         {
                             if (last == 0)
                             {
-                                go.transform.Translate(Vector3.left * go.GetComponent<RectTransform>().rect.width / 2);
+                                TranslateTarget(targetRectTransform, Vector3.left, targetWidth / 2);
                             }
                             else if (last == 2)
                             {
-                                go.transform.Translate(Vector3.right * go.GetComponent<RectTransform>().rect.width / 2);
+                                TranslateTarget(targetRectTransform, Vector3.right, targetWidth / 2);
                             }
                         }
 
@@ -559,19 +575,19 @@ namespace UnityEngine.UI
                         {
                             if ((last == 0 && now == 1))
                             {
-                                go.transform.Translate(Vector3.right * go.GetComponent<RectTransform>().rect.width / 4);
+                                TranslateTarget(targetRectTransform, Vector3.right, targetWidth / 4);
                             }
                             else if ((last == 2 && now == 1))
                             {
-                                go.transform.Translate(Vector3.left * go.GetComponent<RectTransform>().rect.width / 4);
+                                TranslateTarget(targetRectTransform, Vector3.left, targetWidth / 4);
                             }
                             else if (last == 0 && now == 2 || (last == 1 && now == 2))
                             {
-                                go.transform.Translate(Vector3.right * go.GetComponent<RectTransform>().rect.width / 2);
+                                TranslateTarget(targetRectTransform, Vector3.right, targetWidth / 2);
                             }
                             else if ((last == 1 && now == 0) || (last == 2 && now == 0))
                             {
-                                go.transform.Translate(Vector3.left * go.GetComponent<RectTransform>().rect.width / 2);
+                                TranslateTarget(targetRectTransform, Vector3.left, targetWidth / 2);
                             }
                         }
                     }
@@ -586,11 +602,11 @@ namespace UnityEngine.UI
                     {
                         if (m_FlipEdgeVertical.intValue == 3)
                         {
-                            go.transform.Translate(Vector3.down * go.GetComponent<RectTransform>().rect.height / 4);
+                            TranslateTarget(targetRectTransform, Vector3.down, targetHeight / 4);
                         }
                         else if (m_FlipEdgeVertical.intValue == 5)
                         {
-                            go.transform.Translate(Vector3.up * go.GetComponent<RectTransform>().rect.height / 4);
+                            TranslateTarget(targetRectTransform, Vector3.up, targetHeight / 4);
                         }
                     }
 
@@ -601,11 +617,11 @@ namespace UnityEngine.UI
                         {
                             if (last == 3)
                             {
-                                go.transform.Translate(Vector3.up * go.GetComponent<RectTransform>().rect.height / 2);
+                                TranslateTarget(targetRectTransform, Vector3.up, targetHeight / 2);
                             }
                             else if (last == 5)
                             {
-                                go.transform.Translate(Vector3.down * go.GetComponent<RectTransform>().rect.height / 2);
+                                TranslateTarget(targetRectTransform, Vector3.down, targetHeight / 2);
                             }
                         }
 
@@ -621,19 +637,19 @@ namespace UnityEngine.UI
                         {
                             if ((last == 3 && now == 4))
                             {
-                                go.transform.Translate(Vector3.down * go.GetComponent<RectTransform>().rect.height / 4);
+                                TranslateTarget(targetRectTransform, Vector3.down, targetHeight / 4);
                             }
                             else if ((last == 5 && now == 4))
                             {
-                                go.transform.Translate(Vector3.up * go.GetComponent<RectTransform>().rect.height / 4);
+                                TranslateTarget(targetRectTransform, Vector3.up, targetHeight / 4);
                             }
                             else if (last == 3 && now == 5 || (last == 4 && now == 5))
                             {
-                                go.transform.Translate(Vector3.down * go.GetComponent<RectTransform>().rect.height / 2);
+                                TranslateTarget(targetRectTransform, Vector3.down, targetHeight / 2);
                             }
                             else if ((last == 4 && now == 3) || last == 5 && now == 3)
                             {
-                                go.transform.Translate(Vector3.up * go.GetComponent<RectTransform>().rect.height / 2);
+                                TranslateTarget(targetRectTransform, Vector3.up, targetHeight / 2);
                             }
                         }
                     }
@@ -647,37 +663,6 @@ namespace UnityEngine.UI
                     m_FlipFillCenter.intValue = EnumPopupLayoutEx(m_FlipFillContent.text, typeof(UXImage.FlipFillCenter), m_FlipFillCenter.intValue, labels3);
                     //EditorGUILayout.PropertyField(m_FlipFillCenter, m_FlipFillContent);
                     int nowC = m_FlipFillCenter.intValue;
-                    // if (lastC != nowC)
-                    // {
-                    //     if(lastC==0&&nowC==1||(lastC==3&&nowC==2)){
-                    //         go.transform.Translate(Vector3.right * go.GetComponent<RectTransform>().rect.width / 2);
-                    //     }
-                    //     else if(lastC==0&& nowC==2){
-                    //         go.transform.Translate(Vector3.right * go.GetComponent<RectTransform>().rect.width / 2);
-                    //         go.transform.Translate(Vector3.down * go.GetComponent<RectTransform>().rect.height / 2);
-                    //     }
-                    //     else if(lastC==0&& nowC==3 || (lastC==1&&nowC==2)){
-                    //         go.transform.Translate(Vector3.down * go.GetComponent<RectTransform>().rect.height / 2);
-                    //     }
-                    //     else if(lastC==1&&nowC==0||(lastC==2&&nowC==3)){
-                    //         go.transform.Translate(Vector3.left * go.GetComponent<RectTransform>().rect.width / 2);
-                    //     }
-                    //     else if(lastC==1&&nowC==3){
-                    //         go.transform.Translate(Vector3.left * go.GetComponent<RectTransform>().rect.width / 2);
-                    //         go.transform.Translate(Vector3.down * go.GetComponent<RectTransform>().rect.height / 2);
-                    //     }
-                    //     else if(lastC==2&&nowC==1||(lastC==3&&nowC==0)){
-                    //         go.transform.Translate(Vector3.up * go.GetComponent<RectTransform>().rect.height / 2);
-                    //     }
-                    //     else if(lastC==2&&nowC==0){
-                    //         go.transform.Translate(Vector3.left * go.GetComponent<RectTransform>().rect.width / 2);
-                    //         go.transform.Translate(Vector3.up * go.GetComponent<RectTransform>().rect.height / 2);
-                    //     }
-                    //     else if(lastC==3&&nowC==1){
-                    //         go.transform.Translate(Vector3.right * go.GetComponent<RectTransform>().rect.width / 2);
-                    //         go.transform.Translate(Vector3.up * go.GetComponent<RectTransform>().rect.height / 2);
-                    //     }
-                    // }
                     --EditorGUI.indentLevel;
                     break;
                 default:
@@ -743,6 +728,14 @@ namespace UnityEngine.UI
             }
         }
 
+        private static void TranslateTarget(RectTransform rectTransform, Vector3 direction, float distance)
+        {
+            if (rectTransform == null || Mathf.Approximately(distance, 0f))
+                return;
+
+            rectTransform.Translate(direction * distance);
+        }
+
         void GetSizeScaler(UXImage.FlipMode flipMode, bool flipWithCopy, UXImage.FlipEdge flipEdge, ref int widthScaler, ref int heightScaler)
         {
             if (flipMode == UXImage.FlipMode.FourCorner)
@@ -772,12 +765,17 @@ namespace UnityEngine.UI
 
         void SetShowNativeSize(bool instant)
         {
-            Image.Type type = (Image.Type)m_Type.enumValueIndex;
-            bool showNativeSize = (type == Image.Type.Simple || type == Image.Type.Filled) && m_Sprite.objectReferenceValue != null;
+            bool showNativeSize = ShouldShowNativeSize();
             if (instant)
                 m_ShowNativeSize.value = showNativeSize;
             else
                 m_ShowNativeSize.target = showNativeSize;
+        }
+
+        private bool ShouldShowNativeSize()
+        {
+            Image.Type type = (Image.Type)m_Type.enumValueIndex;
+            return (type == Image.Type.Simple || type == Image.Type.Filled) && m_Sprite.objectReferenceValue != null;
         }
 
         protected void NativeSizeButtonGUI()
