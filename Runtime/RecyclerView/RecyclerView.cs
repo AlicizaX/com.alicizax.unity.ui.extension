@@ -532,7 +532,7 @@ namespace AlicizaX.UI
         /// 当拖拽状态变化时触发。
         /// </summary>
         public Action<bool> OnScrollDraggingChanged;
-#if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
+#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
         internal Action OnNavigationDataChanged;
 #endif
 
@@ -1636,7 +1636,7 @@ namespace AlicizaX.UI
             return ViewProvider.ApplyVisibleSelection(dataIndex, selected);
         }
 
-#if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
+#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
         internal void NotifyNavigationDataChanged()
         {
             OnNavigationDataChanged?.Invoke();

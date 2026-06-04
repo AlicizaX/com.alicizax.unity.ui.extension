@@ -1,4 +1,4 @@
-#if INPUTSYSTEM_SUPPORT && UX_NAVIGATION
+#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
 using AlicizaX.UI.UXNavigation;
 using UnityEngine;
 using UnityEngine.EventSystems;
