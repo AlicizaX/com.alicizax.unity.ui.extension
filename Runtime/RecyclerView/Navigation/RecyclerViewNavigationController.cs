@@ -19,6 +19,7 @@ namespace AlicizaX.UI
         [SerializeField] private UXNavigationScope navigationScope;
 
         [SerializeField] private bool wrapNavigation;
+        [SerializeField] private bool keepFocusVisibleWhenSuppressed = true;
         [SerializeField] private bool smoothScroll = true;
         [SerializeField] private float smoothScrollDuration = 0.18f;
         [SerializeField] private ScrollAlignment focusAlignment = ScrollAlignment.Center;
@@ -356,7 +357,15 @@ namespace AlicizaX.UI
             if (suppressed)
             {
                 rememberedDataIndex = hasFocus ? focusedDataIndex : -1;
-                ApplyVisibleNavigationFocus(false);
+                if (keepFocusVisibleWhenSuppressed)
+                {
+                    RefreshVisibleNavigationFocus();
+                }
+                else
+                {
+                    ApplyVisibleNavigationFocus(false);
+                }
+
                 return;
             }
 
@@ -727,7 +736,9 @@ namespace AlicizaX.UI
                         continue;
                     }
 
-                    bool focused = hasFocus && !suppressed && holder.DataIndex == focusedDataIndex;
+                    bool focused = hasFocus &&
+                                   (!suppressed || keepFocusVisibleWhenSuppressed) &&
+                                   holder.DataIndex == focusedDataIndex;
                     NotifyNavigationFocusChanged(holder, focused);
                 }
             }

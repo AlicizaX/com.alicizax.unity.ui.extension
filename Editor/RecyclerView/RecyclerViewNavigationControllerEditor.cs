@@ -22,6 +22,7 @@ namespace AlicizaX.UI.Editor
         private SerializedProperty _recyclerView;
         private SerializedProperty _navigationScope;
         private SerializedProperty _wrapNavigation;
+        private SerializedProperty _keepFocusVisibleWhenSuppressed;
         private SerializedProperty _smoothScroll;
         private SerializedProperty _smoothScrollDuration;
         private SerializedProperty _focusAlignment;
@@ -42,6 +43,7 @@ namespace AlicizaX.UI.Editor
             _recyclerView = serializedObject.FindProperty("recyclerView");
             _navigationScope = serializedObject.FindProperty("navigationScope");
             _wrapNavigation = serializedObject.FindProperty("wrapNavigation");
+            _keepFocusVisibleWhenSuppressed = serializedObject.FindProperty("keepFocusVisibleWhenSuppressed");
             _smoothScroll = serializedObject.FindProperty("smoothScroll");
             _smoothScrollDuration = serializedObject.FindProperty("smoothScrollDuration");
             _focusAlignment = serializedObject.FindProperty("focusAlignment");
@@ -87,14 +89,16 @@ namespace AlicizaX.UI.Editor
 
         private void DrawScrollRows()
         {
-            Rect rect = EditorGUILayout.GetControlRect(false, ScrollRowHeight);
+            Rect rect = EditorGUILayout.GetControlRect(false, ScrollRowHeight + 21f);
             DrawFieldRowBackground(rect);
 
             Rect wrapRect = new Rect(rect.x + 6f, rect.y + 3f, rect.width - 12f, 18f);
-            Rect smoothRect = new Rect(wrapRect.x, wrapRect.yMax + 3f, wrapRect.width, 18f);
+            Rect keepFocusRect = new Rect(wrapRect.x, wrapRect.yMax + 3f, wrapRect.width, 18f);
+            Rect smoothRect = new Rect(wrapRect.x, keepFocusRect.yMax + 3f, wrapRect.width, 18f);
             Rect alignRect = new Rect(wrapRect.x, smoothRect.yMax + 3f, wrapRect.width, 18f);
 
             DrawToggleProperty(wrapRect, _wrapNavigation, "Wrap");
+            DrawToggleProperty(keepFocusRect, _keepFocusVisibleWhenSuppressed, "Keep Focus");
             DrawToggleWithFloatProperty(smoothRect, _smoothScroll, "Smooth", _smoothScrollDuration, "Duration");
             DrawPropertyRow(alignRect, "Alignment", _focusAlignment);
         }
