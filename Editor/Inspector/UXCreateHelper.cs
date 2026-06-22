@@ -53,10 +53,19 @@ public class UXCreateHelper : Editor
         InvokeMethod(MenuOptionsType, "AddToggle", new object[] { menuCommand });
         GameObject obj = Selection.activeGameObject;
         obj.name = "UXToggle";
-        DestroyImmediate(obj.GetComponent<Toggle>());
+        Toggle toggle = obj.GetComponent<Toggle>();
+        Graphic toggleGraphic = toggle != null ? toggle.graphic : null;
+        bool isOn = toggle != null && toggle.isOn;
+        if (toggle != null)
+            DestroyImmediate(toggle);
+
         var uxToggle = obj.AddComponent<UXToggle>();
-        uxToggle.targetGraphic = obj.transform.Find("Background/Checkmark").GetComponent<Graphic>();
-        uxToggle.targetGraphic = obj.transform.Find("Background").GetComponent<Graphic>();
+        if (toggleGraphic == null)
+            toggleGraphic = obj.transform.Find("Background/Checkmark")?.GetComponent<Graphic>();
+
+        uxToggle.graphic = toggleGraphic;
+        uxToggle.isOn = isOn;
+        uxToggle.targetGraphic = obj.transform.Find("Background")?.GetComponent<Graphic>();
     }
 
 #if TEXTMESHPRO_SUPPORT

@@ -13,6 +13,7 @@ namespace UnityEditor.UI
     {
         private SerializedProperty m_OnValueChangedProperty;
         private SerializedProperty m_GroupProperty;
+        private SerializedProperty m_GraphicProperty;
         private SerializedProperty m_IsOnProperty;
 
         private SerializedProperty hoverAudioClip;
@@ -23,6 +24,7 @@ namespace UnityEditor.UI
             base.OnEnable();
 
             m_GroupProperty = serializedObject.FindProperty("m_Group");
+            m_GraphicProperty = serializedObject.FindProperty("m_Graphic");
             m_IsOnProperty = serializedObject.FindProperty("m_IsOn");
             m_OnValueChangedProperty = serializedObject.FindProperty("onValueChanged");
 
@@ -77,6 +79,7 @@ namespace UnityEditor.UI
 
             UXToggle toggle = serializedObject.targetObject as UXToggle;
             DrawIsOn(toggle);
+            GUILayoutHelper.DrawProperty(m_GraphicProperty, customSkin, "Graphic");
             DrawGroup(toggle);
 
             EditorGUILayout.Space();

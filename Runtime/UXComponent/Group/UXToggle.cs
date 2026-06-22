@@ -28,6 +28,22 @@ namespace UnityEngine.UI
 
         public ToggleEvent onValueChanged = new ToggleEvent();
 
+        [Tooltip("Graphic affected by the toggle.")]
+        [SerializeField] private Graphic m_Graphic;
+
+        public Graphic graphic
+        {
+            get { return m_Graphic; }
+            set
+            {
+                if (m_Graphic == value)
+                    return;
+
+                m_Graphic = value;
+                PlayEffect(true);
+            }
+        }
+
         [Tooltip("Is the toggle currently on or off?")] [SerializeField]
         private bool m_IsOn;
 
@@ -184,6 +200,7 @@ namespace UnityEngine.UI
                 onValueChanged.Invoke(m_IsOn);
             }
 
+            PlayEffect(false);
             var stateToApply = m_IsOn ? Selectable.SelectionState.Selected : currentSelectionState;
             DoStateTransition(stateToApply, false);
             OnAfterValueChanged(m_IsOn);
@@ -198,8 +215,22 @@ namespace UnityEngine.UI
         }
 
         // 刷新当前视觉状态，根据 isOn 决定走 Selected 还是当前交互状态
+        private void PlayEffect(bool instant)
+        {
+            if (m_Graphic == null)
+                return;
+
+#if UNITY_EDITOR
+            if (!Application.isPlaying)
+                m_Graphic.canvasRenderer.SetAlpha(m_IsOn ? 1f : 0f);
+            else
+#endif
+                m_Graphic.CrossFadeAlpha(m_IsOn ? 1f : 0f, instant ? 0f : 0.1f, true);
+        }
+
         private void RefreshVisual()
         {
+            PlayEffect(true);
             var state = ResolveVisualState(currentSelectionState);
             DoStateTransition(state, true);
         }
