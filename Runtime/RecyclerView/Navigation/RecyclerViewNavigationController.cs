@@ -111,7 +111,7 @@ namespace AlicizaX.UI
         }
 
         /// <summary>
-        /// 处理 Unity UI 的提交事件，将当前导航焦点提交为业务选中项。
+        /// 处理 Unity UI 的提交事件，优先转发给当前焦点 ViewHolder，否则回退为业务选中。
         /// </summary>
         /// <param name="eventData">提交事件数据。</param>
         public void OnSubmit(BaseEventData eventData)
@@ -180,7 +180,8 @@ namespace AlicizaX.UI
         }
 
         /// <summary>
-        /// 手动提交当前导航焦点，将其同步为 Adapter 的业务选中索引。
+        /// 手动提交当前导航焦点。优先转发给焦点项的 <see cref="IRecyclerViewNavigationViewHolder.HandleNavigationSubmit"/>；
+        /// 若未处理则回退为同步 Adapter 业务选中索引。
         /// </summary>
         /// <returns>返回 true 表示提交已被 RecyclerView 导航处理。</returns>
         public bool HandleSubmit()
@@ -193,6 +194,13 @@ namespace AlicizaX.UI
             if (!hasFocus || !IsValidDataIndex(focusedDataIndex))
             {
                 InitializeFocus();
+                return true;
+            }
+
+            ViewHolder holder = GetFocusedViewHolder();
+            if (holder is IRecyclerViewNavigationViewHolder navigationHolder &&
+                navigationHolder.HandleNavigationSubmit())
+            {
                 return true;
             }
 
@@ -828,7 +836,52 @@ namespace AlicizaX.UI
 
             int templateId = adapter.GetTemplateId(dataIndex);
             ViewHolder template = recyclerView.ViewProvider.GetTemplate(templateId);
-            return template is IRecyclerViewNavigationViewHolder;
+            if (template is not IRecyclerViewNavigationViewHolder)
+            {
+                return false;
+            }
+
+            IRecyclerViewNavigationViewHolder navigationHolder = GetNavigationHolderForDataIndex(dataIndex);
+            if (navigationHolder == null)
+            {
+                navigationHolder = (IRecyclerViewNavigationViewHolder)template;
+            }
+
+            return navigationHolder.IsNavigationFocusable(dataIndex);
+        }
+
+        private IRecyclerViewNavigationViewHolder GetNavigationHolderForDataIndex(int dataIndex)
+        {
+            if (recyclerView == null || recyclerView.RecyclerViewAdapter == null || dataIndex < 0)
+            {
+                return null;
+            }
+
+            if (recyclerView.LayoutManager != null)
+            {
+                int layoutIndex = recyclerView.LayoutManager.GetLayoutIndex(dataIndex);
+                ViewHolder holder = recyclerView.ViewProvider.GetViewHolder(layoutIndex);
+                if (holder != null &&
+                    holder.DataIndex == dataIndex &&
+                    holder is IRecyclerViewNavigationViewHolder navigationHolder)
+                {
+                    return navigationHolder;
+                }
+            }
+
+            int visibleCount = recyclerView.ViewProvider.VisibleCount;
+            for (int i = 0; i < visibleCount; i++)
+            {
+                ViewHolder holder = recyclerView.ViewProvider.GetVisibleViewHolder(i);
+                if (holder != null &&
+                    holder.DataIndex == dataIndex &&
+                    holder is IRecyclerViewNavigationViewHolder navigationHolder)
+                {
+                    return navigationHolder;
+                }
+            }
+
+            return null;
         }
 
         private int GetNavigationCount()

@@ -27,6 +27,10 @@ namespace UnityEngine.UI
             if (eventData.button != PointerEventData.InputButton.Left)
                 return;
 
+            // 外部状态驱动时，点击业务由上层处理，避免重复 onClick/音效。
+            if (HasExternalState)
+                return;
+
             Press();
             PlayAudio(clickAudioClip);
         }
@@ -42,10 +46,28 @@ namespace UnityEngine.UI
         public virtual void OnSubmit(BaseEventData eventData)
         {
             Press();
+            PlayClickFeedback();
+        }
+
+        /// <summary>
+        /// 播放点击音效，并短暂切换到 Pressed 视觉。
+        /// 若当前存在外部状态，结束后恢复到外部状态；否则恢复 Selectable 推导状态。
+        /// </summary>
+        public virtual void PlayClickFeedback()
+        {
             PlayAudio(clickAudioClip);
 
             if (!IsActive() || !IsInteractable())
                 return;
+
+            if (HasExternalState)
+            {
+                UXSelectionState restoreState = ExternalState == UXSelectionState.Pressed
+                    ? UXSelectionState.Highlighted
+                    : ExternalState;
+                PulseExternalState(UXSelectionState.Pressed, restoreState);
+                return;
+            }
 
             DoStateTransition(SelectionState.Pressed, false);
             StartCoroutine(OnFinishSubmit());

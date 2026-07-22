@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine.EventSystems;
 
@@ -13,11 +14,124 @@ namespace UnityEngine.UI
         public SpriteState spriteState;
     }
 
+    /// <summary>
+    /// 外部驱动的可视交互状态。对应 Selectable 内部 SelectionState，但作为公开 API 使用。
+    /// </summary>
+    public enum UXSelectionState
+    {
+        Normal = 0,
+        Highlighted = 1,
+        Pressed = 2,
+        Selected = 3,
+        Disabled = 4,
+    }
+
     public class UXSelectable : Selectable
     {
         [SerializeField] private List<TransitionData> m_ChildTransitions = new();
         private SelectionState m_SelectionState;
         private bool m_HasSelectionState;
+        private bool m_HasExternalState;
+        private UXSelectionState m_ExternalState;
+        private Coroutine m_PulseCoroutine;
+
+        /// <summary>
+        /// 是否正在由外部强制驱动视觉状态。
+        /// </summary>
+        public bool HasExternalState => m_HasExternalState;
+
+        /// <summary>
+        /// 当前外部强制状态；未启用外部状态时无意义。
+        /// </summary>
+        public UXSelectionState ExternalState => m_ExternalState;
+
+        /// <summary>
+        /// 由外部强制设置视觉状态，并覆盖 Selectable 内部根据 pointer/selected 推导的状态。
+        /// 适用于控件本身不是当前 EventSystem 选中对象、但仍需展示高亮/按下等反馈的场景。
+        /// </summary>
+        public void SetExternalState(UXSelectionState state, bool instant = false)
+        {
+            m_HasExternalState = true;
+            m_ExternalState = state;
+            m_HasSelectionState = false;
+            DoStateTransition(ToSelectionState(state), instant);
+        }
+
+        /// <summary>
+        /// 清除外部强制状态，并恢复为 Selectable 当前推导状态。
+        /// </summary>
+        public void ClearExternalState(bool instant = false)
+        {
+            StopPulseCoroutine();
+            if (!m_HasExternalState)
+            {
+                return;
+            }
+
+            m_HasExternalState = false;
+            m_HasSelectionState = false;
+            DoStateTransition(currentSelectionState, instant);
+        }
+
+        /// <summary>
+        /// 短暂切换到 <paramref name="pulseState"/>，结束后恢复到 <paramref name="restoreState"/> 并保持外部状态。
+        /// </summary>
+        public void PulseExternalState(UXSelectionState pulseState, UXSelectionState restoreState, float duration = -1f)
+        {
+            if (duration < 0f)
+            {
+                duration = colors.fadeDuration;
+            }
+
+            SetExternalState(pulseState, false);
+            StopPulseCoroutine();
+            if (!isActiveAndEnabled || duration <= 0f)
+            {
+                SetExternalState(restoreState, false);
+                return;
+            }
+
+            m_PulseCoroutine = StartCoroutine(PulseExternalStateCoroutine(restoreState, duration));
+        }
+
+        IEnumerator PulseExternalStateCoroutine(UXSelectionState restoreState, float duration)
+        {
+            var elapsedTime = 0f;
+            while (elapsedTime < duration)
+            {
+                elapsedTime += Time.unscaledDeltaTime;
+                yield return null;
+            }
+
+            m_PulseCoroutine = null;
+            if (m_HasExternalState)
+            {
+                SetExternalState(restoreState, false);
+            }
+        }
+
+        static SelectionState ToSelectionState(UXSelectionState state)
+        {
+            return state switch
+            {
+                UXSelectionState.Highlighted => SelectionState.Highlighted,
+                UXSelectionState.Pressed => SelectionState.Pressed,
+                UXSelectionState.Selected => SelectionState.Selected,
+                UXSelectionState.Disabled => SelectionState.Disabled,
+                _ => SelectionState.Normal,
+            };
+        }
+
+        void StopPulseCoroutine()
+        {
+            if (m_PulseCoroutine == null)
+            {
+                return;
+            }
+
+            StopCoroutine(m_PulseCoroutine);
+            m_PulseCoroutine = null;
+        }
 
         void StartChildColorTween(TransitionData transitionData, Color targetColor, bool instant)
         {
@@ -52,6 +166,8 @@ namespace UnityEngine.UI
 
         protected override void InstantClearState()
         {
+            StopPulseCoroutine();
+            m_HasExternalState = false;
             base.InstantClearState();
             m_HasSelectionState = false;
             for (int i = 0; i < m_ChildTransitions.Count; i++)
@@ -70,6 +186,11 @@ namespace UnityEngine.UI
 
         protected override void DoStateTransition(SelectionState state, bool instant)
         {
+            if (m_HasExternalState)
+            {
+                state = ToSelectionState(m_ExternalState);
+            }
+
             if (Application.isPlaying)
             {
                 if (m_HasSelectionState && m_SelectionState == state) return;
