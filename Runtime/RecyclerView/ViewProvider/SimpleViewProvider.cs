@@ -2,23 +2,27 @@ namespace AlicizaX.UI
 {
     using Cysharp.Text;
 
+    /// <summary>
+    /// 单模板 ViewProvider。底层复用 MixedObjectPool（templateId 固定为 0）。
+    /// </summary>
     internal sealed class SimpleViewProvider : ViewProvider
     {
-        private readonly ObjectPool<ViewHolder> objectPool;
+        private const int DefaultTemplateId = 0;
+
+        private readonly MixedObjectPool<ViewHolder> objectPool;
 
         public override string PoolStats
         {
             get
             {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                return ZString.Format("hits={0}, misses={1}, destroys={2}, active={3}, inactive={4}, peakActive={5}, capacity={6}",
+                return ZString.Format("hits={0}, misses={1}, destroys={2}, active={3}, peakActive={4}, capacity={5}",
                     objectPool.HitCount,
                     objectPool.MissCount,
                     objectPool.DestroyCount,
-                    objectPool.ActiveCount,
-                    objectPool.InactiveCount,
-                    objectPool.PeakActive,
-                    objectPool.MaxSize);
+                    objectPool.GetActiveCount(DefaultTemplateId),
+                    objectPool.GetPeakActiveCount(DefaultTemplateId),
+                    objectPool.GetMaxSize(DefaultTemplateId));
 #else
                 return string.Empty;
 #endif
@@ -27,8 +31,8 @@ namespace AlicizaX.UI
 
         public SimpleViewProvider(RecyclerView recyclerView, ViewHolder[] templates) : base(recyclerView, templates)
         {
-            UnityComponentFactory<ViewHolder> factory = new(GetTemplate(0), recyclerView.Content);
-            objectPool = new ObjectPool<ViewHolder>(factory, 0, 32);
+            UnityMixedComponentFactory<ViewHolder> factory = new(templates, recyclerView.Content);
+            objectPool = new MixedObjectPool<ViewHolder>(factory, 32);
         }
 
         public override ViewHolder GetTemplate(int templateId)
@@ -38,14 +42,19 @@ namespace AlicizaX.UI
 
         internal override ViewHolder Allocate(int templateId)
         {
-            var viewHolder = objectPool.Allocate();
+            var viewHolder = objectPool.Allocate(DefaultTemplateId);
+            if (viewHolder == null)
+            {
+                return null;
+            }
+
             viewHolder.SetPooledVisible(true);
             return viewHolder;
         }
 
         internal override void Free(int templateId, ViewHolder viewHolder)
         {
-            objectPool.Free(viewHolder);
+            objectPool.Free(DefaultTemplateId, viewHolder);
         }
 
         internal override void Reset()
@@ -61,10 +70,10 @@ namespace AlicizaX.UI
                 return;
             }
 
-            PrepareDataBucketStorage(warmCount);
+            PrepareVisibleStorage(warmCount);
 
-            objectPool.EnsureCapacity(warmCount);
-            objectPool.Warm(warmCount);
+            objectPool.EnsureCapacity(DefaultTemplateId, warmCount);
+            objectPool.Warm(DefaultTemplateId, warmCount);
         }
 
         internal override void TrimInactive()

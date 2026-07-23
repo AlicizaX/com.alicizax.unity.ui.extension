@@ -1061,6 +1061,8 @@ namespace AlicizaX.UI
                 return;
             }
 
+            TryReanchorLoopWindow(ref position);
+
             bool fullRefreshed = UpdateVisibleRange();
             layoutManager.UpdateLayout();
             UpdateScrollbarValue(position);
@@ -1070,6 +1072,50 @@ namespace AlicizaX.UI
             }
 
             OnScrollValueChanged?.Invoke(position);
+        }
+
+        /// <summary>
+        /// Loop 列表滚到虚拟地址空间边缘时，静默跳到中段等价位置，保持 data 连续。
+        /// </summary>
+        private bool TryReanchorLoopWindow(ref float position)
+        {
+            if (scroller == null || layoutManager == null || RecyclerViewAdapter == null)
+            {
+                return false;
+            }
+
+            int realCount = RecyclerViewAdapter.GetRealCount();
+            int virtualCount = RecyclerViewAdapter.GetItemCount();
+            if (realCount <= 0 || virtualCount <= realCount)
+            {
+                return false;
+            }
+
+            int layoutIndex = layoutManager.PositionToIndex(position);
+            if (!LoopVirtualRange.ShouldReanchor(layoutIndex, realCount, virtualCount))
+            {
+                return false;
+            }
+
+            int dataIndex = layoutManager.GetDataIndex(layoutIndex);
+            int targetLayoutIndex = LoopVirtualRange.GetMiddleAnchorLayoutIndex(dataIndex, realCount, virtualCount);
+            if (targetLayoutIndex == layoutIndex)
+            {
+                return false;
+            }
+
+            float itemStart = layoutManager.GetItemStartPosition(layoutIndex);
+            float offsetInItem = position - itemStart;
+            float targetStart = layoutManager.GetItemStartPosition(targetLayoutIndex);
+            float targetPosition = scroller.ClampPosition(targetStart + offsetInItem);
+            if (Mathf.Approximately(targetPosition, position))
+            {
+                return false;
+            }
+
+            scroller.Position = targetPosition;
+            position = targetPosition;
+            return true;
         }
 
         /// <summary>
@@ -1600,40 +1646,145 @@ namespace AlicizaX.UI
         /// <returns>实际完成重绑的持有者数量。</returns>
         internal int RebindVisibleDataIndex(int dataIndex)
         {
-            if (RecyclerViewAdapter == null)
+            if (RecyclerViewAdapter == null || viewProvider == null)
             {
                 return 0;
             }
 
-            return ViewProvider.RebindVisibleDataIndex(dataIndex);
+            return viewProvider.RebindVisibleDataIndex(dataIndex);
         }
 
         /// <summary>
         /// 重新绑定当前可见区域内指定数据区间对应的所有持有者。
         /// </summary>
-        /// <param name="startDataIndex">起始数据索引。</param>
-        /// <param name="count">需要重绑的数据项数量。</param>
-        /// <returns>实际完成重绑的持有者总数。</returns>
         internal int RebindVisibleDataRange(int startDataIndex, int count)
         {
-            if (count <= 0)
+            if (count <= 0 || viewProvider == null)
             {
                 return 0;
             }
 
-            int reboundCount = 0;
-            int endDataIndex = startDataIndex + count;
-            for (int dataIndex = startDataIndex; dataIndex < endDataIndex; dataIndex++)
-            {
-                reboundCount += RebindVisibleDataIndex(dataIndex);
-            }
-
-            return reboundCount;
+            return viewProvider.RebindVisibleDataRange(startDataIndex, count);
         }
 
         internal int ApplyVisibleSelection(int dataIndex, bool selected)
         {
-            return ViewProvider.ApplyVisibleSelection(dataIndex, selected);
+            return viewProvider != null ? viewProvider.ApplyVisibleSelection(dataIndex, selected) : 0;
+        }
+
+        /// <summary>
+        /// 结构插入：可见区外/前做 index 平移；区内回退到可见区重建。Loop 全量刷新。
+        /// 调用前 Adapter 数据源必须已更新。
+        /// </summary>
+        internal void ApplyItemsInserted(int index, int count)
+        {
+            if (!isValid || count <= 0 || layoutManager == null || RecyclerViewAdapter == null)
+            {
+                return;
+            }
+
+            if (IsLoopingAdapter())
+            {
+                RequestLayout();
+                Refresh();
+                return;
+            }
+
+            RequestLayout();
+
+            if (viewProvider == null || viewProvider.VisibleCount <= 0 || endIndex < startIndex)
+            {
+                Refresh();
+                return;
+            }
+
+            if (index > endIndex)
+            {
+                UpdateVisibleRange();
+                layoutManager.UpdateLayout();
+                return;
+            }
+
+            if (index <= startIndex)
+            {
+                viewProvider.ShiftIndexesFrom(index, count);
+                startIndex += count;
+                endIndex += count;
+                UpdateVisibleRange();
+                layoutManager.UpdateLayout();
+                return;
+            }
+
+            // 插入点落在可见区内：重建可见区（Grid unit>1 时补洞不安全）
+            Refresh();
+        }
+
+        /// <summary>
+        /// 结构删除：回收区间内可见项并平移后续 index。Loop 全量刷新。
+        /// 调用前 Adapter 数据源必须已更新。
+        /// </summary>
+        internal void ApplyItemsRemoved(int index, int count)
+        {
+            if (!isValid || count <= 0 || layoutManager == null || RecyclerViewAdapter == null)
+            {
+                return;
+            }
+
+            if (IsLoopingAdapter())
+            {
+                RequestLayout();
+                Refresh();
+                return;
+            }
+
+            if (viewProvider != null && viewProvider.VisibleCount > 0 && endIndex >= startIndex)
+            {
+                viewProvider.RecycleLayoutRange(index, index + count);
+                viewProvider.ShiftIndexesFrom(index, -count);
+
+                if (endIndex >= index)
+                {
+                    int removeEnd = index + count - 1;
+                    if (startIndex > removeEnd)
+                    {
+                        startIndex -= count;
+                        endIndex -= count;
+                    }
+                    else if (startIndex >= index)
+                    {
+                        startIndex = index;
+                        endIndex = Mathf.Max(index - 1, endIndex - count);
+                    }
+                    else
+                    {
+                        endIndex -= count;
+                    }
+                }
+            }
+
+            RequestLayout();
+            if (RecyclerViewAdapter.GetItemCount() <= 0)
+            {
+                viewProvider?.Clear();
+                startIndex = 0;
+                endIndex = -1;
+                return;
+            }
+
+            UpdateVisibleRange();
+            layoutManager.UpdateLayout();
+        }
+
+        private bool IsLoopingAdapter()
+        {
+            if (RecyclerViewAdapter == null)
+            {
+                return false;
+            }
+
+            int realCount = RecyclerViewAdapter.GetRealCount();
+            int itemCount = RecyclerViewAdapter.GetItemCount();
+            return realCount > 0 && itemCount != realCount;
         }
 
 #if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT

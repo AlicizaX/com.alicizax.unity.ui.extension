@@ -79,7 +79,7 @@ namespace AlicizaX.UI
                 return;
             }
 
-            PrepareDataBucketStorage(warmCount);
+            PrepareVisibleStorage(warmCount);
 
             int itemCount = GetItemCount();
             int start = LayoutManager.GetStartIndex();

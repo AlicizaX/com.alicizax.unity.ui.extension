@@ -17,7 +17,7 @@ namespace AlicizaX.UI
         private int peakActive;
         private bool disposed;
 
-        public ObjectPool(IObjectFactory<T> factory) : this(factory, Environment.ProcessorCount * 2)
+        public ObjectPool(IObjectFactory<T> factory) : this(factory, 32)
         {
         }
 
@@ -173,11 +173,6 @@ namespace AlicizaX.UI
             }
 
             totalCount = activeCount;
-        }
-
-        public void ClearInactive()
-        {
-            TrimInactive();
         }
 
         public void TrimInactive()

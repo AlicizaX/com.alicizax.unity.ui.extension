@@ -336,10 +336,8 @@ namespace AlicizaX.UI
 
         private static void LogIncompatibleAdapterLayout(Type adapterType, LayoutManager layoutManager, string reason)
         {
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
             Log.Error(
                 $"RecyclerView adapter/layout combination is invalid. Adapter={adapterType.Name}, Layout={layoutManager.GetType().Name}. {reason}");
-#endif
         }
 
         private bool CanScrollToWithAlignment()
@@ -459,7 +457,6 @@ namespace AlicizaX.UI
     /// <typeparam name="TData">列表数据类型。</typeparam>
     public class UGLoopList<TData> : UGListBase<TData, LoopAdapter<TData>> where TData : class, ISimpleViewData
     {
-        private const int LoopAnchorIndex = 30000;
         private bool _hasLoopAnchor;
 
         /// <summary>
@@ -526,36 +523,45 @@ namespace AlicizaX.UI
 
         private void ScrollToLoopAnchor(int realIndex)
         {
-            int count = DataCount;
-            if (count <= 0)
+            int realCount = DataCount;
+            if (realCount <= 0)
             {
                 return;
             }
 
-            base.ScrollTo(GetAnchoredLoopIndex(realIndex, count), ScrollAlignment.Start, 0f, false, 0.3f);
+            int virtualCount = _adapter != null ? _adapter.GetItemCount() : 0;
+            int layoutIndex = LoopVirtualRange.GetMiddleAnchorLayoutIndex(realIndex, realCount, virtualCount);
+            base.ScrollTo(layoutIndex, ScrollAlignment.Start, 0f, false, 0.3f);
             _hasLoopAnchor = true;
         }
 
         private int ResolveLoopIndex(int index)
         {
-            int count = DataCount;
-            if (count <= 0)
+            int realCount = DataCount;
+            if (realCount <= 0)
             {
                 return index;
             }
 
-            if (index < 0 || index >= count)
+            // 业务侧传入 real index；越界则原样交给底层校验
+            if (index < 0 || index >= realCount)
             {
                 return index;
             }
 
-            int currentIndex = GetCurrentLayoutIndex();
-            if (currentIndex <= count)
+            int virtualCount = _adapter != null ? _adapter.GetItemCount() : 0;
+            if (virtualCount <= realCount)
             {
-                return GetAnchoredLoopIndex(index, count);
+                return index;
             }
 
-            return GetNearestLoopIndex(index, currentIndex, count);
+            int currentLayoutIndex = GetCurrentLayoutIndex();
+            if (currentLayoutIndex < 0 || LoopVirtualRange.ShouldReanchor(currentLayoutIndex, realCount, virtualCount))
+            {
+                return LoopVirtualRange.GetMiddleAnchorLayoutIndex(index, realCount, virtualCount);
+            }
+
+            return GetNearestLoopIndex(index, currentLayoutIndex, realCount, virtualCount);
         }
 
         private int GetCurrentLayoutIndex()
@@ -568,36 +574,30 @@ namespace AlicizaX.UI
             return _recyclerView.LayoutManager.PositionToIndex(_recyclerView.GetScrollPosition());
         }
 
-        private static int GetAnchoredLoopIndex(int realIndex, int count)
+        private static int GetNearestLoopIndex(int realIndex, int centerLayoutIndex, int realCount, int virtualCount)
         {
-            return GetNearestLoopIndex(realIndex, LoopAnchorIndex, count);
-        }
+            realIndex %= realCount;
+            if (realIndex < 0)
+            {
+                realIndex += realCount;
+            }
 
-        private static int GetNearestLoopIndex(int realIndex, int centerIndex, int count)
-        {
-            realIndex = WrapIndex(realIndex, count);
-            int cycle = Mathf.RoundToInt((centerIndex - realIndex) / (float)count);
-            int candidate = realIndex + cycle * count;
-            int previous = candidate - count;
-            int next = candidate + count;
+            int cycle = Mathf.RoundToInt((centerLayoutIndex - realIndex) / (float)realCount);
+            int candidate = realIndex + cycle * realCount;
+            int previous = candidate - realCount;
+            int next = candidate + realCount;
 
-            if (previous >= 0 && Mathf.Abs(previous - centerIndex) < Mathf.Abs(candidate - centerIndex))
+            if (previous >= 0 && Mathf.Abs(previous - centerLayoutIndex) < Mathf.Abs(candidate - centerLayoutIndex))
             {
                 candidate = previous;
             }
 
-            if (next >= 0 && Mathf.Abs(next - centerIndex) < Mathf.Abs(candidate - centerIndex))
+            if (next < virtualCount && Mathf.Abs(next - centerLayoutIndex) < Mathf.Abs(candidate - centerLayoutIndex))
             {
                 candidate = next;
             }
 
-            return Mathf.Max(candidate, 0);
-        }
-
-        private static int WrapIndex(int index, int count)
-        {
-            int wrapped = index % count;
-            return wrapped < 0 ? wrapped + count : wrapped;
+            return Mathf.Clamp(candidate, 0, virtualCount - 1);
         }
     }
 

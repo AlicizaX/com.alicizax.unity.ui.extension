@@ -86,10 +86,7 @@ namespace AlicizaX.UI
                 return 0;
             }
 
-            float pos = IndexToPosition(recyclerView.CurrentScrollDataIndex);
-            int index = position > pos ? Mathf.RoundToInt(position / len + 0.25f) : Mathf.RoundToInt(position / len - 0.25f);
-
-            return index;
+            return Mathf.Clamp(Mathf.RoundToInt(position / len), 0, adapter.GetItemCount() - 1);
         }
 
         public override void DoItemAnimation()

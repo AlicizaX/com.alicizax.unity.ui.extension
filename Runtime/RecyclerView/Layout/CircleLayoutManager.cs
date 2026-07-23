@@ -6,20 +6,23 @@ namespace AlicizaX.UI
     public class CircleLayoutManager : LayoutManager
     {
         [SerializeField]
-        private  CircleDirection circleDirection= CircleDirection.Positive;
+        private CircleDirection circleDirection = CircleDirection.Positive;
+        /// <summary>
+        /// 手动角度间隔；&lt;=0 时按 itemCount 自动均分 360°。
+        /// </summary>
         [SerializeField]
-        private float intervalAngle=0;
+        private float intervalAngle = 0f;
         [SerializeField]
         private int maxVisibleItemCount = 32;
 
         private float radius;
         private float initalAngle;
+        private float resolvedIntervalAngle;
 
         public override bool UsesVirtualLayoutRange => true;
 
         public CircleLayoutManager()
         {
-
         }
 
         public override Vector2 CalculateContentSize()
@@ -28,13 +31,13 @@ namespace AlicizaX.UI
             if (itemCount <= 0)
             {
                 radius = 0f;
-                intervalAngle = 0f;
+                resolvedIntervalAngle = 0f;
                 return viewportSize;
             }
 
             Vector2 size = viewProvider.CalculateViewSize(0);
             radius = (Mathf.Min(viewportSize.x, viewportSize.y) - Mathf.Min(size.x, size.y)) / 2f - Mathf.Max(padding.x, padding.y);
-            intervalAngle = 360f / itemCount;
+            resolvedIntervalAngle = intervalAngle > 0f ? intervalAngle : 360f / itemCount;
 
             return viewportSize;
         }
@@ -56,7 +59,7 @@ namespace AlicizaX.UI
 
         public override Vector2 CalculatePosition(int index)
         {
-            float angle = index * intervalAngle;
+            float angle = index * resolvedIntervalAngle;
             angle = circleDirection == CircleDirection.Positive ? angle : -angle;
             angle += initalAngle + ScrollPosition;
             float radian = angle * (Mathf.PI / 180f);
@@ -94,23 +97,23 @@ namespace AlicizaX.UI
 
         public override float IndexToPosition(int index)
         {
-            if (Mathf.Approximately(intervalAngle, 0f))
+            if (Mathf.Approximately(resolvedIntervalAngle, 0f))
             {
                 return 0f;
             }
 
-            float position = index * intervalAngle;
+            float position = index * resolvedIntervalAngle;
             return circleDirection == CircleDirection.Positive ? -position : position;
         }
 
         public override int PositionToIndex(float position)
         {
-            if (Mathf.Approximately(intervalAngle, 0f))
+            if (Mathf.Approximately(resolvedIntervalAngle, 0f))
             {
                 return 0;
             }
 
-            int index = Mathf.RoundToInt(position / intervalAngle);
+            int index = Mathf.RoundToInt(position / resolvedIntervalAngle);
             return circleDirection == CircleDirection.Positive ? -index : index;
         }
 
@@ -121,7 +124,7 @@ namespace AlicizaX.UI
 
         public override float GetItemLength(int index)
         {
-            return Mathf.Abs(intervalAngle);
+            return Mathf.Abs(resolvedIntervalAngle);
         }
 
         public override int GetSnapIndex(float position)
@@ -162,12 +165,13 @@ namespace AlicizaX.UI
                     continue;
                 }
 
-                float angle = viewHolder.Index * intervalAngle + initalAngle;
+                float angle = viewHolder.Index * resolvedIntervalAngle + initalAngle;
                 angle = circleDirection == CircleDirection.Positive ? angle + ScrollPosition : angle - ScrollPosition;
                 float delta = (angle - initalAngle) % 360;
                 delta = delta < 0 ? delta + 360 : delta;
                 delta = delta > 180 ? 360 - delta : delta;
-                float scale = delta < intervalAngle ? (1.4f - delta / intervalAngle) : 1;
+                float step = Mathf.Max(resolvedIntervalAngle, 0.0001f);
+                float scale = delta < step ? (1.4f - delta / step) : 1;
                 scale = Mathf.Max(scale, 1);
 
                 viewHolder.RectTransform.localScale = Vector3.one * scale;

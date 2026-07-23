@@ -244,9 +244,68 @@ namespace AlicizaX.UI
                 return false;
             }
 
+            if (data.Expanded == expanded)
+            {
+                return true;
+            }
+
             data.Expanded = expanded;
-            NotifyDataChanged();
+            if (expanded)
+            {
+                ExpandChildren(index, data.Type);
+            }
+            else
+            {
+                CollapseChildren(index);
+            }
+
+            // 分组头 Expanded 态需要重绑；子项已由结构增量处理
+            NotifyItemChanged(index);
             return true;
+        }
+
+        private void ExpandChildren(int groupIndex, int type)
+        {
+            if (!firstItemIndexByType.TryGetValue(type, out int itemIndex))
+            {
+                return;
+            }
+
+            int insertAt = groupIndex + 1;
+            List<TData> children = null;
+            while (itemIndex >= 0)
+            {
+                children ??= new List<TData>();
+                children.Add(list[itemIndex]);
+                itemIndex = nextItemIndexes[itemIndex];
+            }
+
+            if (children == null || children.Count == 0)
+            {
+                return;
+            }
+
+            showList.InsertRange(insertAt, children);
+            NotifyItemRangeInserted(insertAt, children.Count);
+        }
+
+        private void CollapseChildren(int groupIndex)
+        {
+            int removeStart = groupIndex + 1;
+            int removeCount = 0;
+            while (removeStart + removeCount < showList.Count &&
+                   showList[removeStart + removeCount].TemplateId != groupTemplateId)
+            {
+                removeCount++;
+            }
+
+            if (removeCount <= 0)
+            {
+                return;
+            }
+
+            showList.RemoveRange(removeStart, removeCount);
+            NotifyItemRangeRemoved(removeStart, removeCount);
         }
 
         public bool IsGroupIndex(int index)
@@ -258,14 +317,7 @@ namespace AlicizaX.UI
 
         public bool TryGetDisplayData(int index, out TData data)
         {
-            if (list == null || index < 0 || index >= showList.Count)
-            {
-                data = default;
-                return false;
-            }
-
-            data = showList[index];
-            return true;
+            return TryGetBindData(index, out data);
         }
 
         private void BuildTypeIndex()

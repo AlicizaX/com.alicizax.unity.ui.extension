@@ -225,11 +225,6 @@ namespace AlicizaX.UI
             Array.Clear(peakActiveByType, 0, peakActiveByType.Length);
         }
 
-        public void ClearInactive()
-        {
-            TrimInactive();
-        }
-
         public void TrimInactive()
         {
             Clear();

@@ -790,7 +790,15 @@ namespace AlicizaX.UI
                 return;
             }
 
-            navigationFocusSnapshots[holder] = snapshot;
+            if (focused)
+            {
+                navigationFocusSnapshots[holder] = snapshot;
+            }
+            else
+            {
+                navigationFocusSnapshots.Remove(holder);
+            }
+
             navigationHolder.HandleNavigationFocused(focused);
         }
 
