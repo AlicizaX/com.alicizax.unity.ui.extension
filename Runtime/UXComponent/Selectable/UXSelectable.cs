@@ -35,6 +35,10 @@ namespace UnityEngine.UI
         private UXSelectionState m_ExternalState;
         private Coroutine m_PulseCoroutine;
 
+#if UNITY_EDITOR
+        internal static Action<UXSelectable, UXSelectionState> EditorSampleAnimation;
+#endif
+
         /// <summary>
         /// 是否正在由外部强制驱动视觉状态。
         /// </summary>
@@ -122,6 +126,18 @@ namespace UnityEngine.UI
             };
         }
 
+        static UXSelectionState ToUXSelectionState(SelectionState state)
+        {
+            return state switch
+            {
+                SelectionState.Highlighted => UXSelectionState.Highlighted,
+                SelectionState.Pressed => UXSelectionState.Pressed,
+                SelectionState.Selected => UXSelectionState.Selected,
+                SelectionState.Disabled => UXSelectionState.Disabled,
+                _ => UXSelectionState.Normal,
+            };
+        }
+
         void StopPulseCoroutine()
         {
             if (m_PulseCoroutine == null)
@@ -148,21 +164,6 @@ namespace UnityEngine.UI
             if (transitionData.targetGraphic is Image img)
                 img.overrideSprite = newSprite;
         }
-#if UNITY_EDITOR
-        protected override void OnValidate()
-        {
-            if (isActiveAndEnabled)
-            {
-                for (int i = 0; i < m_ChildTransitions.Count; i++)
-                {
-                    DoChildSpriteSwap(m_ChildTransitions[i], null);
-                    StartChildColorTween(m_ChildTransitions[i], Color.white, true);
-                }
-            }
-
-            base.OnValidate();
-        }
-#endif
 
         protected override void InstantClearState()
         {
@@ -198,7 +199,14 @@ namespace UnityEngine.UI
                 m_HasSelectionState = true;
             }
 
+            if (!Application.isPlaying)
+                instant = true;
+
             base.DoStateTransition(state, instant);
+#if UNITY_EDITOR
+            if (!Application.isPlaying && transition == Transition.Animation)
+                EditorSampleAnimation?.Invoke(this, ToUXSelectionState(state));
+#endif
             for (int i = 0; i < m_ChildTransitions.Count; i++)
             {
                 TransitionData transitionData = m_ChildTransitions[i];

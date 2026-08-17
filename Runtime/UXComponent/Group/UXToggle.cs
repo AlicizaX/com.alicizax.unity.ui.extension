@@ -56,8 +56,10 @@ namespace UnityEngine.UI
         {
             base.OnValidate();
 
-            if (!UnityEditor.PrefabUtility.IsPartOfPrefabAsset(this) && !Application.isPlaying)
-                CanvasUpdateRegistry.RegisterCanvasElementForLayoutRebuild(this);
+            if (UnityEditor.PrefabUtility.IsPartOfPrefabAsset(this) || Application.isPlaying)
+                return;
+
+            RefreshVisual();
         }
 #endif
 
@@ -200,10 +202,15 @@ namespace UnityEngine.UI
                 onValueChanged.Invoke(m_IsOn);
             }
 
-            PlayEffect(false);
+            bool instant = !Application.isPlaying;
+            PlayEffect(instant);
             var stateToApply = m_IsOn ? Selectable.SelectionState.Selected : currentSelectionState;
-            DoStateTransition(stateToApply, false);
+            DoStateTransition(stateToApply, instant);
             OnAfterValueChanged(m_IsOn);
+#if UNITY_EDITOR
+            if (!Application.isPlaying)
+                UnityEditor.EditorUtility.SetDirty(this);
+#endif
         }
 
         protected virtual void OnBeforeValueChanged(bool value)
@@ -214,7 +221,6 @@ namespace UnityEngine.UI
         {
         }
 
-        // 刷新当前视觉状态，根据 isOn 决定走 Selected 还是当前交互状态
         private void PlayEffect(bool instant)
         {
             if (m_Graphic == null)
@@ -228,7 +234,7 @@ namespace UnityEngine.UI
                 m_Graphic.CrossFadeAlpha(m_IsOn ? 1f : 0f, instant ? 0f : 0.1f, true);
         }
 
-        private void RefreshVisual()
+        internal void RefreshVisual()
         {
             PlayEffect(true);
             var state = ResolveVisualState(currentSelectionState);

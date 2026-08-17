@@ -130,6 +130,40 @@ namespace UnityEngine.UI
             EnsureSingleSelection();
         }
 
+        internal void ApplyDefaultSelection(bool sendCallback = false)
+        {
+            EnsureStorage();
+            CompactNulls();
+            SyncToggleGroups();
+            EnsureDefaultToggle();
+
+            if (m_DefaultToggle != null)
+            {
+                if (sendCallback)
+                    m_DefaultToggle.isOn = true;
+                else
+                    m_DefaultToggle.SetIsOnWithoutNotify(true);
+
+                NotifyToggleOn(m_DefaultToggle, sendCallback);
+            }
+            else if (m_AllowSwitchOff)
+            {
+                SetAllTogglesOff(sendCallback);
+            }
+
+            RefreshToggleVisuals();
+        }
+
+        internal void RefreshToggleVisuals()
+        {
+            for (int i = 0; i < m_ToggleCount; i++)
+            {
+                UXToggle toggle = m_Toggles[i];
+                if (toggle != null)
+                    toggle.RefreshVisual();
+            }
+        }
+
         public bool AnyTogglesOn()
         {
             return FindFirstActiveIndex() >= 0;

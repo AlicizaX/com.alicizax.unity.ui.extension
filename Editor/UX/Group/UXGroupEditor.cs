@@ -13,6 +13,7 @@ namespace UnityEditor.UI
         private SerializedProperty m_DefaultToggle;
         private UXGroup m_Target;
         private ReorderableList m_ReorderableList;
+        private int m_TrackedDefaultId;
 
         private void OnEnable()
         {
@@ -20,6 +21,7 @@ namespace UnityEditor.UI
             m_Toggles = serializedObject.FindProperty("m_Toggles");
             m_AllowSwitchOff = serializedObject.FindProperty("m_AllowSwitchOff");
             m_DefaultToggle = serializedObject.FindProperty("m_DefaultToggle");
+            m_TrackedDefaultId = GetDefaultInstanceId();
 
             m_ReorderableList = new ReorderableList(serializedObject, m_Toggles, true, true, true, true)
             {
@@ -52,7 +54,24 @@ namespace UnityEditor.UI
             serializedObject.ApplyModifiedProperties();
 
             if (!Application.isPlaying)
-                m_Target.EnsureValidState();
+            {
+                int defaultId = GetDefaultInstanceId();
+                if (defaultId != m_TrackedDefaultId)
+                {
+                    m_TrackedDefaultId = defaultId;
+                    m_Target.ApplyDefaultSelection(false);
+                }
+                else
+                {
+                    m_Target.EnsureValidState();
+                }
+            }
+        }
+
+        private int GetDefaultInstanceId()
+        {
+            UXToggle currentDefault = m_DefaultToggle.objectReferenceValue as UXToggle;
+            return currentDefault != null ? currentDefault.GetInstanceID() : 0;
         }
 
         private void DrawDefaultToggleSelector()
@@ -116,11 +135,13 @@ namespace UnityEditor.UI
                 UXToggle newDefault = newIndex >= optionOffset ? toggles[newIndex - optionOffset] : null;
                 m_DefaultToggle.objectReferenceValue = newDefault;
                 serializedObject.ApplyModifiedProperties();
+                m_TrackedDefaultId = newDefault != null ? newDefault.GetInstanceID() : 0;
 
                 if (newDefault != null)
-                {
                     AssignGroup(newDefault, m_Target);
-                }
+
+                if (!Application.isPlaying)
+                    m_Target.ApplyDefaultSelection(false);
             }
         }
 
