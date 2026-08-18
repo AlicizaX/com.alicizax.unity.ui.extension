@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using AlicizaX.UI.UXFeedback;
 using UnityEngine.EventSystems;
 
 namespace UnityEngine.UI
@@ -136,6 +137,40 @@ namespace UnityEngine.UI
                 SelectionState.Disabled => UXSelectionState.Disabled,
                 _ => UXSelectionState.Normal,
             };
+        }
+
+        public override void OnPointerEnter(PointerEventData eventData)
+        {
+            base.OnPointerEnter(eventData);
+            UXUiFeedback.Raise(this, UXUiCue.PointerEnter);
+        }
+
+        public override void OnPointerExit(PointerEventData eventData)
+        {
+            base.OnPointerExit(eventData);
+            UXUiFeedback.Raise(this, UXUiCue.PointerExit);
+        }
+
+        public override void OnSelect(BaseEventData eventData)
+        {
+            base.OnSelect(eventData);
+            if (eventData is PointerEventData)
+            {
+                return;
+            }
+
+            UXUiFeedback.Raise(this, UXUiCue.FocusEnter);
+        }
+
+        public override void OnDeselect(BaseEventData eventData)
+        {
+            base.OnDeselect(eventData);
+            if (eventData is PointerEventData)
+            {
+                return;
+            }
+
+            UXUiFeedback.Raise(this, UXUiCue.FocusExit);
         }
 
         void StopPulseCoroutine()

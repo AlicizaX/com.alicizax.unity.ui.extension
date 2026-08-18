@@ -20,19 +20,12 @@ namespace UnityEditor.UI
     {
         SerializedProperty m_OnClickProperty;
 
-        private SerializedProperty hoverAudioClip;
-        private SerializedProperty clickAudioClip;
-
         protected override void OnEnable()
         {
             base.OnEnable();
 
             m_OnClickProperty = serializedObject.FindProperty("m_OnClick");
 
-            hoverAudioClip = serializedObject.FindProperty("hoverAudioClip");
-            clickAudioClip = serializedObject.FindProperty("clickAudioClip");
-
-            _tabs.RegisterTab("Sound", "d_AudioSource Icon", DrawSoundTab);
             _tabs.RegisterTab("Event", "EventTrigger Icon", DrawEventTab);
         }
 
@@ -40,7 +33,6 @@ namespace UnityEditor.UI
         protected override void OnDisable()
         {
             base.OnDisable();
-            _tabs.UnregisterTab("Sound");
             _tabs.UnregisterTab("Event");
         }
 
@@ -53,32 +45,6 @@ namespace UnityEditor.UI
             EditorGUILayout.PropertyField(m_OnClickProperty);
 
             serializedObject.ApplyModifiedProperties();
-        }
-
-        private void DrawSoundTab()
-        {
-            GUILayoutHelper.DrawProperty(hoverAudioClip, customSkin, "Hover Sound", "Play", () =>
-            {
-                if (hoverAudioClip.objectReferenceValue != null)
-                {
-                    PlayAudio((AudioClip)hoverAudioClip.objectReferenceValue);
-                }
-            });
-            GUILayoutHelper.DrawProperty(clickAudioClip, customSkin, "Click Sound", "Play", () =>
-            {
-                if (clickAudioClip.objectReferenceValue != null)
-                {
-                    PlayAudio((AudioClip)clickAudioClip.objectReferenceValue);
-                }
-            });
-        }
-
-        private void PlayAudio(AudioClip clip)
-        {
-            if (clip != null)
-            {
-                ExtensionHelper.PreviewAudioClip(clip);
-            }
         }
     }
 }

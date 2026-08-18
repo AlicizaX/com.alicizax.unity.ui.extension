@@ -1,5 +1,6 @@
 using System;
 using AlicizaX;
+using AlicizaX.UI.UXFeedback;
 using UnityEngine.Events;
 using UnityEngine.EventSystems;
 
@@ -254,42 +255,24 @@ namespace UnityEngine.UI
             isOn = !isOn;
         }
 
-        public override void OnPointerEnter(PointerEventData eventData)
-        {
-            base.OnPointerEnter(eventData);
-            PlayAudio(hoverAudioClip);
-        }
-
         public virtual void OnPointerClick(PointerEventData eventData)
         {
             if (eventData.button != PointerEventData.InputButton.Left)
                 return;
 
             InternalToggle();
-            PlayAudio(clickAudioClip);
-        }
-
-        public override void OnSelect(BaseEventData eventData)
-        {
-            base.OnSelect(eventData);
-            if (eventData is PointerEventData)
-                return;
-            PlayAudio(hoverAudioClip);
+            RaiseToggleCue();
         }
 
         public virtual void OnSubmit(BaseEventData eventData)
         {
             InternalToggle();
-            PlayAudio(clickAudioClip);
+            RaiseToggleCue();
         }
 
-        private void PlayAudio(AudioClip clip)
+        private void RaiseToggleCue()
         {
-            if (clip != null)
-                UXComponentExtensionsHelper.PlayAudio(clip);
+            UXUiFeedback.Raise(this, isOn ? UXUiCue.ToggleOn : UXUiCue.ToggleOff);
         }
-
-        [SerializeField] private AudioClip hoverAudioClip;
-        [SerializeField] private AudioClip clickAudioClip;
     }
 }

@@ -16,9 +16,6 @@ namespace UnityEditor.UI
         private SerializedProperty m_GraphicProperty;
         private SerializedProperty m_IsOnProperty;
 
-        private SerializedProperty hoverAudioClip;
-        private SerializedProperty clickAudioClip;
-
         protected override void OnEnable()
         {
             base.OnEnable();
@@ -28,18 +25,13 @@ namespace UnityEditor.UI
             m_IsOnProperty = serializedObject.FindProperty("m_IsOn");
             m_OnValueChangedProperty = serializedObject.FindProperty("onValueChanged");
 
-            hoverAudioClip = serializedObject.FindProperty("hoverAudioClip");
-            clickAudioClip = serializedObject.FindProperty("clickAudioClip");
-
             _tabs.AppendToTab("Image", DrawImageTab);
-            _tabs.RegisterTab("Sound", "d_AudioSource Icon", DrawSoundTab);
             _tabs.RegisterTab("Event", "EventTrigger Icon", DrawEventTab);
         }
 
         protected override void OnDisable()
         {
             base.OnDisable();
-            _tabs.UnregisterTab("Sound");
             _tabs.UnregisterTab("Event");
         }
 
@@ -49,27 +41,6 @@ namespace UnityEditor.UI
             serializedObject.Update();
             EditorGUILayout.PropertyField(m_OnValueChangedProperty);
             serializedObject.ApplyModifiedProperties();
-        }
-
-        private void DrawSoundTab()
-        {
-            GUILayoutHelper.DrawProperty(hoverAudioClip, customSkin, "Hover Sound", "Play", () =>
-            {
-                if (hoverAudioClip.objectReferenceValue != null)
-                    PlayAudio((AudioClip)hoverAudioClip.objectReferenceValue);
-            });
-
-            GUILayoutHelper.DrawProperty(clickAudioClip, customSkin, "Click Sound", "Play", () =>
-            {
-                if (clickAudioClip.objectReferenceValue != null)
-                    PlayAudio((AudioClip)clickAudioClip.objectReferenceValue);
-            });
-        }
-
-        private void PlayAudio(AudioClip clip)
-        {
-            if (clip != null)
-                ExtensionHelper.PreviewAudioClip(clip);
         }
 
         private void DrawImageTab()

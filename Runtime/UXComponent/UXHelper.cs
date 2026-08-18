@@ -12,12 +12,7 @@ internal static class UXComponentExtensionsHelper
 
     public static void PlayAudio(AudioClip clip)
     {
-#if UXNAVIGATION_SUPPORT
-        // 仅拦截 Navigation 程序化 SetSelected 同步触发的 OnSelect 音效。
-        if (AlicizaX.UI.UXNavigation.UXSelectionAudio.IsSuppressed)
-            return;
-#endif
-        if (!AppServices.HasWorld) return;
+        if (clip == null || !AppServices.HasWorld) return;
         GameApp.Audio.Play(AudioType.UISound, clip);
     }
 }

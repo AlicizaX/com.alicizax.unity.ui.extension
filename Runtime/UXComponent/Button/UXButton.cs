@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using AlicizaX.UI.UXFeedback;
 using UnityEngine.EventSystems;
 
 namespace UnityEngine.UI
@@ -7,19 +8,8 @@ namespace UnityEngine.UI
     [AddComponentMenu("UI/UXButton", 30)]
     public class UXButton : UXSelectable, IPointerClickHandler, ISubmitHandler
     {
-        [SerializeField] private AudioClip hoverAudioClip;
-        [SerializeField] private AudioClip clickAudioClip;
-
-
         protected UXButton()
         {
-        }
-
-
-        public override void OnPointerEnter(PointerEventData eventData)
-        {
-            base.OnPointerEnter(eventData);
-            PlayAudio(hoverAudioClip);
         }
 
         public virtual void OnPointerClick(PointerEventData eventData)
@@ -32,15 +22,7 @@ namespace UnityEngine.UI
                 return;
 
             Press();
-            PlayAudio(clickAudioClip);
-        }
-
-        public override void OnSelect(BaseEventData eventData)
-        {
-            base.OnSelect(eventData);
-            if (eventData is PointerEventData)
-                return;
-            PlayAudio(hoverAudioClip);
+            UXUiFeedback.Raise(this, UXUiCue.Press);
         }
 
         public virtual void OnSubmit(BaseEventData eventData)
@@ -55,7 +37,7 @@ namespace UnityEngine.UI
         /// </summary>
         public virtual void PlayClickFeedback()
         {
-            PlayAudio(clickAudioClip);
+            UXUiFeedback.Raise(this, UXUiCue.Press);
 
             if (!IsActive() || !IsInteractable())
                 return;
@@ -85,12 +67,6 @@ namespace UnityEngine.UI
             }
 
             DoStateTransition(currentSelectionState, false);
-        }
-
-        private void PlayAudio(AudioClip clip)
-        {
-            if (clip != null)
-                UXComponentExtensionsHelper.PlayAudio(clip);
         }
 
         [SerializeField] private Button.ButtonClickedEvent m_OnClick = new Button.ButtonClickedEvent();
