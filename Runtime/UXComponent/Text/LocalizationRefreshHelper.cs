@@ -57,6 +57,80 @@ namespace UnityEngine.UI
             return EntryByKey.TryGetValue(key, out LocalizationEntry entry) ? entry.PreviewText : key;
         }
 
+        internal static int GetFormatArgumentCount(string format)
+        {
+            if (string.IsNullOrEmpty(format))
+            {
+                return 0;
+            }
+
+            int maxIndex = -1;
+            for (int i = 0; i < format.Length; i++)
+            {
+                if (format[i] != '{')
+                {
+                    continue;
+                }
+
+                if (i + 1 < format.Length && format[i + 1] == '{')
+                {
+                    i++;
+                    continue;
+                }
+
+                if (TryParseFormatArgument(format, i, out int index))
+                {
+                    if (index > maxIndex)
+                    {
+                        maxIndex = index;
+                    }
+                }
+            }
+
+            return maxIndex + 1;
+        }
+
+        internal static void ResizeFormatArgs(ref string[] args, int count)
+        {
+            if (args != null && args.Length == count)
+            {
+                return;
+            }
+
+            Array.Resize(ref args, count);
+        }
+
+        private static bool TryParseFormatArgument(string format, int startIndex, out int index)
+        {
+            index = 0;
+            int currentIndex = startIndex + 1;
+            bool hasIndex = false;
+            while (currentIndex < format.Length && char.IsDigit(format[currentIndex]))
+            {
+                hasIndex = true;
+                index = index * 10 + format[currentIndex] - '0';
+                currentIndex++;
+            }
+
+            if (!hasIndex || currentIndex >= format.Length)
+            {
+                return false;
+            }
+
+            char next = format[currentIndex];
+            if (next != '}' && next != ':' && next != ',')
+            {
+                return false;
+            }
+
+            while (currentIndex < format.Length && format[currentIndex] != '}')
+            {
+                currentIndex++;
+            }
+
+            return currentIndex < format.Length;
+        }
+
         internal static void InvalidateCache()
         {
             isCacheDirty = true;
