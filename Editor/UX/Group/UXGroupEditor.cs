@@ -71,7 +71,7 @@ namespace UnityEditor.UI
         private int GetDefaultInstanceId()
         {
             UXToggle currentDefault = m_DefaultToggle.objectReferenceValue as UXToggle;
-            return currentDefault != null ? currentDefault.GetInstanceID() : 0;
+            return UnityObjectId.Get(currentDefault);
         }
 
         private void DrawDefaultToggleSelector()
@@ -135,7 +135,7 @@ namespace UnityEditor.UI
                 UXToggle newDefault = newIndex >= optionOffset ? toggles[newIndex - optionOffset] : null;
                 m_DefaultToggle.objectReferenceValue = newDefault;
                 serializedObject.ApplyModifiedProperties();
-                m_TrackedDefaultId = newDefault != null ? newDefault.GetInstanceID() : 0;
+                m_TrackedDefaultId = UnityObjectId.Get(newDefault);
 
                 if (newDefault != null)
                     AssignGroup(newDefault, m_Target);
