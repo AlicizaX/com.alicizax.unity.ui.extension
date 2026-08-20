@@ -13,7 +13,7 @@ namespace UnityEditor.UI
         private SerializedProperty m_DefaultToggle;
         private UXGroup m_Target;
         private ReorderableList m_ReorderableList;
-        private int m_TrackedDefaultId;
+        private ulong m_TrackedDefaultId;
 
         private void OnEnable()
         {
@@ -55,7 +55,7 @@ namespace UnityEditor.UI
 
             if (!Application.isPlaying)
             {
-                int defaultId = GetDefaultInstanceId();
+                ulong defaultId = GetDefaultInstanceId();
                 if (defaultId != m_TrackedDefaultId)
                 {
                     m_TrackedDefaultId = defaultId;
@@ -68,7 +68,7 @@ namespace UnityEditor.UI
             }
         }
 
-        private int GetDefaultInstanceId()
+        private ulong GetDefaultInstanceId()
         {
             UXToggle currentDefault = m_DefaultToggle.objectReferenceValue as UXToggle;
             return UnityObjectId.Get(currentDefault);
