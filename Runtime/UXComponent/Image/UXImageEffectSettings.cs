@@ -71,7 +71,7 @@ namespace UnityEngine.UI
             {
                 unchecked
                 {
-                    int hash = m_SdfTexture != null ? UnityObjectId.Get(m_SdfTexture) : 0;
+                    int hash = m_SdfTexture != null ? UnityObjectId.Get(m_SdfTexture).GetHashCode() : 0;
                     hash = (hash * 397) ^ m_OutlineColor.GetHashCode();
                     hash = (hash * 397) ^ m_ShadowColor.GetHashCode();
                     return hash;

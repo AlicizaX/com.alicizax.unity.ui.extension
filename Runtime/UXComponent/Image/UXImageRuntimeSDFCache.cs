@@ -287,7 +287,7 @@ namespace UnityEngine.UI
             {
                 unchecked
                 {
-                    int hash = m_Sprite != null ? UnityObjectId.Get(m_Sprite) : 0;
+                    int hash = m_Sprite != null ? UnityObjectId.Get(m_Sprite).GetHashCode() : 0;
                     hash = (hash * 397) ^ m_SpreadPixels;
                     hash = (hash * 397) ^ m_Padding;
                     return hash;
