@@ -36,10 +36,6 @@ namespace UnityEngine.UI
         private UXSelectionState m_ExternalState;
         private Coroutine m_PulseCoroutine;
 
-#if UNITY_EDITOR
-        internal static Action<UXSelectable, UXSelectionState> EditorSampleAnimation;
-#endif
-
         /// <summary>
         /// 是否正在由外部强制驱动视觉状态。
         /// </summary>
@@ -124,18 +120,6 @@ namespace UnityEngine.UI
                 UXSelectionState.Selected => SelectionState.Selected,
                 UXSelectionState.Disabled => SelectionState.Disabled,
                 _ => SelectionState.Normal,
-            };
-        }
-
-        static UXSelectionState ToUXSelectionState(SelectionState state)
-        {
-            return state switch
-            {
-                SelectionState.Highlighted => UXSelectionState.Highlighted,
-                SelectionState.Pressed => UXSelectionState.Pressed,
-                SelectionState.Selected => UXSelectionState.Selected,
-                SelectionState.Disabled => UXSelectionState.Disabled,
-                _ => UXSelectionState.Normal,
             };
         }
 
@@ -238,10 +222,6 @@ namespace UnityEngine.UI
                 instant = true;
 
             base.DoStateTransition(state, instant);
-#if UNITY_EDITOR
-            if (!Application.isPlaying && transition == Transition.Animation)
-                EditorSampleAnimation?.Invoke(this, ToUXSelectionState(state));
-#endif
             for (int i = 0; i < m_ChildTransitions.Count; i++)
             {
                 TransitionData transitionData = m_ChildTransitions[i];
