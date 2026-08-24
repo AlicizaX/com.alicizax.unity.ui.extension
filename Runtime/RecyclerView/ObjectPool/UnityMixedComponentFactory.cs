@@ -57,8 +57,16 @@ namespace AlicizaX.UI
         {
             if (obj is ViewHolder viewHolder)
             {
+                viewHolder.ResetPooledTransform();
                 viewHolder.SetPooledVisible(false);
                 return;
+            }
+
+            if (obj.transform is RectTransform rectTransform)
+            {
+                rectTransform.anchoredPosition3D = Vector3.zero;
+                rectTransform.localRotation = Quaternion.identity;
+                rectTransform.localScale = Vector3.one;
             }
 
             obj.gameObject.SetActive(false);
@@ -66,7 +74,18 @@ namespace AlicizaX.UI
 
         public bool Validate(int templateId, T obj)
         {
-            return true;
+            if (obj == null)
+            {
+                return false;
+            }
+
+            if (obj is ViewHolder viewHolder)
+            {
+                return viewHolder && !viewHolder.IsPooled;
+            }
+
+            UnityEngine.Object unityObject = obj;
+            return unityObject;
         }
 
         private T GetTemplate(int templateId)

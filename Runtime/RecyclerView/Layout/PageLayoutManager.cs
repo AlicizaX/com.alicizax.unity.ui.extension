@@ -7,6 +7,7 @@ namespace AlicizaX.UI
     public class PageLayoutManager : LinearLayoutManager
     {
         [SerializeField] private float minScale = 0.9f;
+        [SerializeField] private float scaleFalloff = 0.0006f;
 
         public PageLayoutManager()
         {
@@ -101,7 +102,7 @@ namespace AlicizaX.UI
                 }
 
                 float viewPos = direction == Direction.Vertical ? -viewHolder.RectTransform.anchoredPosition.y : viewHolder.RectTransform.anchoredPosition.x;
-                float scale = 1 - Mathf.Min(Mathf.Abs(viewPos) * 0.0006f, 1f);
+                float scale = 1 - Mathf.Min(Mathf.Abs(viewPos) * scaleFalloff, 1f);
                 scale = Mathf.Max(scale, minScale);
 
                 viewHolder.RectTransform.localScale = Vector3.one * scale;

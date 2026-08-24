@@ -78,9 +78,24 @@ namespace AlicizaX.UI
         /// </summary>
         /// <param name="index">数据索引。</param>
         /// <returns>模板 ID。</returns>
+        public virtual bool UsesMultipleTemplates => false;
+
         public virtual int GetTemplateId(int index)
         {
             return 0;
+        }
+
+        public virtual bool TryGetDeclaredLength(int index, out float length)
+        {
+            if (TryGetBindData(index, out T data) &&
+                data is IMeasuredViewData measured &&
+                measured.TryGetItemLength(out length))
+            {
+                return length > 0f;
+            }
+
+            length = 0f;
+            return false;
         }
 
         /// <summary>
@@ -126,10 +141,10 @@ namespace AlicizaX.UI
         /// 替换当前业务数据列表，并重置 RecyclerView 后刷新。
         /// </summary>
         /// <param name="list">新的业务数据列表。</param>
-        public virtual void SetList(List<T> list)
+        public virtual void SetList(List<T> list, ListScrollPolicy scrollPolicy = ListScrollPolicy.KeepAnchor)
         {
             this.list = list ?? new List<T>();
-            recyclerView.Reset();
+            recyclerView.Reset(scrollPolicy);
             NotifyDataChanged();
         }
 
@@ -148,8 +163,7 @@ namespace AlicizaX.UI
             CoerceChoiceIndex();
             if (relayout)
             {
-                recyclerView.RequestLayout();
-                recyclerView.Refresh();
+                recyclerView.RelayoutDataIndex(index);
 #if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
                 NotifyNavigationDataChanged();
 #endif
@@ -178,8 +192,7 @@ namespace AlicizaX.UI
             CoerceChoiceIndex();
             if (relayout)
             {
-                recyclerView.RequestLayout();
-                recyclerView.Refresh();
+                recyclerView.RelayoutDataRange(index, count);
 #if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
                 NotifyNavigationDataChanged();
 #endif
@@ -246,33 +259,40 @@ namespace AlicizaX.UI
 #endif
         }
 
-        /// <summary>
-        /// 通知移除了一项（兼容旧调用，等价全量结构刷新）。
-        /// </summary>
-        public virtual void NotifyItemRemoved()
-        {
-            NotifyDataChanged();
-        }
-
-        /// <summary>
-        /// 通知移除了 index 处一项。调用前数据源必须已删除完成。
-        /// </summary>
         public virtual void NotifyItemRemoved(int index)
         {
             NotifyItemRangeRemoved(index, 1);
         }
 
-        /// <summary>
-        /// 通知移除了一段（兼容旧调用，无 index 时只能全量刷新）。
-        /// </summary>
-        public virtual void NotifyItemRangeRemoved(int count)
+        public virtual void NotifyItemMoved(int fromIndex, int toIndex)
         {
-            if (count <= 0)
+            int itemCount = GetRealCount();
+            if (fromIndex < 0 || toIndex < 0 || fromIndex >= itemCount || toIndex >= itemCount || fromIndex == toIndex)
             {
                 return;
             }
 
-            NotifyDataChanged();
+            if (choiceIndex == fromIndex)
+            {
+                choiceIndex = toIndex;
+                OnChoiceIndexChanged?.Invoke(choiceIndex);
+            }
+            else if (fromIndex < toIndex && choiceIndex > fromIndex && choiceIndex <= toIndex)
+            {
+                choiceIndex--;
+                OnChoiceIndexChanged?.Invoke(choiceIndex);
+            }
+            else if (toIndex < fromIndex && choiceIndex >= toIndex && choiceIndex < fromIndex)
+            {
+                choiceIndex++;
+                OnChoiceIndexChanged?.Invoke(choiceIndex);
+            }
+
+            CoerceChoiceIndex();
+            recyclerView.ApplyItemsMoved(fromIndex, toIndex);
+#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
+            NotifyNavigationDataChanged();
+#endif
         }
 
         /// <summary>
@@ -308,9 +328,22 @@ namespace AlicizaX.UI
         /// </summary>
         /// <param name="index">显示/绑定索引。</param>
         /// <returns>如果索引有效则返回数据；否则返回 null。</returns>
+        public IReadOnlyList<T> Items => list;
+
         public T GetData(int index)
         {
             return TryGetBindData(index, out T data) ? data : default;
+        }
+
+        public virtual void ReplaceAt(int index, T item, bool relayout = false)
+        {
+            if (list == null || index < 0 || index >= list.Count)
+            {
+                return;
+            }
+
+            list[index] = item;
+            NotifyItemChanged(index, relayout);
         }
 
         /// <summary>
@@ -329,7 +362,7 @@ namespace AlicizaX.UI
             NotifyItemInserted(index);
         }
 
-        internal virtual void AddRange(IEnumerable<T> collection)
+        public virtual void AddRange(IEnumerable<T> collection)
         {
             if (collection == null)
             {
@@ -342,15 +375,12 @@ namespace AlicizaX.UI
             }
 
             int index = list.Count;
-            if (collection is ICollection<T> itemCollection)
-            {
-                list.AddRange(itemCollection);
-                NotifyItemRangeInserted(index, itemCollection.Count);
-                return;
-            }
-
             list.AddRange(collection);
-            NotifyDataChanged();
+            int added = list.Count - index;
+            if (added > 0)
+            {
+                NotifyItemRangeInserted(index, added);
+            }
         }
 
         /// <summary>
@@ -364,22 +394,33 @@ namespace AlicizaX.UI
             NotifyItemInserted(index);
         }
 
-        internal virtual void InsertRange(int index, IEnumerable<T> collection)
+        public virtual void Move(int fromIndex, int toIndex)
+        {
+            if (list == null || fromIndex == toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= list.Count || toIndex >= list.Count)
+            {
+                return;
+            }
+
+            T item = list[fromIndex];
+            list.RemoveAt(fromIndex);
+            list.Insert(toIndex, item);
+            NotifyItemMoved(fromIndex, toIndex);
+        }
+
+        public virtual void InsertRange(int index, IEnumerable<T> collection)
         {
             if (collection == null)
             {
                 return;
             }
 
-            if (collection is ICollection<T> itemCollection)
-            {
-                list.InsertRange(index, itemCollection);
-                NotifyItemRangeInserted(index, itemCollection.Count);
-                return;
-            }
-
+            int previousCount = list.Count;
             list.InsertRange(index, collection);
-            NotifyDataChanged();
+            int added = list.Count - previousCount;
+            if (added > 0)
+            {
+                NotifyItemRangeInserted(index, added);
+            }
         }
 
         /// <summary>
@@ -415,10 +456,20 @@ namespace AlicizaX.UI
             NotifyItemRangeRemoved(index, count);
         }
 
-        internal virtual void RemoveAll(Predicate<T> match)
+        public virtual void RemoveAll(Predicate<T> match)
         {
-            list.RemoveAll(match);
-            NotifyDataChanged();
+            if (list == null || match == null)
+            {
+                return;
+            }
+
+            for (int i = list.Count - 1; i >= 0; i--)
+            {
+                if (match(list[i]))
+                {
+                    RemoveAt(i);
+                }
+            }
         }
 
         /// <summary>
@@ -433,7 +484,7 @@ namespace AlicizaX.UI
 
             int count = list.Count;
             list.Clear();
-            NotifyItemRangeRemoved(count);
+            NotifyItemRangeRemoved(0, count);
         }
 
         /// <summary>
@@ -456,7 +507,7 @@ namespace AlicizaX.UI
             NotifyDataChanged();
         }
 
-        internal virtual void Sort(Comparison<T> comparison)
+        public virtual void Sort(Comparison<T> comparison)
         {
             list.Sort(comparison);
             NotifyDataChanged();

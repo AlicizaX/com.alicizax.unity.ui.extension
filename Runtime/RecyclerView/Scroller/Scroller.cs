@@ -69,14 +69,6 @@ namespace AlicizaX.UI
             set => wheelSpeed = value;
         }
 
-        protected bool snap;
-
-        public bool Snap
-        {
-            get => snap;
-            set => snap = value;
-        }
-
         protected MovementType movementType = MovementType.Elastic;
 
         public MovementType MovementType
@@ -109,7 +101,6 @@ namespace AlicizaX.UI
         private float motionSpeed;
         private float inertiaVelocity;
         private float wheelTargetPosition;
-        private bool notifyMoveStoppedOnComplete;
         private float dragStopTime;
         private float trackedVelocity;
         private bool dragging;
@@ -118,9 +109,30 @@ namespace AlicizaX.UI
 
         public float ViewLength => direction == Direction.Vertical ? viewSize.y : viewSize.x;
 
+        public bool IsDragging => dragging;
+
+        public bool IsMoving => motionState != MotionState.Idle;
+
+        public bool IsPositionInBounds => IsInBounds(position);
+
+        public ScrollMotionKind MotionKind
+        {
+            get
+            {
+                return motionState switch
+                {
+                    MotionState.Smooth => ScrollMotionKind.Smooth,
+                    MotionState.Duration => ScrollMotionKind.Duration,
+                    MotionState.Inertia => ScrollMotionKind.Inertia,
+                    MotionState.Wheel => ScrollMotionKind.Wheel,
+                    _ => ScrollMotionKind.None
+                };
+            }
+        }
+
         public event Action<float> OnValueChanged;
 
-        public event Action OnMoveStoped;
+        public event Action<ScrollStopReason> OnMoveStopped;
 
         public event Action<bool> OnDragging;
 
@@ -128,6 +140,11 @@ namespace AlicizaX.UI
 
         protected virtual void Awake()
         {
+        }
+
+        protected virtual void OnDisable()
+        {
+            StopMovement(ScrollStopReason.Disabled);
         }
 
         protected virtual void Update()
@@ -167,16 +184,17 @@ namespace AlicizaX.UI
             position = ClampPosition(position);
             if (Mathf.Approximately(position, this.position)) return;
 
-            StopMovement();
-
             if (!smooth)
             {
+                StopMovement(ScrollStopReason.Interrupted);
                 this.position = position;
                 OnValueChanged?.Invoke(this.position);
                 return;
             }
 
-            StartPositionMotion(position, scrollSpeed, true);
+            float distance = Mathf.Abs(position - this.position);
+            float duration = Mathf.Clamp(distance / Mathf.Max(scrollSpeed * 240f, 1f), 0.08f, 0.45f);
+            ScrollToDuration(position, duration);
         }
 
         public virtual void ScrollToDuration(float position, float duration)
@@ -187,7 +205,7 @@ namespace AlicizaX.UI
                 return;
             }
 
-            StopMovement();
+            StopMovement(ScrollStopReason.Interrupted);
             if (duration <= 0f)
             {
                 this.position = position;
@@ -200,7 +218,6 @@ namespace AlicizaX.UI
             motionTargetPosition = position;
             motionDuration = Mathf.Max(duration, 0.0001f);
             motionElapsed = 0f;
-            notifyMoveStoppedOnComplete = true;
         }
 
         public virtual void ScrollToRatio(float ratio)
@@ -221,7 +238,7 @@ namespace AlicizaX.UI
                 OnDragging?.Invoke(true);
             }
 
-            StopMovement();
+            StopMovement(ScrollStopReason.Interrupted);
         }
 
         public void OnEndDrag(PointerEventData eventData)
@@ -238,7 +255,7 @@ namespace AlicizaX.UI
                 return;
             }
 
-            StopMovement();
+            StopMovement(ScrollStopReason.Interrupted);
             float clampedPosition = ClampPosition(position);
             if (!Mathf.Approximately(clampedPosition, position))
             {
@@ -281,7 +298,7 @@ namespace AlicizaX.UI
 
             if (motionState != MotionState.Wheel)
             {
-                StopMovement();
+                StopMovement(ScrollStopReason.Interrupted);
                 wheelTargetPosition = position;
             }
 
@@ -300,7 +317,6 @@ namespace AlicizaX.UI
             OnValueChanged?.Invoke(position);
 
             motionState = MotionState.Wheel;
-            notifyMoveStoppedOnComplete = true;
         }
 
         internal virtual float GetDelta(PointerEventData eventData)
@@ -361,21 +377,19 @@ namespace AlicizaX.UI
         {
             if ((Time.time - dragStopTime) > 0.03f)
             {
-                CompleteMotion(true);
+                CompleteMotion();
                 return;
             }
 
             if (Mathf.Abs(trackedVelocity) <= 50f)
             {
-                CompleteMotion(true);
+                CompleteMotion();
                 return;
             }
 
-            StopMovement();
             motionState = MotionState.Inertia;
             float maxVelocity = ViewLength * 5f;
             inertiaVelocity = Mathf.Clamp(trackedVelocity, -maxVelocity, maxVelocity);
-            notifyMoveStoppedOnComplete = true;
         }
 
         protected virtual bool StartElasticMotion()
@@ -388,42 +402,58 @@ namespace AlicizaX.UI
 
             if (position < 0)
             {
-                StopMovement();
-                StartPositionMotion(0, 7f, true);
+                ClearMotion();
+                StartPositionMotion(0, 7f);
                 return true;
             }
 
             if (position > MaxPosition)
             {
-                StopMovement();
-                StartPositionMotion(MaxPosition, 7f, true);
+                ClearMotion();
+                StartPositionMotion(MaxPosition, 7f);
                 return true;
             }
 
             return false;
         }
 
-        protected void StopMovement()
+        public void StopMovement(ScrollStopReason reason)
+        {
+            if (motionState == MotionState.Idle)
+            {
+                wheelTargetPosition = position;
+                return;
+            }
+
+            ClearMotion();
+            OnMoveStopped?.Invoke(reason);
+        }
+
+        private void ClearMotion()
         {
             motionState = MotionState.Idle;
             wheelTargetPosition = position;
-            notifyMoveStoppedOnComplete = false;
         }
 
         internal void ResetMotion(float position)
         {
+            bool wasMoving = motionState != MotionState.Idle;
             motionState = MotionState.Idle;
             this.position = ClampPosition(position);
             velocity = 0f;
             inertiaVelocity = 0f;
             trackedVelocity = 0f;
             wheelTargetPosition = this.position;
-            notifyMoveStoppedOnComplete = false;
             dragStopTime = 0f;
             if (dragging)
             {
                 dragging = false;
                 OnDragging?.Invoke(false);
+            }
+
+            if (wasMoving)
+            {
+                OnMoveStopped?.Invoke(ScrollStopReason.Reset);
             }
         }
 
@@ -436,36 +466,42 @@ namespace AlicizaX.UI
 
             if (!inertia)
             {
-                CompleteMotion(true);
+                CompleteMotion();
                 return;
             }
 
             StartInertia();
         }
 
-        private void StartPositionMotion(float targetPosition, float speed, bool notifyStopped)
+        private void StartPositionMotion(float targetPosition, float speed)
         {
             motionState = MotionState.Smooth;
-            motionStartPosition = position;
             motionTargetPosition = targetPosition;
-            motionElapsed = Time.deltaTime;
             motionSpeed = speed;
-            notifyMoveStoppedOnComplete = notifyStopped;
         }
 
         private void TickSmooth(float deltaTime)
         {
-            if (Mathf.Abs(motionTargetPosition - position) <= 0.1f)
+            float remaining = motionTargetPosition - position;
+            float distance = Mathf.Abs(remaining);
+            if (distance <= 0.5f)
             {
                 position = motionTargetPosition;
                 OnValueChanged?.Invoke(position);
-                CompleteMotion(false);
+                CompleteMotion();
                 return;
             }
 
-            position = Mathf.Lerp(motionStartPosition, motionTargetPosition, motionElapsed * motionSpeed);
-            motionElapsed += deltaTime;
+            float speed = Mathf.Max(motionSpeed, 1f) * 240f;
+            float step = speed * deltaTime;
+            position = step >= distance
+                ? motionTargetPosition
+                : position + Mathf.Sign(remaining) * step;
             OnValueChanged?.Invoke(position);
+            if (Mathf.Approximately(position, motionTargetPosition))
+            {
+                CompleteMotion();
+            }
         }
 
         private void TickDuration(float deltaTime)
@@ -479,7 +515,7 @@ namespace AlicizaX.UI
             {
                 position = motionTargetPosition;
                 OnValueChanged?.Invoke(position);
-                CompleteMotion(false);
+                CompleteMotion();
             }
         }
 
@@ -495,7 +531,7 @@ namespace AlicizaX.UI
                 }
                 else
                 {
-                    CompleteMotion(true);
+                    CompleteMotion();
                 }
                 return;
             }
@@ -530,7 +566,7 @@ namespace AlicizaX.UI
 
                 if (!Mathf.Approximately(clampedPosition, nextPosition))
                 {
-                    CompleteMotion(true);
+                    CompleteMotion();
                 }
             }
         }
@@ -550,8 +586,8 @@ namespace AlicizaX.UI
         private void StartElasticReturn()
         {
             float target = position < 0f ? 0f : MaxPosition;
-            StopMovement();
-            StartPositionMotion(target, 7f, true);
+            ClearMotion();
+            StartPositionMotion(target, 7f);
         }
 
         private void TickWheel(float deltaTime)
@@ -561,7 +597,7 @@ namespace AlicizaX.UI
             {
                 position = target;
                 OnValueChanged?.Invoke(position);
-                CompleteMotion(true);
+                CompleteMotion();
                 return;
             }
 
@@ -575,18 +611,12 @@ namespace AlicizaX.UI
             return Mathf.Clamp(value, 0f, MaxPosition);
         }
 
-        private void CompleteMotion(bool notifyStopped)
+        private void CompleteMotion()
         {
             motionState = MotionState.Idle;
             velocity = 0f;
             wheelTargetPosition = position;
-            bool shouldNotify = notifyStopped || notifyMoveStoppedOnComplete;
-            notifyMoveStoppedOnComplete = false;
-
-            if (shouldNotify)
-            {
-                OnMoveStoped?.Invoke();
-            }
+            OnMoveStopped?.Invoke(ScrollStopReason.Completed);
         }
     }
 

@@ -56,6 +56,8 @@ namespace AlicizaX.UI.Editor
         private SerializedProperty _spacing;
         private SerializedProperty _padding;
         private SerializedProperty _snap;
+        private SerializedProperty _snapDuration;
+        private SerializedProperty _refreshMode;
         private SerializedProperty _movementType;
         private SerializedProperty _inertia;
         private SerializedProperty _decelerationRate;
@@ -94,9 +96,6 @@ namespace AlicizaX.UI.Editor
             InitializeScrollerProperties();
             InitializeBaseProperties();
             InitializeTemplateProperties();
-
-            serializedObject.Update();
-            serializedObject.ApplyModifiedProperties();
         }
 
         #endregion
@@ -127,6 +126,8 @@ namespace AlicizaX.UI.Editor
             _spacing = serializedObject.FindProperty("spacing");
             _padding = serializedObject.FindProperty("padding");
             _snap = serializedObject.FindProperty("snap");
+            _snapDuration = serializedObject.FindProperty("snapDuration");
+            _refreshMode = serializedObject.FindProperty("refreshMode");
             _movementType = serializedObject.FindProperty("movementType");
             _inertia = serializedObject.FindProperty("inertia");
             _decelerationRate = serializedObject.FindProperty("decelerationRate");
@@ -152,13 +153,34 @@ namespace AlicizaX.UI.Editor
             bool isPlaying = Application.isPlaying;
 
             EditorGUILayout.Space(6f);
+            DrawSetupWarnings();
+            DrawPlayModeOverlay(isPlaying);
             DrawMissingReferenceRepairSection(isPlaying);
             DrawLayoutManagerSection(isPlaying);
             DrawBaseSettingsSection(isPlaying);
             DrawScrollerSection(isPlaying);
-            DrawTemplatesSection();
+            DrawTemplatesSection(isPlaying);
 
-            serializedObject.ApplyModifiedProperties();
+            if (serializedObject.ApplyModifiedProperties() && isPlaying)
+            {
+                ApplyRuntimeScrollerSettings();
+            }
+        }
+
+        private void ApplyRuntimeScrollerSettings()
+        {
+            RecyclerView recyclerView = target as RecyclerView;
+            if (recyclerView == null)
+            {
+                return;
+            }
+
+            recyclerView.ApplySerializedScrollerSettings();
+            recyclerView.Spacing = _spacing.vector2Value;
+            recyclerView.Padding = _padding.vector2Value;
+            recyclerView.Snap = _snap.boolValue;
+            recyclerView.SnapDuration = _snapDuration.floatValue;
+            recyclerView.RefreshMode = (ListRefreshMode)_refreshMode.enumValueIndex;
         }
 
         #endregion
@@ -234,6 +256,7 @@ namespace AlicizaX.UI.Editor
                 {
                     EditorGUILayout.Space(3);
                     DrawManagedReferenceProperties(_layoutManager);
+                    DrawVariableLengthWarning();
                 }
                 else
                 {
@@ -328,9 +351,15 @@ namespace AlicizaX.UI.Editor
 
                 using (new EditorGUI.DisabledScope(isPlaying))
                 {
+                    EditorGUI.BeginChangeCheck();
                     DrawPropertyRow(_direction);
+                    bool directionChanged = EditorGUI.EndChangeCheck();
                     DrawPropertyRow(_alignment);
                     DrawPropertyRow(_content);
+                    if (directionChanged && !isPlaying)
+                    {
+                        RebuildScrollbarForDirection();
+                    }
                 }
 
                 DrawSubHeader("Spacing");
@@ -346,6 +375,12 @@ namespace AlicizaX.UI.Editor
 
                 DrawScrollBarSettings(isPlaying);
                 DrawPropertyRow(_snap);
+                if (_snap.boolValue)
+                {
+                    DrawPropertyRow(_snapDuration, "Snap Duration");
+                }
+
+                DrawPropertyRow(_refreshMode, "Refresh Mode");
                 DrawPropertyRow(_movementType, "Movement Type");
                 DrawPropertyRow(_inertia);
 
@@ -460,7 +495,7 @@ namespace AlicizaX.UI.Editor
                 var recyclerView = target as RecyclerView;
                 if (recyclerView == null) return;
 
-                Undo.RecordObjects(new Object[] { recyclerView, this }, "Update Scroller");
+                Undo.RecordObject(recyclerView, "Update Scroller");
 
                 RemoveExistingScroller(recyclerView);
 
@@ -560,6 +595,7 @@ namespace AlicizaX.UI.Editor
             }
 
             GameObject instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab, parent);
+            Undo.RegisterCreatedObjectUndo(instance, "Create Scrollbar");
             PrefabUtility.UnpackPrefabInstance(instance, PrefabUnpackMode.Completely, InteractionMode.UserAction);
 
             _scrollbar.objectReferenceValue = instance.GetComponent<Scrollbar>();
@@ -577,7 +613,7 @@ namespace AlicizaX.UI.Editor
 
                 if (scrollbarComponent != null)
                 {
-                    Object.DestroyImmediate(scrollbarComponent.gameObject);
+                    Undo.DestroyObjectImmediate(scrollbarComponent.gameObject);
                 }
             }
 
@@ -588,27 +624,29 @@ namespace AlicizaX.UI.Editor
 
         #region Templates Section
 
-        private void DrawTemplatesSection()
+        private void DrawTemplatesSection(bool isPlaying)
         {
             EditorGUILayout.BeginVertical(_panelStyle);
             DrawSectionToolbar("Item Templates");
-
-            DrawTemplatesList();
-            DrawDragAndDropArea();
+            DrawTemplatesList(isPlaying);
+            if (!isPlaying)
+            {
+                DrawDragAndDropArea();
+            }
             EditorGUILayout.EndVertical();
         }
 
-        private void DrawTemplatesList()
+        private void DrawTemplatesList(bool isPlaying)
         {
             if (_templates == null || !_templates.isArray) return;
 
             for (int i = 0; i < _templates.arraySize; i++)
             {
-                DrawTemplateItem(i);
+                DrawTemplateItem(i, isPlaying);
             }
         }
 
-        private void DrawTemplateItem(int index)
+        private void DrawTemplateItem(int index, bool isPlaying)
         {
             if (index < 0 || index >= _templates.arraySize) return;
 
@@ -618,12 +656,30 @@ namespace AlicizaX.UI.Editor
             bool hovered = rowRect.Contains(Event.current.mousePosition);
             AlicizaEditorGUI.DrawListItemBackground(rowRect, false, hovered);
 
-            Rect fieldRect = new Rect(rowRect.x + 6f, rowRect.y + 2f, rowRect.width - TemplateActionButtonSize - 14f, height - 4f);
-            Rect deleteRect = new Rect(rowRect.xMax - TemplateActionButtonSize - 2f, rowRect.y + 2f, TemplateActionButtonSize, TemplateActionButtonSize);
+            float buttonSpace = isPlaying ? 4f : TemplateActionButtonSize * 3 + 18f;
+            Rect fieldRect = new Rect(rowRect.x + 6f, rowRect.y + 2f, rowRect.width - buttonSpace, height - 4f);
+            EditorGUI.PropertyField(fieldRect, item, GUIContent.none, true);
 
-            using (new EditorGUI.DisabledScope(true))
+            if (isPlaying)
             {
-                EditorGUI.PropertyField(fieldRect, item, GUIContent.none, true);
+                return;
+            }
+
+            Rect upRect = new Rect(rowRect.xMax - TemplateActionButtonSize * 3 - 8f, rowRect.y + 2f, TemplateActionButtonSize, TemplateActionButtonSize);
+            Rect downRect = new Rect(rowRect.xMax - TemplateActionButtonSize * 2 - 5f, rowRect.y + 2f, TemplateActionButtonSize, TemplateActionButtonSize);
+            Rect deleteRect = new Rect(rowRect.xMax - TemplateActionButtonSize - 2f, rowRect.y + 2f, TemplateActionButtonSize, TemplateActionButtonSize);
+            if (AlicizaEditorGUI.DrawSymbolButton(upRect, "^") && index > 0)
+            {
+                _templates.MoveArrayElement(index, index - 1);
+                serializedObject.ApplyModifiedProperties();
+                GUIUtility.ExitGUI();
+            }
+
+            if (AlicizaEditorGUI.DrawSymbolButton(downRect, "v") && index < _templates.arraySize - 1)
+            {
+                _templates.MoveArrayElement(index, index + 1);
+                serializedObject.ApplyModifiedProperties();
+                GUIUtility.ExitGUI();
             }
 
             if (AlicizaEditorGUI.DrawSymbolButton(deleteRect, "-"))
@@ -689,97 +745,46 @@ namespace AlicizaX.UI.Editor
         private void ProcessDraggedGameObject(GameObject gameObject)
         {
             ViewHolder viewHolder = gameObject.GetComponent<ViewHolder>();
-
             if (viewHolder != null)
             {
-                AddTemplate(gameObject);
+                AddTemplate(viewHolder);
+                return;
             }
-            else
-            {
-                Debug.LogWarning($"GameObject '{gameObject.name}' must have a ViewHolder component!");
-            }
+
+            Debug.LogWarning($"GameObject '{gameObject.name}' must have a ViewHolder component.");
         }
 
-        private void AddTemplate(GameObject templatePrefab)
+        private void AddTemplate(ViewHolder viewHolder)
         {
-            if (_templates == null || templatePrefab == null) return;
-
-            if (IsTemplateDuplicate(templatePrefab))
+            if (_templates == null || viewHolder == null)
             {
-                Debug.LogWarning($"Template '{templatePrefab.name}' already exists in the list!");
+                return;
+            }
+
+            if (IsTemplateDuplicate(viewHolder))
+            {
+                Debug.LogWarning($"Template '{viewHolder.name}' already exists in the list.");
                 return;
             }
 
             _templates.arraySize++;
             SerializedProperty newItem = _templates.GetArrayElementAtIndex(_templates.arraySize - 1);
-            newItem.objectReferenceValue = templatePrefab;
-
+            newItem.objectReferenceValue = viewHolder;
             serializedObject.ApplyModifiedProperties();
         }
 
-        private bool IsTemplateDuplicate(GameObject templatePrefab)
+        private bool IsTemplateDuplicate(ViewHolder viewHolder)
         {
-            Type templateType = templatePrefab.GetComponent<ViewHolder>().GetType();
-
             for (int i = 0; i < _templates.arraySize; i++)
             {
                 SerializedProperty existingItem = _templates.GetArrayElementAtIndex(i);
-                var existingViewHolder = existingItem.objectReferenceValue as GameObject;
-
-                if (existingViewHolder != null)
-                {
-                    var existingType = existingViewHolder.GetComponent<ViewHolder>().GetType();
-                    if (existingType == templateType)
-                    {
-                        return true;
-                    }
-                }
-            }
-
-            return false;
-        }
-
-        private bool TemplatesNeedComponent<TComponent>() where TComponent : Component
-        {
-            if (_templates == null || !_templates.isArray)
-            {
-                return false;
-            }
-
-            for (int i = 0; i < _templates.arraySize; i++)
-            {
-                SerializedProperty item = _templates.GetArrayElementAtIndex(i);
-                GameObject template = GetTemplateGameObject(item.objectReferenceValue);
-                if (template != null && template.GetComponent<TComponent>() == null)
+                if (existingItem.objectReferenceValue == viewHolder)
                 {
                     return true;
                 }
             }
 
             return false;
-        }
-
-        private void AddComponentToTemplates<TComponent>() where TComponent : Component
-        {
-            if (_templates == null || !_templates.isArray)
-            {
-                return;
-            }
-
-            for (int i = 0; i < _templates.arraySize; i++)
-            {
-                SerializedProperty item = _templates.GetArrayElementAtIndex(i);
-                GameObject template = GetTemplateGameObject(item.objectReferenceValue);
-                if (template == null || template.GetComponent<TComponent>() != null)
-                {
-                    continue;
-                }
-
-                Undo.AddComponent<TComponent>(template);
-                EditorUtility.SetDirty(template);
-            }
-
-            serializedObject.ApplyModifiedProperties();
         }
 
         private static GameObject GetTemplateGameObject(Object templateReference)
@@ -800,6 +805,137 @@ namespace AlicizaX.UI.Editor
         #endregion
 
         #region Helper Methods
+
+        private void DrawSetupWarnings()
+        {
+            RecyclerView recyclerView = target as RecyclerView;
+            if (recyclerView == null)
+            {
+                return;
+            }
+
+            if (_content.objectReferenceValue == null)
+            {
+                DrawMessageRow("Content is missing.", true);
+            }
+
+            if (_templates == null || !_templates.isArray || _templates.arraySize == 0)
+            {
+                DrawMessageRow("Templates are missing.", true);
+            }
+
+            if (_layoutManager == null || _layoutManager.managedReferenceValue == null)
+            {
+                DrawMessageRow("Layout Manager is missing.", true);
+            }
+
+            if (recyclerView.GetComponent<Scroller>() == null)
+            {
+                DrawMessageRow("Scroller is missing.", true);
+            }
+
+            LayoutManager layoutManager = _layoutManager != null ? _layoutManager.managedReferenceValue as LayoutManager : null;
+            SerializedProperty variableLength = _layoutManager != null ? _layoutManager.FindPropertyRelative("variableItemLength") : null;
+            bool variable = variableLength != null && variableLength.boolValue;
+            if (variable && layoutManager != null && !layoutManager.SupportsVariableItemLength)
+            {
+                DrawMessageRow("Variable item length is only supported by Linear and Mixed layouts.", true);
+            }
+            else if (variable)
+            {
+                DrawMessageRow("Current layout is variable height.", false);
+            }
+            else
+            {
+                DrawMessageRow("Current layout is fixed height. Chat bubbles need Variable Item Length.", false);
+            }
+
+            DrawTemplateStretchWarnings();
+        }
+
+        private void DrawPlayModeOverlay(bool isPlaying)
+        {
+            if (!isPlaying)
+            {
+                return;
+            }
+
+            RecyclerView recyclerView = target as RecyclerView;
+            if (recyclerView == null)
+            {
+                return;
+            }
+
+            recyclerView.TryGetVisibleRange(out int start, out int end);
+            string range = start >= 0 ? start + "-" + end : "none";
+            string motion = recyclerView.Scroller != null ? recyclerView.Scroller.MotionKind.ToString() : "None";
+            DrawMessageRow(
+                $"Visible {range}  Scroll {recyclerView.ScrollDataIndex}  {motion}  {recyclerView.PoolStats}",
+                false);
+        }
+
+        private void RebuildScrollbarForDirection()
+        {
+            if (_scrollbarVisibility == null ||
+                (ScrollbarVisibility)_scrollbarVisibility.enumValueIndex == ScrollbarVisibility.AlwaysHide)
+            {
+                return;
+            }
+
+            if (_scrollbar.objectReferenceValue is Scrollbar oldBar && oldBar != null)
+            {
+                _scrollbar.objectReferenceValue = null;
+                Undo.DestroyObjectImmediate(oldBar.gameObject);
+            }
+
+            CreateScrollBar();
+        }
+
+        private void DrawVariableLengthWarning()
+        {
+            if (_layoutManager.managedReferenceValue is not LayoutManager layoutManager)
+            {
+                return;
+            }
+
+            SerializedProperty variableLength = _layoutManager.FindPropertyRelative("variableItemLength");
+            if (variableLength == null || !variableLength.boolValue)
+            {
+                return;
+            }
+
+            if (!layoutManager.SupportsVariableItemLength)
+            {
+                DrawMessageRow("Variable item length is only supported by Linear and Mixed layouts.", true);
+            }
+
+            DrawTemplateStretchWarnings();
+        }
+
+        private void DrawTemplateStretchWarnings()
+        {
+            if (_templates == null || !_templates.isArray || _direction == null)
+            {
+                return;
+            }
+
+            Direction direction = (Direction)_direction.enumValueIndex;
+            for (int i = 0; i < _templates.arraySize; i++)
+            {
+                SerializedProperty item = _templates.GetArrayElementAtIndex(i);
+                GameObject template = GetTemplateGameObject(item.objectReferenceValue);
+                if (template == null)
+                {
+                    continue;
+                }
+
+                RectTransform rect = template.GetComponent<RectTransform>();
+                if (rect != null && ItemMeasure.IsStretchedOnAxis(rect, direction))
+                {
+                    DrawMessageRow($"Template '{template.name}' is stretched on the scroll axis.", true);
+                }
+            }
+        }
 
         private void DrawManagedReferenceProperties(SerializedProperty property)
         {

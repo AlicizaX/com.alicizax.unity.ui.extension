@@ -275,8 +275,9 @@ public class UXCreateHelper : Editor
         const string prefabPath = "Packages/com.alicizax.unity.ui.extension/Editor/RecyclerView/Res/ScrollView.prefab";
         GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
         GameObject instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab, parent);
+        Undo.RegisterCreatedObjectUndo(instance, "Create UXScrollView");
         PrefabUtility.UnpackPrefabInstance(instance, PrefabUnpackMode.Completely, InteractionMode.UserAction);
-        instance.name = prefab.name + Random.Range(1, 1000);
+        instance.name = prefab.name;
         Selection.activeGameObject = instance;
     }
 

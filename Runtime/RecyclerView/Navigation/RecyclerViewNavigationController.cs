@@ -70,6 +70,7 @@ namespace AlicizaX.UI
                 recyclerView.OnScrollValueChanged += OnScrollValueChanged;
                 recyclerView.OnScrollStopped += OnScrollStopped;
                 recyclerView.OnNavigationDataChanged += NotifyDataSetChanged;
+                recyclerView.OnHolderRecycled += ForgetHolder;
             }
 
             SyncSuppressionState(true);
@@ -88,11 +89,27 @@ namespace AlicizaX.UI
                 recyclerView.OnScrollValueChanged -= OnScrollValueChanged;
                 recyclerView.OnScrollStopped -= OnScrollStopped;
                 recyclerView.OnNavigationDataChanged -= NotifyDataSetChanged;
+                recyclerView.OnHolderRecycled -= ForgetHolder;
             }
 
             UnregisterFromNavigationScope();
             ApplyVisibleNavigationFocus(false);
+            navigationFocusSnapshots.Clear();
             base.OnDisable();
+        }
+
+        protected override void OnDestroy()
+        {
+            navigationFocusSnapshots.Clear();
+            base.OnDestroy();
+        }
+
+        private void ForgetHolder(ViewHolder holder)
+        {
+            if (holder != null)
+            {
+                navigationFocusSnapshots.Remove(holder);
+            }
         }
 
         /// <summary>
@@ -406,7 +423,7 @@ namespace AlicizaX.UI
                 return 0;
             }
 
-            int current = recyclerView.CurrentScrollDataIndex;
+            int current = recyclerView.ScrollDataIndex;
             if (current >= 0)
             {
                 return current;
@@ -461,11 +478,11 @@ namespace AlicizaX.UI
 
             if (focusAlignment == ScrollAlignment.Start)
             {
-                recyclerView.ScrollTo(focusedDataIndex, smoothScroll);
+                recyclerView.ScrollToIndex(focusedDataIndex, smoothScroll);
                 return;
             }
 
-            recyclerView.ScrollToWithAlignment(focusedDataIndex, focusAlignment, 0f, smoothScroll, smoothScrollDuration);
+            recyclerView.ScrollToAligned(focusedDataIndex, focusAlignment, 0f, smoothScroll, smoothScrollDuration);
         }
 
         private MoveResult TryCalculateNextDataIndex(MoveDirection direction, int count, out int nextDataIndex)
@@ -810,7 +827,7 @@ namespace AlicizaX.UI
             }
         }
 
-        private void OnScrollStopped()
+        private void OnScrollStopped(ScrollStopReason reason)
         {
             if (hasFocus)
             {

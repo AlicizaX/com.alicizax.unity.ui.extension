@@ -6,9 +6,52 @@ namespace AlicizaX.UI
     [Serializable]
     public class LinearLayoutManager : LayoutManager
     {
+        [SerializeField] private bool variableItemLength;
+
         protected float lineHeight;
+        private readonly ItemOffsetTable offsetTable = new ItemOffsetTable();
+        private bool offsetTableDirty = true;
 
         public LinearLayoutManager() { }
+
+        public bool VariableItemLength
+        {
+            get => variableItemLength;
+            set
+            {
+                if (variableItemLength == value)
+                {
+                    return;
+                }
+
+                variableItemLength = value;
+                offsetTableDirty = true;
+            }
+        }
+
+        public override bool SupportsVariableItemLength => true;
+
+        public override void Release()
+        {
+            offsetTable.Release();
+            offsetTableDirty = true;
+        }
+
+        public override void InvalidateItemLengths()
+        {
+            offsetTableDirty = true;
+        }
+
+        public override bool ApplyMeasuredLength(int index, float length)
+        {
+            if (!variableItemLength)
+            {
+                return false;
+            }
+
+            RefreshOffsetTable();
+            return offsetTable.ReplaceLength(index, length);
+        }
 
         public override Vector2 CalculateContentSize()
         {
@@ -16,6 +59,8 @@ namespace AlicizaX.UI
             if (itemCount <= 0)
             {
                 lineHeight = 0f;
+                offsetTable.Release();
+                offsetTableDirty = true;
                 return direction == Direction.Vertical
                     ? new Vector2(contentSize.x, padding.y * 2)
                     : new Vector2(padding.x * 2, contentSize.y);
@@ -23,6 +68,14 @@ namespace AlicizaX.UI
 
             Vector2 size = viewProvider.CalculateViewSize(0);
             lineHeight = direction == Direction.Vertical ? size.y : size.x;
+            if (variableItemLength)
+            {
+                RefreshOffsetTable();
+                float total = offsetTable.TotalLength;
+                return direction == Direction.Vertical
+                    ? new Vector2(contentSize.x, total + padding.y * 2)
+                    : new Vector2(total + padding.x * 2, contentSize.y);
+            }
 
             float position;
             if (direction == Direction.Vertical)
@@ -36,18 +89,30 @@ namespace AlicizaX.UI
 
         public override Vector2 CalculatePosition(int index)
         {
-            float position;
-            if (direction == Direction.Vertical)
+            float position = GetItemStartPosition(index) - ScrollPosition;
+            return direction == Direction.Vertical
+                ? new Vector2(0, position + padding.y)
+                : new Vector2(position + padding.x, 0);
+        }
+
+        public override void Layout(ViewHolder viewHolder, int index)
+        {
+            if (variableItemLength)
             {
-                position = index * (lineHeight + spacing.y) - ScrollPosition;
-                return new Vector2(0, position + padding.y);
+                LayoutFromItemStart(viewHolder, index);
+                return;
             }
-            position = index * (lineHeight + spacing.x) - ScrollPosition;
-            return new Vector2(position + padding.x, 0);
+
+            base.Layout(viewHolder, index);
         }
 
         public override Vector2 CalculateContentOffset()
         {
+            if (variableItemLength)
+            {
+                return VariableStartContentOffset();
+            }
+
             if (lineHeight <= 0f)
             {
                 return Vector2.zero;
@@ -63,6 +128,11 @@ namespace AlicizaX.UI
 
         public override Vector2 CalculateViewportOffset()
         {
+            if (variableItemLength)
+            {
+                return Vector2.zero;
+            }
+
             if (lineHeight <= 0f)
             {
                 return Vector2.zero;
@@ -77,9 +147,17 @@ namespace AlicizaX.UI
 
         public override int GetStartIndex()
         {
-            if (adapter == null || adapter.GetItemCount() <= 0)
+            int itemCount = adapter != null ? adapter.GetItemCount() : 0;
+            if (itemCount <= 0)
             {
                 return 0;
+            }
+
+            if (variableItemLength)
+            {
+                RefreshOffsetTable();
+                int index = offsetTable.FindFirstEndingAfter(ScrollPosition);
+                return index >= 0 ? index : 0;
             }
 
             float len = direction == Direction.Vertical ? lineHeight + spacing.y : lineHeight + spacing.x;
@@ -88,96 +166,119 @@ namespace AlicizaX.UI
                 return 0;
             }
 
-            int index = Mathf.FloorToInt(ScrollPosition / len);
-            return Mathf.Max(0, index);
+            return Mathf.Max(0, Mathf.FloorToInt(ScrollPosition / len));
         }
 
         public override int GetEndIndex()
         {
-            if (adapter == null || adapter.GetItemCount() <= 0)
+            int itemCount = adapter != null ? adapter.GetItemCount() : 0;
+            if (itemCount <= 0)
             {
                 return -1;
             }
 
             float viewLength = direction == Direction.Vertical ? viewportSize.y : viewportSize.x;
+            if (variableItemLength)
+            {
+                RefreshOffsetTable();
+                int index = offsetTable.FindFirstEndingAfter(ScrollPosition + viewLength);
+                return index >= 0 ? Mathf.Min(index, itemCount - 1) : itemCount - 1;
+            }
+
             float len = direction == Direction.Vertical ? lineHeight + spacing.y : lineHeight + spacing.x;
             if (len <= 0f)
             {
-                return adapter.GetItemCount() - 1;
+                return itemCount - 1;
             }
 
-            int index = Mathf.FloorToInt((ScrollPosition + viewLength) / len);
-            return Mathf.Min(index, adapter.GetItemCount() - 1);
+            return Mathf.Min(Mathf.FloorToInt((ScrollPosition + viewLength) / len), itemCount - 1);
         }
 
         public override float IndexToPosition(int index)
         {
-            if (adapter == null || adapter.GetItemCount() <= 0 || index < 0 || index >= adapter.GetItemCount()) return 0;
+            int itemCount = adapter != null ? adapter.GetItemCount() : 0;
+            if (itemCount <= 0 || index < 0 || index >= itemCount)
+            {
+                return 0f;
+            }
 
-            float len, viewLength, position;
+            float start = GetItemStartPosition(index);
             if (direction == Direction.Vertical)
             {
-                len = index * (lineHeight + spacing.y);
-                viewLength = viewportSize.y;
-                position = len + viewLength > contentSize.y ? contentSize.y - viewportSize.y : len;
-            }
-            else
-            {
-                len = index * (lineHeight + spacing.x);
-                viewLength = viewportSize.x;
-                position = len + viewLength > contentSize.x ? contentSize.x - viewportSize.x : len;
+                return Mathf.Clamp(start, 0f, Mathf.Max(contentSize.y - viewportSize.y, 0f));
             }
 
-            return Mathf.Max(position, 0f);
+            return Mathf.Clamp(start, 0f, Mathf.Max(contentSize.x - viewportSize.x, 0f));
         }
 
         public override int PositionToIndex(float position)
         {
+            int itemCount = adapter != null ? adapter.GetItemCount() : 0;
+            if (itemCount <= 0)
+            {
+                return 0;
+            }
+
+            if (variableItemLength)
+            {
+                RefreshOffsetTable();
+                int index = offsetTable.FindFirstEndingAtOrAfter(position);
+                return index >= 0 ? index : itemCount - 1;
+            }
+
             float len = direction == Direction.Vertical ? lineHeight + spacing.y : lineHeight + spacing.x;
             if (len <= 0f)
             {
                 return 0;
             }
 
-            int index = Mathf.RoundToInt(position / len);
-
-            return index;
+            return Mathf.Clamp(Mathf.RoundToInt(position / len), 0, itemCount - 1);
         }
 
         public override float GetItemStartPosition(int index)
         {
-            if (adapter == null || adapter.GetItemCount() <= 0)
+            int itemCount = adapter != null ? adapter.GetItemCount() : 0;
+            if (itemCount <= 0)
             {
                 return 0f;
             }
 
-            index = Mathf.Clamp(index, 0, adapter.GetItemCount() - 1);
+            if (variableItemLength)
+            {
+                RefreshOffsetTable();
+                return offsetTable.PositionAt(index);
+            }
+
+            index = Mathf.Clamp(index, 0, itemCount - 1);
             float len = direction == Direction.Vertical ? lineHeight + spacing.y : lineHeight + spacing.x;
             return index * len;
         }
 
         public override float GetItemLength(int index)
         {
+            if (variableItemLength)
+            {
+                RefreshOffsetTable();
+                return offsetTable.LengthAt(index);
+            }
+
             return Mathf.Max(lineHeight, 0f);
         }
 
         public override int GetSnapIndex(float position)
         {
-            if (adapter == null || adapter.GetItemCount() <= 0)
+            int itemCount = adapter != null ? adapter.GetItemCount() : 0;
+            if (itemCount <= 0)
             {
                 return 0;
             }
 
-            float len = direction == Direction.Vertical ? lineHeight + spacing.y : lineHeight + spacing.x;
-            float itemLength = GetItemLength(0);
-            if (len <= 0f || itemLength <= 0f)
+            int index = PositionToIndex(Mathf.Max(position, 0f));
+            float itemLength = GetItemLength(index);
+            if (itemLength <= 0f)
             {
-                return 0;
+                return index;
             }
-
-            int itemCount = adapter.GetItemCount();
-            int index = Mathf.FloorToInt(Mathf.Max(position, 0f) / len);
-            index = Mathf.Clamp(index, 0, itemCount - 1);
 
             float visibleLength = itemLength - (position - GetItemStartPosition(index));
             if (visibleLength < itemLength * 0.5f && index < itemCount - 1)
@@ -186,6 +287,30 @@ namespace AlicizaX.UI
             }
 
             return index;
+        }
+
+        private void RefreshOffsetTable()
+        {
+            int itemCount = adapter != null ? adapter.GetItemCount() : 0;
+            float spacingValue = direction == Direction.Vertical ? spacing.y : spacing.x;
+            if (!offsetTableDirty && offsetTable.Matches(itemCount, spacingValue, direction))
+            {
+                return;
+            }
+
+            offsetTable.BeginWrite(itemCount);
+            for (int i = 0; i < itemCount; i++)
+            {
+                if (!adapter.TryGetDeclaredLength(i, out float length) || length <= 0f)
+                {
+                    length = lineHeight;
+                }
+
+                offsetTable.SetLength(i, length);
+            }
+
+            offsetTable.Build(spacingValue, direction);
+            offsetTableDirty = false;
         }
     }
 }

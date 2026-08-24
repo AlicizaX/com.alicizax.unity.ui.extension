@@ -47,6 +47,11 @@ namespace AlicizaX.UI
                 if (stack != null && stack.Count > 0)
                 {
                     T obj = stack.Pop();
+                    if (obj is ViewHolder pooled)
+                    {
+                        pooled.IsPooled = false;
+                    }
+
                     hitCount++;
                     TrackAllocate(templateId);
                     return obj;
@@ -97,8 +102,18 @@ namespace AlicizaX.UI
             factory.Reset(templateId, obj);
             TrackFree(templateId);
 
+            if (obj is ViewHolder viewHolder)
+            {
+                viewHolder.IsPooled = true;
+            }
+
             if (stack.Count >= maxSize)
             {
+                if (obj is ViewHolder overflow)
+                {
+                    overflow.IsPooled = false;
+                }
+
                 factory.Destroy(templateId, obj);
                 destroyCount++;
                 return;

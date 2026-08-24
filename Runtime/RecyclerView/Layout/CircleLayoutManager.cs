@@ -15,8 +15,10 @@ namespace AlicizaX.UI
         [SerializeField]
         private int maxVisibleItemCount = 32;
 
+        [SerializeField]
+        private float initialAngle;
+
         private float radius;
-        private float initalAngle;
         private float resolvedIntervalAngle;
 
         public override bool UsesVirtualLayoutRange => true;
@@ -61,7 +63,7 @@ namespace AlicizaX.UI
         {
             float angle = index * resolvedIntervalAngle;
             angle = circleDirection == CircleDirection.Positive ? angle : -angle;
-            angle += initalAngle + ScrollPosition;
+            angle += initialAngle + ScrollPosition;
             float radian = angle * (Mathf.PI / 180f);
             float x = radius * Mathf.Sin(radian);
             float y = radius * Mathf.Cos(radian);
@@ -165,9 +167,9 @@ namespace AlicizaX.UI
                     continue;
                 }
 
-                float angle = viewHolder.Index * resolvedIntervalAngle + initalAngle;
+                float angle = viewHolder.Index * resolvedIntervalAngle + initialAngle;
                 angle = circleDirection == CircleDirection.Positive ? angle + ScrollPosition : angle - ScrollPosition;
-                float delta = (angle - initalAngle) % 360;
+                float delta = (angle - initialAngle) % 360;
                 delta = delta < 0 ? delta + 360 : delta;
                 delta = delta > 180 ? 360 - delta : delta;
                 float step = Mathf.Max(resolvedIntervalAngle, 0.0001f);

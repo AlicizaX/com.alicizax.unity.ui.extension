@@ -112,12 +112,23 @@ namespace AlicizaX.UI
 
         public virtual bool UsesVirtualLayoutRange => false;
 
+        public virtual bool SupportsVariableItemLength => false;
+
         public LayoutManager()
         {
         }
 
         public virtual void Release()
         {
+        }
+
+        public virtual void InvalidateItemLengths()
+        {
+        }
+
+        public virtual bool ApplyMeasuredLength(int index, float length)
+        {
+            return false;
         }
 
         public void SetContentSize()
@@ -155,8 +166,31 @@ namespace AlicizaX.UI
         public virtual void Layout(ViewHolder viewHolder, int index)
         {
             Vector2 pos = CalculatePosition(index);
-            Vector3 position = direction == Direction.Vertical ? new Vector3(pos.x - contentOffset.x, -pos.y + contentOffset.y, 0) : new Vector3(pos.x - contentOffset.x, -pos.y + contentOffset.y, 0);
+            Vector3 position = new Vector3(pos.x - contentOffset.x, -pos.y + contentOffset.y, 0f);
             viewHolder.RectTransform.anchoredPosition3D = position;
+        }
+
+        protected void LayoutFromItemStart(ViewHolder viewHolder, int index)
+        {
+            Vector2 pos = CalculatePosition(index);
+            float itemLength = GetItemLength(index);
+            if (itemLength <= 0f)
+            {
+                itemLength = ItemMeasure.ReadAxisLength(viewHolder.RectTransform, direction);
+            }
+
+            float axisOffset = itemLength * 0.5f;
+            Vector3 position = direction == Direction.Vertical
+                ? new Vector3(pos.x - contentOffset.x, -pos.y + contentOffset.y - axisOffset, 0f)
+                : new Vector3(pos.x - contentOffset.x + axisOffset, -pos.y + contentOffset.y, 0f);
+            viewHolder.RectTransform.anchoredPosition3D = position;
+        }
+
+        protected Vector2 VariableStartContentOffset()
+        {
+            return direction == Direction.Vertical
+                ? new Vector2(0f, viewportSize.y * 0.5f)
+                : new Vector2(viewportSize.x * 0.5f, 0f);
         }
 
         public abstract Vector2 CalculateContentSize();

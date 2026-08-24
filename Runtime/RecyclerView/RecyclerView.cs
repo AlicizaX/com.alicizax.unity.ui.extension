@@ -59,6 +59,12 @@ namespace AlicizaX.UI
         /// </summary>
         [HideInInspector] [SerializeField] private bool snap;
 
+        [HideInInspector] [SerializeField, Min(0.01f)]
+        private float snapDuration = 0.12f;
+
+        [HideInInspector] [SerializeField]
+        private ListRefreshMode refreshMode = ListRefreshMode.Immediate;
+
         /// <summary>
         /// 是否启用惯性滑动。
         /// </summary>
@@ -149,9 +155,16 @@ namespace AlicizaX.UI
         private bool hasPendingScrollbarRatio;
 
         private float pendingScrollbarRatio;
+        private bool layoutDirty;
+        private bool visibleRangeDirty;
+        private bool applyingDeferredRefresh;
         private RectTransform cachedRectTransform;
         private Vector2 lastViewportSize;
         private bool hasLastViewportSize;
+#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
+        private RecyclerViewNavigationController cachedNavigationController;
+        private bool navigationControllerResolved;
+#endif
 
         /// <summary>
         /// 当前可见区间的起始布局索引。
@@ -186,9 +199,7 @@ namespace AlicizaX.UI
                 }
 
                 direction = value;
-                ApplyLayoutSettings();
-                RequestLayout();
-                Refresh();
+                MarkLayoutDirty();
             }
         }
 
@@ -206,9 +217,7 @@ namespace AlicizaX.UI
                 }
 
                 alignment = value;
-                ApplyLayoutSettings();
-                RequestLayout();
-                Refresh();
+                MarkLayoutDirty();
             }
         }
 
@@ -226,9 +235,7 @@ namespace AlicizaX.UI
                 }
 
                 spacing = value;
-                ApplyLayoutSettings();
-                RequestLayout();
-                Refresh();
+                MarkLayoutDirty();
             }
         }
 
@@ -246,9 +253,7 @@ namespace AlicizaX.UI
                 }
 
                 padding = value;
-                ApplyLayoutSettings();
-                RequestLayout();
-                Refresh();
+                MarkLayoutDirty();
             }
         }
 
@@ -288,11 +293,10 @@ namespace AlicizaX.UI
                 if (scroller != null)
                 {
                     scroller.WheelSpeed = wheelSpeed;
-                    scroller.Snap = snap;
                     UpdateScrollerState();
                 }
 
-                RequestLayout();
+                MarkLayoutDirty();
             }
         }
 
@@ -307,13 +311,19 @@ namespace AlicizaX.UI
                 if (snap == value) return;
                 snap = value;
 
-                if (scroller != null)
-                {
-                    scroller.Snap = snap;
-                }
-
-                // 如需在启用吸附后立即校正位置，可在此触发最近项吸附。
             }
+        }
+
+        public float SnapDuration
+        {
+            get => snapDuration;
+            set => snapDuration = Mathf.Max(0.01f, value);
+        }
+
+        public ListRefreshMode RefreshMode
+        {
+            get => refreshMode;
+            set => refreshMode = value;
         }
 
         /// <summary>
@@ -398,7 +408,7 @@ namespace AlicizaX.UI
             {
                 if (scrollbarVisibility == value) return;
                 scrollbarVisibility = value;
-                RequestLayout();
+                MarkLayoutDirty();
             }
         }
 
@@ -408,44 +418,14 @@ namespace AlicizaX.UI
         #region 公共属性 - 组件引用
 
         /// <summary>
-        /// 获取或设置用于创建列表项的模板集合。
+        /// 列表项模板。只允许在编辑期配置，运行期禁止更换。
         /// </summary>
-        public ViewHolder[] Templates
-        {
-            get => templates;
-            set => templates = value;
-        }
+        public ViewHolder[] Templates => templates;
 
         /// <summary>
-        /// 获取内容节点；未显式指定时会尝试从首个子节点推断。
+        /// 获取内容节点。必须在 Inspector 中显式指定。
         /// </summary>
-        public RectTransform Content
-        {
-            get
-            {
-                if (content == null)
-                {
-                    if (transform.childCount == 0)
-                    {
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-                        Log.Error("RecyclerView content is missing.");
-#endif
-                        return null;
-                    }
-
-                    content = transform.GetChild(0).GetComponent<RectTransform>();
-                    if (content == null)
-                    {
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-                        Log.Error("RecyclerView content RectTransform is missing.");
-#endif
-                        return null;
-                    }
-                }
-
-                return content;
-            }
-        }
+        public RectTransform Content => content;
 
         /// <summary>
         /// 获取当前绑定的滚动条组件。
@@ -457,28 +437,11 @@ namespace AlicizaX.UI
         /// </summary>
         public Scroller Scroller => scroller;
 
-        /// <summary>
-        /// 获取视图提供器；首次访问时根据模板数量自动创建。
-        /// </summary>
         internal ViewProvider ViewProvider
         {
             get
             {
-                if (viewProvider == null)
-                {
-                    if (templates == null || templates.Length == 0)
-                    {
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-                        Log.Error("RecyclerView templates are missing.");
-#endif
-                        return null;
-                    }
-
-                    viewProvider = templates.Length > 1
-                        ? new MixedViewProvider(this, templates)
-                        : new SimpleViewProvider(this, templates);
-                }
-
+                BindViewProvider();
                 return viewProvider;
             }
         }
@@ -512,7 +475,7 @@ namespace AlicizaX.UI
         /// </summary>
         internal IAdapter RecyclerViewAdapter { get; private set; }
 
-        internal int CurrentScrollDataIndex => currentScrollDataIndex;
+        public int ScrollDataIndex => currentScrollDataIndex;
 
         #endregion
 
@@ -521,19 +484,22 @@ namespace AlicizaX.UI
         /// <summary>
         /// 当滚动位置发生变化时触发。
         /// </summary>
-        public Action<float> OnScrollValueChanged;
+        public event Action<float> OnScrollValueChanged;
 
         /// <summary>
         /// 当滚动停止时触发。
         /// </summary>
-        public Action OnScrollStopped;
+        public event Action<ScrollStopReason> OnScrollStopped;
 
         /// <summary>
         /// 当拖拽状态变化时触发。
         /// </summary>
-        public Action<bool> OnScrollDraggingChanged;
+        public event Action<bool> OnScrollDraggingChanged;
+
+        public event Action<int, float> OnItemResized;
 #if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
-        internal Action OnNavigationDataChanged;
+        internal event Action OnNavigationDataChanged;
+        internal event Action<ViewHolder> OnHolderRecycled;
 #endif
 
         #endregion
@@ -560,6 +526,15 @@ namespace AlicizaX.UI
         private void LateUpdate()
         {
             ProcessPendingScrollbarRatio();
+            FlushDeferredWork();
+        }
+
+        private void OnDisable()
+        {
+            applyingDeferredRefresh = false;
+            layoutDirty = false;
+            visibleRangeDirty = false;
+            ResetItemPresentation();
         }
 
         private void OnRectTransformDimensionsChange()
@@ -569,13 +544,12 @@ namespace AlicizaX.UI
                 return;
             }
 
-            if (!Application.isPlaying || !isValid || RecyclerViewAdapter == null)
+            if (!Application.isPlaying || !IsReady)
             {
                 return;
             }
 
-            RequestLayout();
-            Refresh();
+            MarkLayoutDirty();
         }
 
         private void OnDestroy()
@@ -583,7 +557,7 @@ namespace AlicizaX.UI
             if (scroller != null)
             {
                 scroller.OnValueChanged -= OnScrollChanged;
-                scroller.OnMoveStoped -= OnMoveStoped;
+                scroller.OnMoveStopped -= OnMoveStopped;
                 scroller.OnDragging -= OnScrollerDraggingChanged;
             }
 
@@ -629,20 +603,9 @@ namespace AlicizaX.UI
 
             if (content == null)
             {
-                if (transform.childCount == 0)
-                {
-                    LogValidationError("RecyclerView content is missing.");
-                    isValid = false;
-                    return;
-                }
-
-                content = transform.GetChild(0).GetComponent<RectTransform>();
-                if (content == null)
-                {
-                    LogValidationError("RecyclerView content RectTransform is missing.");
-                    isValid = false;
-                    return;
-                }
+                LogValidationError("RecyclerView content is missing.");
+                isValid = false;
+                return;
             }
 
             if (templates == null || templates.Length == 0)
@@ -661,7 +624,26 @@ namespace AlicizaX.UI
                     isValid = false;
                     return;
                 }
+
+                if (ItemMeasure.IsStretchedOnAxis(template.RectTransform, direction))
+                {
+                    LogValidationError("RecyclerView template is stretched on the scroll axis.");
+                    isValid = false;
+                    return;
+                }
             }
+
+            if (UsesVariableItemLength(layoutManager) && !layoutManager.SupportsVariableItemLength)
+            {
+                LogValidationError("Current layout manager does not support variable item length.");
+                isValid = false;
+            }
+        }
+
+        private static bool UsesVariableItemLength(LayoutManager manager)
+        {
+            return manager is LinearLayoutManager linear && linear.VariableItemLength ||
+                   manager is MixedLayoutManager mixed && mixed.VariableItemLength;
         }
 
         private void LogValidationError(string message)
@@ -677,6 +659,20 @@ namespace AlicizaX.UI
 #endif
         }
 
+        internal void ApplySerializedScrollerSettings()
+        {
+            if (scroller == null)
+            {
+                return;
+            }
+
+            scroller.ScrollSpeed = scrollSpeed;
+            scroller.WheelSpeed = wheelSpeed;
+            scroller.MovementType = movementType;
+            scroller.Inertia = inertia;
+            scroller.DecelerationRate = decelerationRate;
+        }
+
         /// <summary>
         /// 配置滚动器参数并注册滚动回调。
         /// </summary>
@@ -684,14 +680,9 @@ namespace AlicizaX.UI
         {
             if (scroller == null) return;
 
-            scroller.ScrollSpeed = scrollSpeed;
-            scroller.WheelSpeed = wheelSpeed;
-            scroller.Snap = snap;
-            scroller.MovementType = movementType;
-            scroller.Inertia = inertia;
-            scroller.DecelerationRate = decelerationRate;
+            ApplySerializedScrollerSettings();
             scroller.OnValueChanged += OnScrollChanged;
-            scroller.OnMoveStoped += OnMoveStoped;
+            scroller.OnMoveStopped += OnMoveStopped;
             scroller.OnDragging += OnScrollerDraggingChanged;
             UpdateScrollerState();
         }
@@ -749,10 +740,20 @@ namespace AlicizaX.UI
                 return;
             }
 
-            viewProvider?.Clear();
+            if (RecyclerViewAdapter != null)
+            {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                Log.Error("RecyclerView adapter cannot be changed at runtime.");
+#endif
+                return;
+            }
+
             RecyclerViewAdapter = adapter;
-            ViewProvider.Adapter = adapter;
-            ViewProvider.LayoutManager = layoutManager;
+            BindViewProvider();
+            if (viewProvider == null)
+            {
+                return;
+            }
 
             layoutManager.RecyclerView = this;
             layoutManager.Adapter = adapter;
@@ -764,16 +765,25 @@ namespace AlicizaX.UI
         }
 
         /// <summary>
-        /// 重置视图池、滚动位置与当前索引状态。
+        /// 重置视图池。默认保留当前滚动像素；ResetScroll 才回到顶部。
         /// </summary>
-        internal void Reset()
+        internal void Reset(ListScrollPolicy scrollPolicy = ListScrollPolicy.KeepAnchor)
         {
-            if (!isValid)
+            if (!IsReady)
             {
                 return;
             }
 
+            layoutDirty = false;
+            visibleRangeDirty = false;
             viewProvider?.Reset();
+            startIndex = 0;
+            endIndex = -1;
+
+            if (scrollPolicy != ListScrollPolicy.ResetScroll)
+            {
+                return;
+            }
 
             if (scroller != null)
             {
@@ -785,8 +795,6 @@ namespace AlicizaX.UI
                 scrollbar.SetValueWithoutNotify(0);
             }
 
-            startIndex = 0;
-            endIndex = -1;
             currentScrollDataIndex = -1;
         }
 
@@ -804,44 +812,88 @@ namespace AlicizaX.UI
         /// </summary>
         internal void Refresh()
         {
-            if (!isValid)
-            {
-                return;
-            }
-
-            ViewProvider.Clear();
-            if (layoutManager == null || RecyclerViewAdapter == null || RecyclerViewAdapter.GetItemCount() <= 0)
-            {
-                startIndex = 0;
-                endIndex = -1;
-                return;
-            }
-
-            startIndex = layoutManager.GetStartIndex();
-            endIndex = layoutManager.GetEndIndex();
-            if (!layoutManager.UsesVirtualLayoutRange)
-            {
-                startIndex = Mathf.Max(0, startIndex);
-            }
-
-            endIndex = NormalizeRangeEnd(startIndex, endIndex, Mathf.Max(1, layoutManager.Unit));
-            if (endIndex < startIndex)
-            {
-                return;
-            }
-
-            for (int i = startIndex; i <= endIndex; i += layoutManager.Unit)
-            {
-                ViewProvider.CreateViewHolder(i);
-            }
-
-            layoutManager.DoItemAnimation();
+            MarkVisibleRangeDirty();
         }
 
         /// <summary>
         /// 重新计算内容尺寸、滚动能力与对象池预热状态。
         /// </summary>
         internal void RequestLayout()
+        {
+            MarkLayoutDirty();
+        }
+
+        #endregion
+
+        private bool IsReady => isValid && layoutManager != null && RecyclerViewAdapter != null && viewProvider != null;
+
+        private bool NeedsMixedProvider =>
+            (RecyclerViewAdapter != null && RecyclerViewAdapter.UsesMultipleTemplates) ||
+            layoutManager is MixedLayoutManager ||
+            (templates != null && templates.Length > 1);
+
+        private void BindViewProvider()
+        {
+            if (viewProvider != null || templates == null || templates.Length == 0)
+            {
+                return;
+            }
+
+            viewProvider = NeedsMixedProvider
+                ? new MixedViewProvider(this, templates)
+                : new SimpleViewProvider(this, templates);
+            viewProvider.Adapter = RecyclerViewAdapter;
+            viewProvider.LayoutManager = layoutManager;
+        }
+
+        private bool ShouldDeferRefresh =>
+            refreshMode == ListRefreshMode.AfterSettle &&
+            scroller != null &&
+            (scroller.IsDragging || scroller.IsMoving);
+
+        private void MarkLayoutDirty()
+        {
+            layoutDirty = true;
+            visibleRangeDirty = true;
+            if (!ShouldDeferRefresh)
+            {
+                FlushDeferredWork();
+            }
+        }
+
+        private void MarkVisibleRangeDirty()
+        {
+            visibleRangeDirty = true;
+            if (!ShouldDeferRefresh)
+            {
+                FlushDeferredWork();
+            }
+        }
+
+        private void FlushDeferredWork()
+        {
+            if (applyingDeferredRefresh || (!layoutDirty && !visibleRangeDirty))
+            {
+                return;
+            }
+
+            applyingDeferredRefresh = true;
+            if (layoutDirty)
+            {
+                layoutDirty = false;
+                ApplyLayoutNow();
+            }
+
+            if (visibleRangeDirty)
+            {
+                visibleRangeDirty = false;
+                RebuildVisibleHolders();
+            }
+
+            applyingDeferredRefresh = false;
+        }
+
+        private void ApplyLayoutNow()
         {
             if (!isValid)
             {
@@ -867,15 +919,80 @@ namespace AlicizaX.UI
             scroller.Direction = direction;
             scroller.ViewSize = layoutManager.ViewportSize;
             scroller.ContentSize = layoutManager.ContentSize;
-            scroller.Position = scroller.ClampPosition(scroller.Position);
-            viewProvider?.PreparePool();
+            if (scroller.IsPositionInBounds || movementType == MovementType.Clamped)
+            {
+                scroller.Position = scroller.ClampPosition(scroller.Position);
+            }
 
+            viewProvider?.PreparePool();
             UpdateScrollerState();
             UpdateScrollbarVisibility();
             UpdateScrollbarValue(scroller.Position);
         }
 
-        #endregion
+        private void RebuildVisibleHolders()
+        {
+            if (!IsReady)
+            {
+                startIndex = 0;
+                endIndex = -1;
+                return;
+            }
+
+            viewProvider.Clear();
+            if (RecyclerViewAdapter.GetItemCount() <= 0)
+            {
+                startIndex = 0;
+                endIndex = -1;
+                return;
+            }
+
+            startIndex = layoutManager.GetStartIndex();
+            endIndex = layoutManager.GetEndIndex();
+            if (!layoutManager.UsesVirtualLayoutRange)
+            {
+                startIndex = Mathf.Max(0, startIndex);
+            }
+
+            endIndex = NormalizeRangeEnd(startIndex, endIndex, Mathf.Max(1, layoutManager.Unit));
+            if (endIndex < startIndex)
+            {
+                return;
+            }
+
+            for (int i = startIndex; i <= endIndex; i += layoutManager.Unit)
+            {
+                viewProvider.CreateViewHolder(i);
+            }
+
+            if (UsesVariableItemLength(layoutManager))
+            {
+                UpdateVisibleRange();
+                layoutManager.UpdateLayout();
+            }
+
+            layoutManager.DoItemAnimation();
+        }
+
+        private void ResetItemPresentation()
+        {
+            if (viewProvider == null)
+            {
+                return;
+            }
+
+            int visibleCount = viewProvider.VisibleCount;
+            for (int i = 0; i < visibleCount; i++)
+            {
+                ViewHolder viewHolder = viewProvider.GetVisibleViewHolder(i);
+                if (viewHolder == null)
+                {
+                    continue;
+                }
+
+                viewHolder.RectTransform.localScale = Vector3.one;
+            }
+        }
 
         private void ApplyLayoutSettings()
         {
@@ -931,7 +1048,7 @@ namespace AlicizaX.UI
         /// </summary>
         /// <param name="index">目标数据索引。</param>
         /// <param name="smooth">是否使用平滑滚动。</param>
-        public void ScrollTo(int index, bool smooth = false)
+        public void ScrollToIndex(int index, bool smooth = false)
         {
             if (!TryResolveScrollTarget(index, out int layoutIndex, out int dataIndex))
             {
@@ -942,10 +1059,85 @@ namespace AlicizaX.UI
 
             if (!smooth)
             {
-                Refresh();
+                RebuildVisibleHolders();
             }
 
             SetCurrentScrollDataIndex(dataIndex);
+        }
+
+        public bool IsAtEnd => scroller != null && scroller.Position >= scroller.MaxPosition - 0.5f;
+
+        public bool IsScrolling => scroller != null && (scroller.IsDragging || scroller.IsMoving);
+
+        public void StickToEnd(bool smooth = false)
+        {
+            if (scroller == null)
+            {
+                return;
+            }
+
+            scroller.ScrollTo(scroller.MaxPosition, smooth);
+            if (!smooth)
+            {
+                RebuildVisibleHolders();
+            }
+        }
+
+        public void StopScroll()
+        {
+            scroller?.StopMovement(ScrollStopReason.Interrupted);
+        }
+
+        public bool TryGetVisibleRange(out int startDataIndex, out int endDataIndex)
+        {
+            startDataIndex = -1;
+            endDataIndex = -1;
+            if (!IsReady || viewProvider.VisibleCount <= 0)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < viewProvider.VisibleCount; i++)
+            {
+                ViewHolder holder = viewProvider.GetVisibleViewHolder(i);
+                if (holder == null || holder.DataIndex < 0)
+                {
+                    continue;
+                }
+
+                if (startDataIndex < 0 || holder.DataIndex < startDataIndex)
+                {
+                    startDataIndex = holder.DataIndex;
+                }
+
+                if (holder.DataIndex > endDataIndex)
+                {
+                    endDataIndex = holder.DataIndex;
+                }
+            }
+
+            return startDataIndex >= 0;
+        }
+
+        public bool TryGetViewHolder(int dataIndex, out ViewHolder viewHolder)
+        {
+            viewHolder = null;
+            if (!IsReady || dataIndex < 0)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < viewProvider.VisibleCount; i++)
+            {
+                ViewHolder holder = viewProvider.GetVisibleViewHolder(i);
+                if (holder != null && holder.DataIndex == dataIndex)
+                {
+                    viewHolder = holder;
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -956,7 +1148,7 @@ namespace AlicizaX.UI
         /// <param name="offset">在对齐基础上的额外偏移量。</param>
         /// <param name="smooth">是否使用平滑滚动。</param>
         /// <param name="duration">平滑滚动时长，单位为秒。</param>
-        internal void ScrollToWithAlignment(int index, ScrollAlignment alignment, float offset = 0f, bool smooth = false, float duration = 0.3f)
+        public void ScrollToAligned(int index, ScrollAlignment alignment, float offset = 0f, bool smooth = false, float duration = 0.3f)
         {
             if (!TryResolveScrollTarget(index, out int layoutIndex, out int dataIndex))
             {
@@ -977,7 +1169,7 @@ namespace AlicizaX.UI
 
             if (!smooth)
             {
-                Refresh();
+                RebuildVisibleHolders();
             }
 
             SetCurrentScrollDataIndex(dataIndex);
@@ -1056,7 +1248,7 @@ namespace AlicizaX.UI
         /// <param name="position">当前滚动位置。</param>
         private void OnScrollChanged(float position)
         {
-            if (!isValid || layoutManager == null || RecyclerViewAdapter == null || viewProvider == null)
+            if (!IsReady)
             {
                 return;
             }
@@ -1115,15 +1307,17 @@ namespace AlicizaX.UI
 
             scroller.Position = targetPosition;
             position = targetPosition;
+            UpdateVisibleRange();
+            layoutManager.UpdateLayout();
             return true;
         }
 
         /// <summary>
         /// Handles scroller stop events and snap behavior.
         /// </summary>
-        private void OnMoveStoped()
+        private void OnMoveStopped(ScrollStopReason reason)
         {
-            HandleScrollSettled();
+            HandleScrollSettled(reason);
         }
 
         /// <summary>
@@ -1162,7 +1356,7 @@ namespace AlicizaX.UI
             if (scroller == null) return;
 
             ProcessPendingScrollbarRatio();
-            HandleScrollSettled();
+            HandleScrollSettled(ScrollStopReason.Completed);
         }
 
         #endregion
@@ -1572,19 +1766,20 @@ namespace AlicizaX.UI
                 return false;
             }
 
-            scroller.ScrollToDuration(targetPosition, 0.12f);
+            scroller.ScrollToDuration(targetPosition, snapDuration);
             return true;
         }
 
-        private void HandleScrollSettled()
+        private void HandleScrollSettled(ScrollStopReason reason)
         {
-            if (snap && SnapToNearestItem())
+            if (reason == ScrollStopReason.Completed && snap && SnapToNearestItem())
             {
                 return;
             }
 
+            FlushDeferredWork();
             UpdateCurrentScrollDataIndexFromScrollPosition();
-            OnScrollStopped?.Invoke();
+            OnScrollStopped?.Invoke(reason);
         }
 
         private void UpdateCurrentScrollDataIndexFromScrollPosition()
@@ -1644,6 +1839,80 @@ namespace AlicizaX.UI
         /// </summary>
         /// <param name="dataIndex">要重绑的数据索引。</param>
         /// <returns>实际完成重绑的持有者数量。</returns>
+        internal int RelayoutDataIndex(int dataIndex)
+        {
+            return RelayoutDataRange(dataIndex, 1);
+        }
+
+        internal int RelayoutDataRange(int startDataIndex, int count)
+        {
+            if (!IsReady || count <= 0)
+            {
+                return 0;
+            }
+
+            int rebound = viewProvider.RebindVisibleDataRange(startDataIndex, count);
+            if (rebound <= 0 && UsesVariableItemLength(layoutManager))
+            {
+                layoutManager.InvalidateItemLengths();
+                ApplyLayoutNow();
+                layoutManager.UpdateLayout();
+            }
+
+            return rebound;
+        }
+
+        internal void MeasureBoundHolder(ViewHolder viewHolder)
+        {
+            if (!IsReady || viewHolder == null || !UsesVariableItemLength(layoutManager))
+            {
+                return;
+            }
+
+            float length = ItemMeasure.MeasureBound(viewHolder.RectTransform, direction);
+            if (length > 0f)
+            {
+                RectTransform rect = viewHolder.RectTransform;
+                rect.SetSizeWithCurrentAnchors(
+                    direction == Direction.Horizontal ? RectTransform.Axis.Horizontal : RectTransform.Axis.Vertical,
+                    length);
+            }
+
+            ApplyMeasuredLength(viewHolder.Index, length);
+        }
+
+        private void ApplyMeasuredLength(int layoutIndex, float length)
+        {
+            if (layoutIndex < 0 || length < 0f)
+            {
+                return;
+            }
+
+            VisualAnchor anchor = CaptureVisualAnchor();
+            if (!layoutManager.ApplyMeasuredLength(layoutIndex, length))
+            {
+                return;
+            }
+
+            ApplyLayoutSettings();
+            layoutManager.SetContentSize();
+            if (scroller != null)
+            {
+                scroller.ContentSize = layoutManager.ContentSize;
+            }
+
+            RestoreVisualAnchor(anchor, true);
+            if (scroller != null)
+            {
+                UpdateScrollbarVisibility();
+                UpdateScrollbarValue(scroller.Position);
+            }
+            OnItemResized?.Invoke(layoutManager.GetDataIndex(layoutIndex), length);
+#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
+            NotifyNavigationDataChanged();
+#endif
+        }
+
         internal int RebindVisibleDataIndex(int dataIndex)
         {
             if (RecyclerViewAdapter == null || viewProvider == null)
@@ -1672,29 +1941,76 @@ namespace AlicizaX.UI
             return viewProvider != null ? viewProvider.ApplyVisibleSelection(dataIndex, selected) : 0;
         }
 
-        /// <summary>
-        /// 结构插入：可见区外/前做 index 平移；区内回退到可见区重建。Loop 全量刷新。
-        /// 调用前 Adapter 数据源必须已更新。
-        /// </summary>
+        internal void NotifyHolderRecycled(ViewHolder viewHolder)
+        {
+#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
+            OnHolderRecycled?.Invoke(viewHolder);
+#endif
+        }
+
         internal void ApplyItemsInserted(int index, int count)
         {
-            if (!isValid || count <= 0 || layoutManager == null || RecyclerViewAdapter == null)
+            ApplyStructureChange(index, count, true);
+        }
+
+        internal void ApplyItemsRemoved(int index, int count)
+        {
+            ApplyStructureChange(index, count, false);
+        }
+
+        internal void ApplyItemsMoved(int fromIndex, int toIndex)
+        {
+            if (!IsReady || fromIndex == toIndex || fromIndex < 0 || toIndex < 0)
             {
                 return;
             }
 
+            VisualAnchor anchor = CaptureVisualAnchor();
+            ApplyLayoutNow();
+            RebuildVisibleHolders();
+            RestoreVisualAnchor(anchor, true);
+        }
+
+        private void ApplyStructureChange(int index, int count, bool inserted)
+        {
+            if (!IsReady || count <= 0)
+            {
+                return;
+            }
+
+            VisualAnchor anchor = CaptureVisualAnchor();
+            if (inserted && index >= RecyclerViewAdapter.GetItemCount() - count && IsPinnedToEnd())
+            {
+                anchor.StickToEnd = true;
+            }
+
+            AdjustAnchorForStructureChange(ref anchor, index, count, inserted);
             if (IsLoopingAdapter())
             {
-                RequestLayout();
-                Refresh();
+                ApplyLayoutNow();
+                RebuildVisibleHolders();
+                RestoreVisualAnchor(anchor, true);
                 return;
             }
 
-            RequestLayout();
-
-            if (viewProvider == null || viewProvider.VisibleCount <= 0 || endIndex < startIndex)
+            if (inserted)
             {
-                Refresh();
+                ApplyInsertedHolders(index, count);
+            }
+            else
+            {
+                ApplyRemovedHolders(index, count);
+            }
+
+            RestoreVisualAnchor(anchor, true);
+        }
+
+        private void ApplyInsertedHolders(int index, int count)
+        {
+            ApplyLayoutNow();
+            if (viewProvider.VisibleCount <= 0 || endIndex < startIndex || layoutManager.Unit > 1)
+            {
+                RebuildVisibleHolders();
                 return;
             }
 
@@ -1715,29 +2031,20 @@ namespace AlicizaX.UI
                 return;
             }
 
-            // 插入点落在可见区内：重建可见区（Grid unit>1 时补洞不安全）
-            Refresh();
+            viewProvider.ShiftIndexesFrom(index, count);
+            endIndex += count;
+            for (int i = 0; i < count; i++)
+            {
+                viewProvider.CreateViewHolder(index + i);
+            }
+
+            UpdateVisibleRange();
+            layoutManager.UpdateLayout();
         }
 
-        /// <summary>
-        /// 结构删除：回收区间内可见项并平移后续 index。Loop 全量刷新。
-        /// 调用前 Adapter 数据源必须已更新。
-        /// </summary>
-        internal void ApplyItemsRemoved(int index, int count)
+        private void ApplyRemovedHolders(int index, int count)
         {
-            if (!isValid || count <= 0 || layoutManager == null || RecyclerViewAdapter == null)
-            {
-                return;
-            }
-
-            if (IsLoopingAdapter())
-            {
-                RequestLayout();
-                Refresh();
-                return;
-            }
-
-            if (viewProvider != null && viewProvider.VisibleCount > 0 && endIndex >= startIndex)
+            if (viewProvider.VisibleCount > 0 && endIndex >= startIndex)
             {
                 viewProvider.RecycleLayoutRange(index, index + count);
                 viewProvider.ShiftIndexesFrom(index, -count);
@@ -1762,10 +2069,10 @@ namespace AlicizaX.UI
                 }
             }
 
-            RequestLayout();
+            ApplyLayoutNow();
             if (RecyclerViewAdapter.GetItemCount() <= 0)
             {
-                viewProvider?.Clear();
+                viewProvider.Clear();
                 startIndex = 0;
                 endIndex = -1;
                 return;
@@ -1773,6 +2080,130 @@ namespace AlicizaX.UI
 
             UpdateVisibleRange();
             layoutManager.UpdateLayout();
+        }
+
+        private struct VisualAnchor
+        {
+            public bool Valid;
+            public bool StickToEnd;
+            public int DataIndex;
+            public float ItemOffset;
+        }
+
+        private VisualAnchor CaptureVisualAnchor()
+        {
+            VisualAnchor anchor = default;
+            if (!IsReady || RecyclerViewAdapter.GetItemCount() <= 0 || scroller == null)
+            {
+                return anchor;
+            }
+
+            float position = scroller.Position;
+            ViewHolder holder = FirstVisibleHolder();
+            if (holder == null)
+            {
+                return anchor;
+            }
+
+            anchor.Valid = true;
+            anchor.StickToEnd = IsPinnedToEnd();
+            anchor.DataIndex = holder.DataIndex;
+            anchor.ItemOffset = position - layoutManager.GetItemStartPosition(holder.Index);
+            return anchor;
+        }
+
+        private ViewHolder FirstVisibleHolder()
+        {
+            if (viewProvider == null || viewProvider.VisibleCount <= 0)
+            {
+                return null;
+            }
+
+            ViewHolder first = null;
+            for (int i = 0; i < viewProvider.VisibleCount; i++)
+            {
+                ViewHolder holder = viewProvider.GetVisibleViewHolder(i);
+                if (holder == null || holder.DataIndex < 0)
+                {
+                    continue;
+                }
+
+                if (first == null || holder.Index < first.Index)
+                {
+                    first = holder;
+                }
+            }
+
+            return first;
+        }
+
+        private bool IsPinnedToEnd()
+        {
+            return scroller != null && scroller.Position >= scroller.MaxPosition - 0.5f;
+        }
+
+        private static void AdjustAnchorForStructureChange(ref VisualAnchor anchor, int index, int count, bool inserted)
+        {
+            if (!anchor.Valid || anchor.StickToEnd || count <= 0)
+            {
+                return;
+            }
+
+            if (inserted)
+            {
+                if (index <= anchor.DataIndex)
+                {
+                    anchor.DataIndex += count;
+                }
+
+                return;
+            }
+
+            if (anchor.DataIndex >= index && anchor.DataIndex < index + count)
+            {
+                anchor.DataIndex = index;
+                anchor.ItemOffset = 0f;
+                return;
+            }
+
+            if (anchor.DataIndex >= index + count)
+            {
+                anchor.DataIndex -= count;
+            }
+        }
+
+        private void RestoreVisualAnchor(VisualAnchor anchor, bool updateVisibleRange)
+        {
+            if (!anchor.Valid || scroller == null || !IsReady || RecyclerViewAdapter.GetItemCount() <= 0)
+            {
+                return;
+            }
+
+            float target;
+            if (anchor.StickToEnd)
+            {
+                target = scroller.MaxPosition;
+            }
+            else
+            {
+                int layoutIndex = layoutManager.GetLayoutIndex(anchor.DataIndex);
+                target = layoutManager.GetItemStartPosition(layoutIndex) + anchor.ItemOffset;
+                if (scroller.IsPositionInBounds || movementType == MovementType.Clamped)
+                {
+                    target = scroller.ClampPosition(target);
+                }
+            }
+
+            if (!Mathf.Approximately(scroller.Position, target))
+            {
+                scroller.Position = target;
+            }
+
+            if (updateVisibleRange)
+            {
+                UpdateVisibleRange();
+                layoutManager.UpdateLayout();
+            }
         }
 
         private bool IsLoopingAdapter()
@@ -1791,6 +2222,20 @@ namespace AlicizaX.UI
         internal void NotifyNavigationDataChanged()
         {
             OnNavigationDataChanged?.Invoke();
+        }
+
+        internal RecyclerViewNavigationController NavigationController
+        {
+            get
+            {
+                if (!navigationControllerResolved)
+                {
+                    cachedNavigationController = GetComponent<RecyclerViewNavigationController>();
+                    navigationControllerResolved = true;
+                }
+
+                return cachedNavigationController;
+            }
         }
 
 #endif

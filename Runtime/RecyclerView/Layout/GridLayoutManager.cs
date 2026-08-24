@@ -34,11 +34,11 @@ namespace AlicizaX.UI
             if (direction == Direction.Vertical)
             {
                 len = row * (cellSize.y + spacing.y) - spacing.y;
-                return new Vector2(contentSize.x, len + padding.y * 2);
+                return new Vector2(viewportSize.x, len + padding.y * 2);
             }
 
             len = row * (cellSize.x + spacing.x) - spacing.x;
-            return new Vector2(len + padding.x * 2, contentSize.y);
+            return new Vector2(len + padding.x * 2, viewportSize.y);
         }
 
         public override Vector2 CalculatePosition(int index)
@@ -67,18 +67,7 @@ namespace AlicizaX.UI
                 return Vector2.zero;
             }
 
-            float width, height;
-            if (alignment == Alignment.Center)
-            {
-                width = Mathf.Min(contentSize.x, viewportSize.x);
-                height = Mathf.Min(contentSize.y, viewportSize.y);
-            }
-            else
-            {
-                width = viewportSize.x;
-                height = viewportSize.y;
-            }
-            return new Vector2((width - cellSize.x) / 2, (height - cellSize.y) / 2);
+            return new Vector2((viewportSize.x - cellSize.x) * 0.5f, (viewportSize.y - cellSize.y) * 0.5f);
         }
 
         public override Vector2 CalculateViewportOffset()
@@ -88,18 +77,7 @@ namespace AlicizaX.UI
                 return Vector2.zero;
             }
 
-            float width, height;
-            if (alignment == Alignment.Center)
-            {
-                width = Mathf.Min(contentSize.x, viewportSize.x);
-                height = Mathf.Min(contentSize.y, viewportSize.y);
-            }
-            else
-            {
-                width = viewportSize.x;
-                height = viewportSize.y;
-            }
-            return new Vector2((width - cellSize.x) / 2, (height - cellSize.y) / 2);
+            return new Vector2((viewportSize.x - cellSize.x) * 0.5f, (viewportSize.y - cellSize.y) * 0.5f);
         }
 
         public override int GetStartIndex()
@@ -170,9 +148,14 @@ namespace AlicizaX.UI
                 return 0;
             }
 
-            int index = Mathf.RoundToInt(position / len);
+            int itemCount = adapter != null ? adapter.GetItemCount() : 0;
+            if (itemCount <= 0)
+            {
+                return 0;
+            }
 
-            return index * unit;
+            int index = Mathf.RoundToInt(position / len) * unit;
+            return Mathf.Clamp(index, 0, itemCount - 1);
         }
 
         public override float GetItemStartPosition(int index)

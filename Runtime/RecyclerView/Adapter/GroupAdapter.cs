@@ -19,12 +19,9 @@ namespace AlicizaX.UI
             this.groupTemplateId = groupTemplateId;
         }
 
-        public GroupAdapter(RecyclerView recyclerView, List<TData> list) : base(recyclerView, list)
+        public GroupAdapter(RecyclerView recyclerView, List<TData> list, int groupTemplateId) : base(recyclerView, list)
         {
-        }
-
-        public GroupAdapter(RecyclerView recyclerView) : base(recyclerView)
-        {
+            this.groupTemplateId = groupTemplateId;
         }
 
         public override int GetItemCount()
@@ -36,6 +33,8 @@ namespace AlicizaX.UI
         {
             return showList.Count;
         }
+
+        public override bool UsesMultipleTemplates => true;
 
         public override int GetTemplateId(int index)
         {
@@ -79,7 +78,7 @@ namespace AlicizaX.UI
             base.NotifyDataChanged();
         }
 
-        public override void SetList(List<TData> list)
+        public override void SetList(List<TData> list, ListScrollPolicy scrollPolicy = ListScrollPolicy.KeepAnchor)
         {
             TData selectedData = GetChoiceData();
             showList.Clear();
@@ -89,7 +88,7 @@ namespace AlicizaX.UI
             firstItemIndexByType.Clear();
             lastItemIndexByType.Clear();
             this.list = list ?? new List<TData>();
-            recyclerView.Reset();
+            recyclerView.Reset(scrollPolicy);
             NotifyDataChanged(selectedData);
         }
 
@@ -100,40 +99,42 @@ namespace AlicizaX.UI
                 list = new List<TData>();
             }
 
-            TData selectedData = GetChoiceData();
             list.Add(item);
-            NotifyDataChanged(selectedData);
+            InsertSourceItemIntoShowList(item);
         }
 
-        internal override void AddRange(IEnumerable<TData> collection)
+        public override void AddRange(IEnumerable<TData> collection)
         {
             if (collection == null)
             {
                 return;
             }
 
-            TData selectedData = GetChoiceData();
-            list.AddRange(collection);
-            NotifyDataChanged(selectedData);
+            foreach (TData item in collection)
+            {
+                Add(item);
+            }
         }
 
         public override void Insert(int index, TData item)
         {
-            TData selectedData = GetChoiceData();
             list.Insert(index, item);
-            NotifyDataChanged(selectedData);
+            InsertSourceItemIntoShowList(item);
         }
 
-        internal override void InsertRange(int index, IEnumerable<TData> collection)
+        public override void InsertRange(int index, IEnumerable<TData> collection)
         {
             if (collection == null)
             {
                 return;
             }
 
-            TData selectedData = GetChoiceData();
-            list.InsertRange(index, collection);
-            NotifyDataChanged(selectedData);
+            int current = index;
+            foreach (TData item in collection)
+            {
+                Insert(current, item);
+                current++;
+            }
         }
 
         public override void Remove(TData item)
@@ -144,38 +145,51 @@ namespace AlicizaX.UI
 
         public override void RemoveAt(int index)
         {
-            if (index < 0 || index >= list.Count)
+            if (list == null || index < 0 || index >= list.Count)
             {
                 return;
             }
 
-            TData selectedData = GetChoiceData();
+            TData item = list[index];
+            int displayIndex = FindDisplayIndex(item);
             list.RemoveAt(index);
-            NotifyDataChanged(selectedData);
+            RemoveSourceItemFromShowList(item, displayIndex);
         }
 
         public override void RemoveRange(int index, int count)
         {
-            if (count <= 0)
+            if (count <= 0 || list == null)
             {
                 return;
             }
 
-            TData selectedData = GetChoiceData();
-            list.RemoveRange(index, count);
-            NotifyDataChanged(selectedData);
+            int last = index + count;
+            if (last > list.Count)
+            {
+                last = list.Count;
+            }
+
+            last--;
+            for (int i = last; i >= index; i--)
+            {
+                RemoveAt(i);
+            }
         }
 
-        internal override void RemoveAll(Predicate<TData> match)
+        public override void RemoveAll(Predicate<TData> match)
         {
-            if (match == null)
+            if (list == null || match == null)
             {
                 return;
             }
 
-            TData selectedData = GetChoiceData();
-            list.RemoveAll(match);
-            NotifyDataChanged(selectedData);
+            for (int i = list.Count - 1; i >= 0; i--)
+            {
+                if (match(list[i]))
+                {
+                    RemoveAt(i);
+                }
+            }
         }
 
         public override void Clear()
@@ -185,9 +199,18 @@ namespace AlicizaX.UI
                 return;
             }
 
-            TData selectedData = GetChoiceData();
+            int displayCount = showList.Count;
             list.Clear();
-            NotifyDataChanged(selectedData);
+            showList.Clear();
+            groupsByType.Clear();
+            groupOrder.Clear();
+            itemCountByType.Clear();
+            firstItemIndexByType.Clear();
+            lastItemIndexByType.Clear();
+            if (displayCount > 0)
+            {
+                NotifyItemRangeRemoved(0, displayCount);
+            }
         }
 
         public override void Reverse(int index, int count)
@@ -204,7 +227,7 @@ namespace AlicizaX.UI
             NotifyDataChanged(selectedData);
         }
 
-        internal override void Sort(Comparison<TData> comparison)
+        public override void Sort(Comparison<TData> comparison)
         {
             TData selectedData = GetChoiceData();
             list.Sort(comparison);
@@ -272,21 +295,18 @@ namespace AlicizaX.UI
             }
 
             int insertAt = groupIndex + 1;
-            List<TData> children = null;
+            int inserted = 0;
             while (itemIndex >= 0)
             {
-                children ??= new List<TData>();
-                children.Add(list[itemIndex]);
+                showList.Insert(insertAt + inserted, list[itemIndex]);
+                inserted++;
                 itemIndex = nextItemIndexes[itemIndex];
             }
 
-            if (children == null || children.Count == 0)
+            if (inserted > 0)
             {
-                return;
+                NotifyItemRangeInserted(insertAt, inserted);
             }
-
-            showList.InsertRange(insertAt, children);
-            NotifyItemRangeInserted(insertAt, children.Count);
         }
 
         private void CollapseChildren(int groupIndex)
@@ -449,6 +469,82 @@ namespace AlicizaX.UI
 
             choiceIndex = index;
             OnChoiceIndexChanged?.Invoke(choiceIndex);
+        }
+
+        private void InsertSourceItemIntoShowList(TData item)
+        {
+            if (item == null)
+            {
+                return;
+            }
+
+            BuildTypeIndex();
+            if (!groupsByType.TryGetValue(item.Type, out TData group))
+            {
+                return;
+            }
+
+            int groupIndex = IndexOfDisplayData(group);
+            if (groupIndex < 0)
+            {
+                showList.Add(group);
+                groupIndex = showList.Count - 1;
+                NotifyItemInserted(groupIndex);
+                if (!group.Expanded)
+                {
+                    return;
+                }
+            }
+
+            if (!group.Expanded)
+            {
+                return;
+            }
+
+            int insertAt = groupIndex + 1;
+            while (insertAt < showList.Count && showList[insertAt].TemplateId != groupTemplateId)
+            {
+                insertAt++;
+            }
+
+            showList.Insert(insertAt, item);
+            NotifyItemInserted(insertAt);
+        }
+
+        private void RemoveSourceItemFromShowList(TData item, int displayIndex)
+        {
+            BuildTypeIndex();
+            if (displayIndex >= 0 && displayIndex < showList.Count)
+            {
+                showList.RemoveAt(displayIndex);
+                NotifyItemRemoved(displayIndex);
+            }
+
+            if (item == null || itemCountByType.TryGetValue(item.Type, out int remaining) && remaining > 0)
+            {
+                return;
+            }
+
+            if (!groupsByType.TryGetValue(item.Type, out TData group))
+            {
+                return;
+            }
+
+            int groupIndex = IndexOfDisplayData(group);
+            if (groupIndex < 0)
+            {
+                return;
+            }
+
+            showList.RemoveAt(groupIndex);
+            groupsByType.Remove(item.Type);
+            groupOrder.Remove(group);
+            NotifyItemRemoved(groupIndex);
+        }
+
+        private int FindDisplayIndex(TData item)
+        {
+            return IndexOfDisplayData(item);
         }
 
         private int IndexOfDisplayData(TData data)

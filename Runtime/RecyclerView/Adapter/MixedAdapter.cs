@@ -12,6 +12,8 @@ namespace AlicizaX.UI
         {
         }
 
+        public override bool UsesMultipleTemplates => true;
+
         public override int GetTemplateId(int index)
         {
             return index >= 0 && list != null && index < list.Count

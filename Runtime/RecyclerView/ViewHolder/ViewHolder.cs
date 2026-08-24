@@ -27,6 +27,8 @@ namespace AlicizaX.UI
             }
         }
 
+        internal bool IsPooled { get; set; }
+
         internal int TemplateId { get; set; } = -1;
 
         internal int Index { get; set; }
@@ -42,7 +44,15 @@ namespace AlicizaX.UI
         /// </summary>
         protected bool IsSelected => isSelected;
 
-        internal Vector2 SizeDelta => RectTransform.sizeDelta;
+        internal float AxisLength(Direction measureDirection)
+        {
+            return ItemMeasure.ReadAxisLength(RectTransform, measureDirection);
+        }
+
+        public void RequestResize()
+        {
+            RecyclerView?.MeasureBoundHolder(this);
+        }
 
         internal uint AdvanceBindingVersion()
         {
@@ -89,6 +99,13 @@ namespace AlicizaX.UI
             }
         }
 
+        internal void ResetPooledTransform()
+        {
+            RectTransform.anchoredPosition3D = Vector3.zero;
+            RectTransform.localRotation = Quaternion.identity;
+            RectTransform.localScale = Vector3.one;
+        }
+
         internal void Clear()
         {
             ApplySelection(false);
@@ -103,6 +120,7 @@ namespace AlicizaX.UI
 
         internal void OnRecycled()
         {
+            RecyclerView?.NotifyHolderRecycled(this);
             Clear();
             AdvanceBindingVersion();
             TemplateId = -1;
@@ -157,8 +175,7 @@ namespace AlicizaX.UI
                 return;
             }
 
-            RecyclerViewNavigationController navigationController =
-                RecyclerView.GetComponent<RecyclerViewNavigationController>();
+            RecyclerViewNavigationController navigationController = RecyclerView.NavigationController;
             if (navigationController == null)
             {
                 return;

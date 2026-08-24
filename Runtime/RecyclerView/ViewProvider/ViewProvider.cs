@@ -81,6 +81,7 @@ namespace AlicizaX.UI
 
                 LayoutManager.Layout(viewHolder, i);
                 Adapter.OnBindViewHolder(viewHolder, dataIndex);
+                recyclerView.MeasureBoundHolder(viewHolder);
             }
 
             ValidateInvariants();
@@ -143,16 +144,12 @@ namespace AlicizaX.UI
 
                     ViewHolder viewHolder = visibleHolders[slot];
                     int dataIndex = LayoutManager.GetDataIndex(layoutIndex);
-                    Adapter.OnRecycleViewHolder(viewHolder);
-                    viewHolder.OnRecycled();
-
-                    viewHolder.TemplateId = Adapter.GetTemplateId(dataIndex);
                     viewHolder.Index = layoutIndex;
                     viewHolder.DataIndex = dataIndex;
                     viewHolder.RecyclerView = recyclerView;
-
                     LayoutManager.Layout(viewHolder, layoutIndex);
                     Adapter.OnBindViewHolder(viewHolder, dataIndex);
+                    recyclerView.MeasureBoundHolder(viewHolder);
                     slot++;
                 }
             }
@@ -245,6 +242,7 @@ namespace AlicizaX.UI
                 }
 
                 Adapter.OnBindViewHolder(holder, holder.DataIndex);
+                recyclerView.MeasureBoundHolder(holder);
                 rebound++;
             }
 
@@ -345,13 +343,30 @@ namespace AlicizaX.UI
 
         public Vector2 CalculateViewSize(int index)
         {
-            if (Adapter == null)
+            ViewHolder template = GetTemplate(Adapter != null ? Adapter.GetTemplateId(index) : 0);
+            if (template == null || LayoutManager == null)
             {
                 return Vector2.zero;
             }
 
-            ViewHolder template = GetTemplate(Adapter.GetTemplateId(index));
-            return template != null ? template.SizeDelta : Vector2.zero;
+            RectTransform rect = template.RectTransform;
+            Vector2 size = rect != null ? rect.rect.size : Vector2.zero;
+            if (size.x <= 0f || size.y <= 0f)
+            {
+                Vector2 sizeDelta = rect != null ? rect.sizeDelta : Vector2.zero;
+                if (size.x <= 0f) size.x = sizeDelta.x;
+                if (size.y <= 0f) size.y = sizeDelta.y;
+            }
+
+            return size;
+        }
+
+        public float GetTemplateLength(int templateId)
+        {
+            ViewHolder template = GetTemplate(templateId);
+            return template != null && LayoutManager != null
+                ? template.AxisLength(LayoutManager.Direction)
+                : 0f;
         }
 
         public int GetItemCount()

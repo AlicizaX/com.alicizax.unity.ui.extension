@@ -61,13 +61,152 @@ namespace AlicizaX.UI
         public virtual List<TData> Data
         {
             get => _datas;
-            set
+            set => SetData(value);
+        }
+
+        public void SetData(List<TData> data, ListScrollPolicy scrollPolicy = ListScrollPolicy.KeepAnchor)
+        {
+            _datas = data;
+            if (_adapterBound)
             {
-                _datas = value;
-                if (_adapterBound)
-                {
-                    _adapter.SetList(_datas);
-                }
+                _adapter.SetList(_datas, scrollPolicy);
+            }
+        }
+
+        public TData GetItem(int index)
+        {
+            return _adapter != null ? _adapter.GetData(index) : default;
+        }
+
+        public void Add(TData item)
+        {
+            if (!CanMutate())
+            {
+                return;
+            }
+
+            _adapter.Add(item);
+            _datas = _adapter.Items as List<TData> ?? _datas;
+        }
+
+        public void AddRange(IEnumerable<TData> collection)
+        {
+            if (!CanMutate())
+            {
+                return;
+            }
+
+            _adapter.AddRange(collection);
+            _datas = _adapter.Items as List<TData> ?? _datas;
+        }
+
+        public void Insert(int index, TData item)
+        {
+            if (!CanMutate())
+            {
+                return;
+            }
+
+            _adapter.Insert(index, item);
+            _datas = _adapter.Items as List<TData> ?? _datas;
+        }
+
+        public void InsertRange(int index, IEnumerable<TData> collection)
+        {
+            if (!CanMutate())
+            {
+                return;
+            }
+
+            _adapter.InsertRange(index, collection);
+            _datas = _adapter.Items as List<TData> ?? _datas;
+        }
+
+        public void ReplaceAt(int index, TData item, bool relayout = false)
+        {
+            if (!CanMutate())
+            {
+                return;
+            }
+
+            _adapter.ReplaceAt(index, item, relayout);
+        }
+
+        public void RemoveAt(int index)
+        {
+            if (!CanMutate())
+            {
+                return;
+            }
+
+            _adapter.RemoveAt(index);
+        }
+
+        public void RemoveRange(int index, int count)
+        {
+            if (!CanMutate())
+            {
+                return;
+            }
+
+            _adapter.RemoveRange(index, count);
+        }
+
+        public void RemoveAll(Predicate<TData> match)
+        {
+            if (!CanMutate())
+            {
+                return;
+            }
+
+            _adapter.RemoveAll(match);
+        }
+
+        public void Move(int fromIndex, int toIndex)
+        {
+            if (!CanMutate())
+            {
+                return;
+            }
+
+            _adapter.Move(fromIndex, toIndex);
+        }
+
+        public void RefreshItem(int index, bool relayout = false)
+        {
+            if (!CanMutate())
+            {
+                return;
+            }
+
+            _adapter.NotifyItemChanged(index, relayout);
+        }
+
+        public void Sort(Comparison<TData> comparison)
+        {
+            if (!CanMutate())
+            {
+                return;
+            }
+
+            _adapter.Sort(comparison);
+        }
+
+        public void ApplyUpdateOptions(in ListUpdateOptions options)
+        {
+            if (_recyclerView == null)
+            {
+                return;
+            }
+
+            if (options.ApplyRefreshMode)
+            {
+                _recyclerView.RefreshMode = options.RefreshMode;
+            }
+
+            if (options.Scroll && options.ScrollPolicy == ListScrollPolicy.ResetScroll)
+            {
+                _recyclerView.Reset(ListScrollPolicy.ResetScroll);
             }
         }
 
@@ -101,6 +240,26 @@ namespace AlicizaX.UI
         /// 当前滚动位置。
         /// </summary>
         public float ScrollPosition => _recyclerView != null ? _recyclerView.GetScrollPosition() : 0f;
+
+        public int ScrollDataIndex => _recyclerView != null ? _recyclerView.ScrollDataIndex : -1;
+
+        public int FocusedDataIndex
+        {
+            get
+            {
+#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
+                return _recyclerView != null && _recyclerView.TryGetComponent(out RecyclerViewNavigationController navigation)
+                    ? navigation.FocusedDataIndex
+                    : -1;
+#else
+                return -1;
+#endif
+            }
+        }
+
+        public bool IsAtEnd => _recyclerView != null && _recyclerView.IsAtEnd;
+
+        public bool IsScrolling => _recyclerView != null && _recyclerView.IsScrolling;
 
 
         /// <summary>
@@ -148,7 +307,7 @@ namespace AlicizaX.UI
         /// <summary>
         /// 当滚动停止时触发。
         /// </summary>
-        public event Action ScrollStopped
+        public event Action<ScrollStopReason> ScrollStopped
         {
             add
             {
@@ -187,6 +346,24 @@ namespace AlicizaX.UI
             }
         }
 
+        public event Action<int, float> ItemResized
+        {
+            add
+            {
+                if (_recyclerView != null)
+                {
+                    _recyclerView.OnItemResized += value;
+                }
+            }
+            remove
+            {
+                if (_recyclerView != null)
+                {
+                    _recyclerView.OnItemResized -= value;
+                }
+            }
+        }
+
         /// <summary>
         /// 清除当前业务选中项。
         /// </summary>
@@ -202,7 +379,7 @@ namespace AlicizaX.UI
         /// <param name="smooth">是否使用平滑滚动。</param>
         public virtual void ScrollToIndex(int index, bool smooth = false)
         {
-            _recyclerView?.ScrollTo(index, smooth);
+            _recyclerView?.ScrollToIndex(index, smooth);
         }
 
         /// <summary>
@@ -225,7 +402,54 @@ namespace AlicizaX.UI
                 return;
             }
 
-            _recyclerView?.ScrollToWithAlignment(index, alignment, offset, smooth, duration);
+            _recyclerView?.ScrollToAligned(index, alignment, offset, smooth, duration);
+        }
+
+        public void StickToEnd(bool smooth = false)
+        {
+            _recyclerView?.StickToEnd(smooth);
+        }
+
+        public void StopScroll()
+        {
+            _recyclerView?.StopScroll();
+        }
+
+        public bool TryGetVisibleRange(out int startDataIndex, out int endDataIndex)
+        {
+            if (_recyclerView != null)
+            {
+                return _recyclerView.TryGetVisibleRange(out startDataIndex, out endDataIndex);
+            }
+
+            startDataIndex = -1;
+            endDataIndex = -1;
+            return false;
+        }
+
+        public bool TryGetViewHolder(int dataIndex, out ViewHolder viewHolder)
+        {
+            if (_recyclerView != null)
+            {
+                return _recyclerView.TryGetViewHolder(dataIndex, out viewHolder);
+            }
+
+            viewHolder = null;
+            return false;
+        }
+
+        public void SyncChoiceToScroll()
+        {
+            ChoiceIndex = ScrollDataIndex;
+        }
+
+        public void SyncChoiceToFocus()
+        {
+            int focused = FocusedDataIndex;
+            if (focused >= 0)
+            {
+                ChoiceIndex = focused;
+            }
         }
 
         /// <summary>
@@ -316,7 +540,20 @@ namespace AlicizaX.UI
                 return false;
             }
 
+            if (UsesVariableItemLength(layoutManager) && !layoutManager.SupportsVariableItemLength)
+            {
+                LogIncompatibleAdapterLayout(adapterType, layoutManager,
+                    "Variable item length is only supported by LinearLayoutManager and MixedLayoutManager.");
+                return false;
+            }
+
             return true;
+        }
+
+        private static bool UsesVariableItemLength(LayoutManager layoutManager)
+        {
+            return layoutManager is LinearLayoutManager linear && linear.VariableItemLength ||
+                   layoutManager is MixedLayoutManager mixed && mixed.VariableItemLength;
         }
 
         private static bool IsAdapterType(Type type, Type openGenericAdapterType)
@@ -338,6 +575,11 @@ namespace AlicizaX.UI
         {
             Log.Error(
                 $"RecyclerView adapter/layout combination is invalid. Adapter={adapterType.Name}, Layout={layoutManager.GetType().Name}. {reason}");
+        }
+
+        private bool CanMutate()
+        {
+            return _adapterBound && _adapter != null;
         }
 
         private bool CanScrollToWithAlignment()
@@ -474,7 +716,7 @@ namespace AlicizaX.UI
             set
             {
                 bool sameDataSource = ReferenceEquals(base.Data, value);
-                int previousDataIndex = _recyclerView?.CurrentScrollDataIndex ?? -1;
+                int previousDataIndex = _recyclerView != null ? _recyclerView.ScrollDataIndex : -1;
 
                 if (sameDataSource && AdapterBound)
                 {
