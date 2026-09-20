@@ -1,0 +1,12 @@
+{
+    "name": "AlicizaX.UI.Extension.Navigation.Editor.Tests",
+    "references": ["AlicizaX.UI.Extension.Navigation.Tests", "Unity.InputSystem.TestFramework"],
+    "includePlatforms": ["Editor"],
+    "optionalUnityReferences": ["TestAssemblies"],
+    "autoReferenced": false,
+    "defineConstraints": ["INPUTSYSTEM_SUPPORT", "UXNAVIGATION_SUPPORT"],
+    "versionDefines": [
+        { "name": "com.unity.inputsystem", "expression": "1.0.0", "define": "INPUTSYSTEM_SUPPORT" },
+        { "name": "com.alicizax.unity.input", "expression": "1.0.0", "define": "UXNAVIGATION_SUPPORT" }
+    ]
+}

@@ -596,7 +596,7 @@ namespace AlicizaX.UI
         private MoveResult TryFindNextGridFocusable(int delta, int count, int unit, out int dataIndex)
         {
             dataIndex = -1;
-            if (count <= 1 || delta == 0)
+            if (count <= 0 || delta == 0)
             {
                 return MoveResult.Blocked;
             }
@@ -650,7 +650,7 @@ namespace AlicizaX.UI
         {
             dataIndex = -1;
             hitBoundary = false;
-            if (count <= 1 || delta == 0)
+            if (count <= 0 || delta == 0)
             {
                 return false;
             }
@@ -679,6 +679,7 @@ namespace AlicizaX.UI
                 candidate += delta;
             }
 
+            hitBoundary = !allowWrap && (candidate < 0 || candidate >= count);
             return false;
         }
 
