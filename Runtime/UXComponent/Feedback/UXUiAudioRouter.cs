@@ -15,56 +15,44 @@ namespace AlicizaX.UI.UXFeedback
         public static void Bind(UXUiAudioProfile profile)
         {
             _profile = profile;
-            if (_profile != null)
-            {
-                _profile.BuildCache();
-            }
         }
 
         internal static void Dispatch(Component source, UXUiCue cue)
         {
-            if (_profile == null)
-            {
-                return;
-            }
+            AudioClip clip = ResolveClip(source, cue, CurrentDevice(), IsProgrammaticFocus(cue));
+            if (clip != null)
+                UXComponentExtensionsHelper.PlayAudio(clip);
+        }
 
-#if UXNAVIGATION_SUPPORT
-            if (AlicizaX.UI.UXNavigation.UXFocusChange.Current == AlicizaX.UI.UXNavigation.UXFocusChange.Cause.Programmatic
-                && _profile.IgnoresProgrammatic(cue))
-            {
-                return;
-            }
-#endif
-
-            UXUiAudioDevice device = CurrentDevice();
-            if (source != null && source.TryGetComponent(out UXUiAudioOverride overrideAudio))
+        internal static AudioClip ResolveClip(Component source, UXUiCue cue, UXUiAudioDevice device, bool programmaticFocus)
+        {
+            if (source != null && source.TryGetComponent(out UXUiAudioOverride overrideAudio) && overrideAudio.isActiveAndEnabled)
             {
                 UXUiAudioOverrideMode mode = overrideAudio.Mode;
                 if (mode == UXUiAudioOverrideMode.Silent)
-                {
-                    return;
-                }
+                    return null;
 
-                if (overrideAudio.TryResolve(cue, device, out AudioClip overrideClip))
-                {
-                    if (overrideClip != null)
-                    {
-                        UXComponentExtensionsHelper.PlayAudio(overrideClip);
-                    }
-
-                    return;
-                }
+                if (overrideAudio.TryResolve(cue, device, out UXUiAudioOverride.Entry entry))
+                    return entry.Mute || (programmaticFocus && !entry.AllowProgrammaticFocus) ? null : entry.Clip;
 
                 if (mode == UXUiAudioOverrideMode.Exclusive)
-                {
-                    return;
-                }
+                    return null;
             }
 
-            if (_profile.TryGetClip(cue, device, out AudioClip clip))
-            {
-                UXComponentExtensionsHelper.PlayAudio(clip);
-            }
+            if (_profile != null && _profile.TryResolve(cue, device, out UXUiAudioProfile.Rule rule))
+                return programmaticFocus && !rule.AllowProgrammaticFocus ? null : rule.Clip;
+
+            return null;
+        }
+
+        private static bool IsProgrammaticFocus(UXUiCue cue)
+        {
+#if UXNAVIGATION_SUPPORT
+            return cue == UXUiCue.FocusEnter
+                && AlicizaX.UI.UXNavigation.UXFocusChange.Current == AlicizaX.UI.UXNavigation.UXFocusChange.Cause.Programmatic;
+#else
+            return false;
+#endif
         }
 
         private static UXUiAudioDevice CurrentDevice()

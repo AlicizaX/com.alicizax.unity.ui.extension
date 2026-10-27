@@ -1,5 +1,4 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using AlicizaX.UI.UXFeedback;
 using UnityEngine.EventSystems;
@@ -34,7 +33,10 @@ namespace UnityEngine.UI
         private bool m_HasSelectionState;
         private bool m_HasExternalState;
         private UXSelectionState m_ExternalState;
-        private Coroutine m_PulseCoroutine;
+        private UXSelectionState m_PulseRestoreState;
+        private float m_PulseRestoreTime;
+        private bool m_ExternalPulseActive;
+        private bool m_DerivedPulseActive;
 
         /// <summary>
         /// 是否正在由外部强制驱动视觉状态。
@@ -52,9 +54,9 @@ namespace UnityEngine.UI
         /// </summary>
         public void SetExternalState(UXSelectionState state, bool instant = false)
         {
+            CancelPendingPulse();
             m_HasExternalState = true;
             m_ExternalState = state;
-            m_HasSelectionState = false;
             DoStateTransition(ToSelectionState(state), instant);
         }
 
@@ -63,14 +65,13 @@ namespace UnityEngine.UI
         /// </summary>
         public void ClearExternalState(bool instant = false)
         {
-            StopPulseCoroutine();
+            CancelPendingPulse();
             if (!m_HasExternalState)
             {
                 return;
             }
 
             m_HasExternalState = false;
-            m_HasSelectionState = false;
             DoStateTransition(currentSelectionState, instant);
         }
 
@@ -85,29 +86,67 @@ namespace UnityEngine.UI
             }
 
             SetExternalState(pulseState, false);
-            StopPulseCoroutine();
             if (!isActiveAndEnabled || duration <= 0f)
             {
                 SetExternalState(restoreState, false);
                 return;
             }
 
-            m_PulseCoroutine = StartCoroutine(PulseExternalStateCoroutine(restoreState, duration));
+            m_PulseRestoreState = restoreState;
+            m_PulseRestoreTime = Time.unscaledTime + duration;
+            m_ExternalPulseActive = true;
         }
 
-        IEnumerator PulseExternalStateCoroutine(UXSelectionState restoreState, float duration)
+        /// <summary>
+        /// 在未启用外部状态时短暂切换到 <paramref name="pulseState"/>，到时恢复为 Selectable 推导状态。
+        /// </summary>
+        protected void PulseDerivedState(UXSelectionState pulseState, float duration = -1f)
         {
-            var elapsedTime = 0f;
-            while (elapsedTime < duration)
+            if (duration < 0f)
             {
-                elapsedTime += Time.unscaledDeltaTime;
-                yield return null;
+                duration = colors.fadeDuration;
             }
 
-            m_PulseCoroutine = null;
-            if (m_HasExternalState)
+            CancelPendingPulse();
+            DoStateTransition(ToSelectionState(pulseState), false);
+            if (!isActiveAndEnabled || duration <= 0f)
             {
-                SetExternalState(restoreState, false);
+                DoStateTransition(currentSelectionState, false);
+                return;
+            }
+
+            m_PulseRestoreTime = Time.unscaledTime + duration;
+            m_DerivedPulseActive = true;
+        }
+
+        private void Update()
+        {
+            if (!m_ExternalPulseActive && !m_DerivedPulseActive)
+            {
+                return;
+            }
+
+            if (Time.unscaledTime < m_PulseRestoreTime)
+            {
+                return;
+            }
+
+            if (m_ExternalPulseActive)
+            {
+                m_ExternalPulseActive = false;
+                if (m_HasExternalState)
+                {
+                    SetExternalState(m_PulseRestoreState, false);
+                }
+            }
+
+            if (m_DerivedPulseActive)
+            {
+                m_DerivedPulseActive = false;
+                if (!m_HasExternalState)
+                {
+                    DoStateTransition(currentSelectionState, false);
+                }
             }
         }
 
@@ -129,12 +168,6 @@ namespace UnityEngine.UI
             UXUiFeedback.Raise(this, UXUiCue.PointerEnter);
         }
 
-        public override void OnPointerExit(PointerEventData eventData)
-        {
-            base.OnPointerExit(eventData);
-            UXUiFeedback.Raise(this, UXUiCue.PointerExit);
-        }
-
         public override void OnSelect(BaseEventData eventData)
         {
             base.OnSelect(eventData);
@@ -146,26 +179,10 @@ namespace UnityEngine.UI
             UXUiFeedback.Raise(this, UXUiCue.FocusEnter);
         }
 
-        public override void OnDeselect(BaseEventData eventData)
+        void CancelPendingPulse()
         {
-            base.OnDeselect(eventData);
-            if (eventData is PointerEventData)
-            {
-                return;
-            }
-
-            UXUiFeedback.Raise(this, UXUiCue.FocusExit);
-        }
-
-        void StopPulseCoroutine()
-        {
-            if (m_PulseCoroutine == null)
-            {
-                return;
-            }
-
-            StopCoroutine(m_PulseCoroutine);
-            m_PulseCoroutine = null;
+            m_ExternalPulseActive = false;
+            m_DerivedPulseActive = false;
         }
 
         void StartChildColorTween(TransitionData transitionData, Color targetColor, bool instant)
@@ -186,7 +203,7 @@ namespace UnityEngine.UI
 
         protected override void InstantClearState()
         {
-            StopPulseCoroutine();
+            CancelPendingPulse();
             m_HasExternalState = false;
             base.InstantClearState();
             m_HasSelectionState = false;

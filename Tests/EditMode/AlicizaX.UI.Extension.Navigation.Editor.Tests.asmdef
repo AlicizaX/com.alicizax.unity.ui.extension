@@ -1,6 +1,6 @@
 {
     "name": "AlicizaX.UI.Extension.Navigation.Editor.Tests",
-    "references": ["AlicizaX.UI.Extension.Navigation.Tests", "Unity.InputSystem.TestFramework"],
+    "references": ["AlicizaX.UI.Extension.Navigation.Tests", "AlicizaX.UI.Extension", "AlicizaX.UI.Extension.Editor", "Unity.InputSystem.TestFramework"],
     "includePlatforms": ["Editor"],
     "optionalUnityReferences": ["TestAssemblies"],
     "autoReferenced": false,

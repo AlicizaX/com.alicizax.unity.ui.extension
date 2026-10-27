@@ -255,6 +255,34 @@ namespace AlicizaX.UI.NavigationTests
         }
 
         [Test]
+        public void ScrollFrameDoesNotRepeatNavigationFocusNotifications()
+        {
+            var holders = Visible();
+            var focusCalls = holders.Select(item => item.FocusCalls).ToArray();
+            Assert.That(holders.Count(item => item.Focused), Is.EqualTo(1));
+
+            scroller.ScrollTo(scroller.Position + 2f);
+
+            Assert.That(Visible(), Is.EquivalentTo(holders));
+            Assert.That(holders.Select(item => item.FocusCalls).ToArray(), Is.EqualTo(focusCalls),
+                "同一滚动帧内未变化的导航焦点不应重复通知。");
+            Assert.That(holders.Count(item => item.Focused), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void NavigationFocusSnapshotsStayBoundedByVisibleHolders()
+        {
+            var snapshots = Read<System.Collections.IDictionary>(
+                typeof(RecyclerViewNavigationController), navigation, "navigationFocusSnapshots");
+            Assert.That(snapshots.Count, Is.GreaterThan(0));
+
+            navigation.SetFocus(60);
+            Assert.That(navigation.FocusedDataIndex, Is.EqualTo(60));
+            Assert.That(snapshots.Count, Is.LessThanOrEqualTo(Visible().Length),
+                "回收的 Holder 必须从焦点去重表中移除。");
+        }
+
+        [Test]
         public void EmptyThenRefillRecyclesHoldersWithoutRetainingOldFocus()
         {
             navigation.SetFocus(12);

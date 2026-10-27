@@ -20,21 +20,21 @@ namespace UnityEditor.UI
         public override void OnInspectorGUI()
         {
             serializedObject.Update();
-            EditorGUILayout.PropertyField(_mode, new GUIContent("Mode"));
+            EditorGUILayout.PropertyField(_mode, new GUIContent("模式"));
 
             UXUiAudioOverrideMode mode = (UXUiAudioOverrideMode)_mode.enumValueIndex;
             switch (mode)
             {
                 case UXUiAudioOverrideMode.Silent:
-                    EditorGUILayout.HelpBox("This control plays no UI audio.", MessageType.Info);
+                    EditorGUILayout.HelpBox("此控件不播放 UI 音效。", MessageType.Info);
                     break;
                 case UXUiAudioOverrideMode.Exclusive:
-                    EditorGUILayout.HelpBox("Only listed cues play. Unlisted cues stay silent.", MessageType.Info);
-                    EditorGUILayout.PropertyField(_entries, true);
+                    EditorGUILayout.HelpBox("仅使用下列规则；未列出的事件静音。", MessageType.Info);
+                    UXUiAudioRuleEditor.Draw(_entries, true);
                     break;
                 default:
-                    EditorGUILayout.HelpBox("Listed cues replace the profile. Unlisted cues still use the profile.", MessageType.Info);
-                    EditorGUILayout.PropertyField(_entries, true);
+                    EditorGUILayout.HelpBox("命中的规则覆盖全局主题；未命中则使用全局主题。", MessageType.Info);
+                    UXUiAudioRuleEditor.Draw(_entries, true);
                     break;
             }
 

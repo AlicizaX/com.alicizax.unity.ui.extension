@@ -19,6 +19,7 @@ namespace AlicizaX.UI.UXFeedback
             public UXUiCue Cue;
             public UXUiAudioDevice Devices;
             public bool Mute;
+            public bool AllowProgrammaticFocus;
             public AudioClip Clip;
         }
 
@@ -27,26 +28,19 @@ namespace AlicizaX.UI.UXFeedback
 
         public UXUiAudioOverrideMode Mode => _mode;
 
-        public bool TryResolve(UXUiCue cue, UXUiAudioDevice device, out AudioClip clip)
+        internal bool TryResolve(UXUiCue cue, UXUiAudioDevice device, out Entry entry)
         {
-            clip = null;
-            if (_entries == null)
+            if (_entries != null)
             {
-                return false;
-            }
-
-            for (int i = 0; i < _entries.Length; i++)
-            {
-                Entry entry = _entries[i];
-                if (entry.Cue != cue || (entry.Devices & device) == 0)
+                for (int i = 0; i < _entries.Length; i++)
                 {
-                    continue;
+                    entry = _entries[i];
+                    if (entry.Cue == cue && (entry.Devices & device) != 0)
+                        return true;
                 }
-
-                clip = entry.Mute ? null : entry.Clip;
-                return true;
             }
 
+            entry = default;
             return false;
         }
     }

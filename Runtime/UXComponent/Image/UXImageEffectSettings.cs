@@ -1,7 +1,11 @@
-using System.Collections.Generic;
-
 namespace UnityEngine.UI
 {
+    /// <summary>
+    /// Shared helpers for the UXImage adaptive effect.
+    /// Materials are owned by the individual <see cref="UXImage"/> that needs them: they are created lazily by
+    /// <see cref="CreateEffectMaterial"/>, reused for the lifetime of that Graphic and destroyed in its OnDestroy.
+    /// This class keeps no material cache, so animated outline/shadow colors can never grow static GPU memory.
+    /// </summary>
     internal static class UXImageEffectSettings
     {
         public const string ShaderName = "UI/UXImageAdaptiveEffect";
@@ -9,74 +13,65 @@ namespace UnityEngine.UI
 
         public const float RuntimeSdfSoftnessThreshold = 8f;
 
-        private static readonly Dictionary<MaterialKey, Material> s_Materials = new Dictionary<MaterialKey, Material>();
+        private static Shader s_Shader;
 
-        public static Material EffectMaterial
+        /// <summary>
+        /// Creates a standalone effect material. The caller becomes its owner and must destroy it.
+        /// </summary>
+        public static Material CreateEffectMaterial()
         {
-            get
-            {
-                return GetEffectMaterial(null, Color.black, new Color(0f, 0f, 0f, 0.5f));
-            }
-        }
-
-        public static Material GetEffectMaterial(Texture sdfTexture, Color outlineColor, Color shadowColor)
-        {
-            MaterialKey key = new MaterialKey(sdfTexture, outlineColor, shadowColor);
-            if (s_Materials.TryGetValue(key, out var material))
-                return material;
-
-            Shader shader = Shader.Find(ShaderName);
-            if (shader == null)
-                shader = Resources.Load<Shader>(ShaderResourcePath);
+            Shader shader = ResolveShader();
             if (shader == null)
                 return null;
 
-            Material next = new Material(shader)
+            return new Material(shader)
             {
-                name = sdfTexture == null ? "UXImage Adaptive Effect" : "UXImage Adaptive Effect SDF",
+                name = "UXImage Adaptive Effect",
                 hideFlags = HideFlags.HideAndDontSave
             };
-
-            if (sdfTexture != null)
-                next.SetTexture("_SDFTex", sdfTexture);
-
-            next.SetColor("_OutlineColor", outlineColor);
-            next.SetColor("_ShadowColor", shadowColor);
-            s_Materials[key] = next;
-            return next;
         }
 
-        private readonly struct MaterialKey
+        private static Shader ResolveShader()
         {
-            private readonly Texture m_SdfTexture;
-            private readonly Color32 m_OutlineColor;
-            private readonly Color32 m_ShadowColor;
+            if (s_Shader != null)
+                return s_Shader;
 
-            public MaterialKey(Texture sdfTexture, Color outlineColor, Color shadowColor)
-            {
-                m_SdfTexture = sdfTexture;
-                m_OutlineColor = outlineColor;
-                m_ShadowColor = shadowColor;
-            }
+            s_Shader = Shader.Find(ShaderName);
+            if (s_Shader == null)
+                s_Shader = Resources.Load<Shader>(ShaderResourcePath);
 
-            public override bool Equals(object obj)
-            {
-                return obj is MaterialKey other &&
-                       ReferenceEquals(m_SdfTexture, other.m_SdfTexture) &&
-                       m_OutlineColor.Equals(other.m_OutlineColor) &&
-                       m_ShadowColor.Equals(other.m_ShadowColor);
-            }
+            return s_Shader;
+        }
 
-            public override int GetHashCode()
+        /// <summary>
+        /// Destroys a runtime object owned by the effect pipeline (Material, RenderTexture, ...).
+        /// Uses DestroyImmediate outside play mode so edit-mode previews do not leak the object.
+        /// </summary>
+        public static void DestroyRuntimeObject(Object target)
+        {
+            if (target == null)
+                return;
+
+#if UNITY_EDITOR
+            if (!Application.isPlaying)
             {
-                unchecked
-                {
-                    int hash = m_SdfTexture != null ? UnityObjectId.Get(m_SdfTexture).GetHashCode() : 0;
-                    hash = (hash * 397) ^ m_OutlineColor.GetHashCode();
-                    hash = (hash * 397) ^ m_ShadowColor.GetHashCode();
-                    return hash;
-                }
+                Object.DestroyImmediate(target);
+                return;
             }
+#endif
+            Object.Destroy(target);
+        }
+
+        /// <summary>
+        /// Releases the GPU storage of a render texture and then destroys the texture object itself.
+        /// </summary>
+        public static void DestroyRenderTexture(RenderTexture texture)
+        {
+            if (texture == null)
+                return;
+
+            texture.Release();
+            DestroyRuntimeObject(texture);
         }
 
         public static void EnsureCanvasChannels(Canvas canvas)

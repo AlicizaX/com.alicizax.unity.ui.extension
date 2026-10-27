@@ -1,5 +1,3 @@
-using System;
-using System.Collections;
 using AlicizaX.UI.UXFeedback;
 using UnityEngine.EventSystems;
 
@@ -18,17 +16,20 @@ namespace UnityEngine.UI
                 return;
 
             // 外部状态驱动时，点击业务由上层处理，避免重复 onClick/音效。
-            if (HasExternalState)
+            if (HasExternalState || !IsActive() || !IsInteractable())
                 return;
 
-            Press();
             UXUiFeedback.Raise(this, UXUiCue.Press);
+            Press();
         }
 
         public virtual void OnSubmit(BaseEventData eventData)
         {
+            if (!IsActive() || !IsInteractable())
+                return;
+
+            PlayClickFeedbackCore();
             Press();
-            PlayClickFeedback();
         }
 
         /// <summary>
@@ -37,10 +38,15 @@ namespace UnityEngine.UI
         /// </summary>
         public virtual void PlayClickFeedback()
         {
-            UXUiFeedback.Raise(this, UXUiCue.Press);
-
             if (!IsActive() || !IsInteractable())
                 return;
+
+            PlayClickFeedbackCore();
+        }
+
+        private void PlayClickFeedbackCore()
+        {
+            UXUiFeedback.Raise(this, UXUiCue.Press);
 
             if (HasExternalState)
             {
@@ -51,22 +57,7 @@ namespace UnityEngine.UI
                 return;
             }
 
-            DoStateTransition(SelectionState.Pressed, false);
-            StartCoroutine(OnFinishSubmit());
-        }
-
-        private IEnumerator OnFinishSubmit()
-        {
-            var fadeTime = colors.fadeDuration;
-            var elapsedTime = 0f;
-
-            while (elapsedTime < fadeTime)
-            {
-                elapsedTime += Time.unscaledDeltaTime;
-                yield return null;
-            }
-
-            DoStateTransition(currentSelectionState, false);
+            PulseDerivedState(UXSelectionState.Pressed);
         }
 
         [SerializeField] private Button.ButtonClickedEvent m_OnClick = new Button.ButtonClickedEvent();
@@ -80,9 +71,6 @@ namespace UnityEngine.UI
 
         private void Press()
         {
-            if (!IsActive() || !IsInteractable())
-                return;
-
             UISystemProfilerApi.AddMarker("Button.onClick", this);
             m_OnClick.Invoke();
         }

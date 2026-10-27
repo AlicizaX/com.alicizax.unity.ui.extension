@@ -192,10 +192,11 @@ namespace AlicizaX.UI
             navigationFocused = false;
             pointerInside = false;
             pointerPressed = false;
+            // 回收/解绑后不再由本 Holder 驱动 interaction，避免 UXButton 的原生点击被永久屏蔽。
+            // 下一次指针或导航交互会重新通过 SetExternalState 接管视觉状态。
             if (interaction != null)
             {
-                // 回收后仍保持外部驱动，只复位到 Normal，避免下一次点击被 UXButton 原生逻辑抢先。
-                interaction.SetExternalState(UXSelectionState.Normal, true);
+                interaction.ClearExternalState(true);
             }
 
             base.OnClear();
@@ -262,28 +263,19 @@ namespace AlicizaX.UI
 
         private void EnsureInteractionConfigured()
         {
-            if (interaction == null)
+            if (interaction == null || interactionConfigured)
             {
                 return;
             }
 
-            if (!interactionConfigured)
+            Navigation navigation = interaction.navigation;
+            if (navigation.mode != Navigation.Mode.None)
             {
-                Navigation navigation = interaction.navigation;
-                if (navigation.mode != Navigation.Mode.None)
-                {
-                    navigation.mode = Navigation.Mode.None;
-                    interaction.navigation = navigation;
-                }
-
-                interactionConfigured = true;
+                navigation.mode = Navigation.Mode.None;
+                interaction.navigation = navigation;
             }
 
-            // 列表项从进入外部驱动模式起就保持 external state，避免与 UXButton 原生 onClick 双触发。
-            if (!interaction.HasExternalState)
-            {
-                interaction.SetExternalState(UXSelectionState.Normal, true);
-            }
+            interactionConfigured = true;
         }
 
         protected virtual void Awake()
@@ -294,6 +286,17 @@ namespace AlicizaX.UI
             }
 
             EnsureInteractionConfigured();
+        }
+
+        protected virtual void OnDisable()
+        {
+            navigationFocused = false;
+            pointerInside = false;
+            pointerPressed = false;
+            if (interaction != null)
+            {
+                interaction.ClearExternalState(true);
+            }
         }
 
 #if UNITY_EDITOR

@@ -158,6 +158,10 @@ namespace AlicizaX.UI
         private bool layoutDirty;
         private bool visibleRangeDirty;
         private bool applyingDeferredRefresh;
+        private readonly List<ViewHolder> pendingMeasurements = new List<ViewHolder>(16);
+        private readonly List<MeasuredItemLength> measuredItemLengths = new List<MeasuredItemLength>(16);
+        private int measurementBatchDepth;
+        private bool flushingMeasurements;
         private RectTransform cachedRectTransform;
         private Vector2 lastViewportSize;
         private bool hasLastViewportSize;
@@ -523,6 +527,14 @@ namespace AlicizaX.UI
             ConfigureScrollbar();
         }
 
+        private void OnEnable()
+        {
+            if (IsReady)
+            {
+                FlushDeferredWork();
+            }
+        }
+
         private void LateUpdate()
         {
             ProcessPendingScrollbarRatio();
@@ -531,9 +543,8 @@ namespace AlicizaX.UI
 
         private void OnDisable()
         {
+            // 保留 layoutDirty/visibleRangeDirty，OnEnable 或下次 LateUpdate 继续处理，避免隐藏期间丢失刷新。
             applyingDeferredRefresh = false;
-            layoutDirty = false;
-            visibleRangeDirty = false;
             ResetItemPresentation();
         }
 
@@ -960,12 +971,14 @@ namespace AlicizaX.UI
                 return;
             }
 
+            BeginMeasurementBatch();
             for (int i = startIndex; i <= endIndex; i += layoutManager.Unit)
             {
                 viewProvider.CreateViewHolder(i);
             }
 
-            if (UsesVariableItemLength(layoutManager))
+            bool measured = EndMeasurementBatch();
+            if (UsesVariableItemLength(layoutManager) && !measured)
             {
                 UpdateVisibleRange();
                 layoutManager.UpdateLayout();
@@ -1449,6 +1462,7 @@ namespace AlicizaX.UI
                 endIndex -= unit;
             }
 
+            BeginMeasurementBatch();
             while (startIndex > targetStart)
             {
                 startIndex -= unit;
@@ -1463,6 +1477,7 @@ namespace AlicizaX.UI
 
             startIndex = targetStart;
             endIndex = targetEnd;
+            EndMeasurementBatch();
             return false;
         }
 
@@ -1509,23 +1524,20 @@ namespace AlicizaX.UI
 
         private void RebuildVisibleRange(int targetStart, int targetEnd, int unit)
         {
-            if (ViewProvider.TryReuseVisibleRange(targetStart, targetEnd))
+            BeginMeasurementBatch();
+            bool reused = ViewProvider.TryReuseVisibleRange(targetStart, targetEnd);
+            if (!reused)
             {
-                startIndex = targetStart;
-                endIndex = targetEnd;
-                layoutManager.DoItemAnimation();
-                return;
+                ViewProvider.Clear();
+                for (int i = targetStart; i <= targetEnd; i += unit)
+                {
+                    ViewProvider.CreateViewHolder(i);
+                }
             }
 
-            ViewProvider.Clear();
             startIndex = targetStart;
             endIndex = targetEnd;
-
-            for (int i = targetStart; i <= targetEnd; i += unit)
-            {
-                ViewProvider.CreateViewHolder(i);
-            }
-
+            EndMeasurementBatch();
             layoutManager.DoItemAnimation();
         }
 
@@ -1851,7 +1863,9 @@ namespace AlicizaX.UI
                 return 0;
             }
 
+            BeginMeasurementBatch();
             int rebound = viewProvider.RebindVisibleDataRange(startDataIndex, count);
+            EndMeasurementBatch();
             if (rebound <= 0 && UsesVariableItemLength(layoutManager))
             {
                 layoutManager.InvalidateItemLengths();
@@ -1869,16 +1883,149 @@ namespace AlicizaX.UI
                 return;
             }
 
+            if (measurementBatchDepth > 0 || flushingMeasurements)
+            {
+                QueueMeasurement(viewHolder);
+                return;
+            }
+
+            float length = MeasureViewHolder(viewHolder);
+            ApplyMeasuredLength(viewHolder.Index, length);
+        }
+
+        /// <summary>
+        /// 开始一次测量批处理：批内新建/重绑的 Holder 只记录待测量项，
+        /// 由 <see cref="EndMeasurementBatch"/> 统一测量并只刷新一次内容尺寸、滚动条与锚点。
+        /// </summary>
+        internal void BeginMeasurementBatch()
+        {
+            measurementBatchDepth++;
+        }
+
+        /// <summary>
+        /// 结束一次测量批处理；最外层结束时执行挂起的测量与唯一一次布局刷新。
+        /// </summary>
+        /// <returns>本次结束是否真正执行了测量后的布局刷新。</returns>
+        internal bool EndMeasurementBatch()
+        {
+            if (measurementBatchDepth == 0)
+            {
+                return false;
+            }
+
+            if (--measurementBatchDepth > 0)
+            {
+                return false;
+            }
+
+            return !flushingMeasurements && FlushPendingMeasurements();
+        }
+
+        private void QueueMeasurement(ViewHolder viewHolder)
+        {
+            for (int i = 0; i < pendingMeasurements.Count; i++)
+            {
+                if (ReferenceEquals(pendingMeasurements[i], viewHolder))
+                {
+                    return;
+                }
+            }
+
+            pendingMeasurements.Add(viewHolder);
+        }
+
+        private float MeasureViewHolder(ViewHolder viewHolder)
+        {
             float length = ItemMeasure.MeasureBound(viewHolder.RectTransform, direction);
             if (length > 0f)
             {
-                RectTransform rect = viewHolder.RectTransform;
-                rect.SetSizeWithCurrentAnchors(
+                viewHolder.RectTransform.SetSizeWithCurrentAnchors(
                     direction == Direction.Horizontal ? RectTransform.Axis.Horizontal : RectTransform.Axis.Vertical,
                     length);
             }
 
-            ApplyMeasuredLength(viewHolder.Index, length);
+            return length;
+        }
+
+        private bool FlushPendingMeasurements()
+        {
+            if (!IsReady || !UsesVariableItemLength(layoutManager) || pendingMeasurements.Count == 0)
+            {
+                pendingMeasurements.Clear();
+                return false;
+            }
+
+            flushingMeasurements = true;
+            bool applied = false;
+            VisualAnchor anchor = CaptureVisualAnchor();
+            while (pendingMeasurements.Count > 0)
+            {
+                bool changed = false;
+                for (int i = 0; i < pendingMeasurements.Count; i++)
+                {
+                    ViewHolder viewHolder = pendingMeasurements[i];
+                    if (viewHolder == null || viewHolder.RecyclerView != this || viewHolder.DataIndex < 0)
+                    {
+                        continue;
+                    }
+
+                    float length = MeasureViewHolder(viewHolder);
+                    int layoutIndex = viewHolder.Index;
+                    if (layoutManager.ApplyMeasuredLength(layoutIndex, length))
+                    {
+                        changed = true;
+                        measuredItemLengths.Add(new MeasuredItemLength
+                        {
+                            LayoutIndex = layoutIndex,
+                            Length = length
+                        });
+                    }
+                }
+
+                pendingMeasurements.Clear();
+                if (!changed)
+                {
+                    break;
+                }
+
+                PublishMeasuredLayout(anchor);
+                applied = true;
+            }
+
+            flushingMeasurements = false;
+            for (int i = 0; i < measuredItemLengths.Count; i++)
+            {
+                MeasuredItemLength item = measuredItemLengths[i];
+                OnItemResized?.Invoke(layoutManager.GetDataIndex(item.LayoutIndex), item.Length);
+            }
+
+            measuredItemLengths.Clear();
+#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
+            if (applied)
+            {
+                NotifyNavigationDataChanged();
+            }
+#endif
+            return applied;
+        }
+
+        private void PublishMeasuredLayout(VisualAnchor anchor)
+        {
+            ApplyLayoutSettings();
+            layoutManager.SetContentSize();
+            if (scroller != null)
+            {
+                scroller.ContentSize = layoutManager.ContentSize;
+            }
+
+            RestoreVisualAnchor(anchor, false);
+            UpdateVisibleRange();
+            layoutManager.UpdateLayout();
+            if (scroller != null)
+            {
+                UpdateScrollbarVisibility();
+                UpdateScrollbarValue(scroller.Position);
+            }
         }
 
         private void ApplyMeasuredLength(int layoutIndex, float length)
@@ -1933,7 +2080,10 @@ namespace AlicizaX.UI
                 return 0;
             }
 
-            return viewProvider.RebindVisibleDataRange(startDataIndex, count);
+            BeginMeasurementBatch();
+            int rebound = viewProvider.RebindVisibleDataRange(startDataIndex, count);
+            EndMeasurementBatch();
+            return rebound;
         }
 
         internal int ApplyVisibleSelection(int dataIndex, bool selected)
@@ -2033,13 +2183,17 @@ namespace AlicizaX.UI
 
             viewProvider.ShiftIndexesFrom(index, count);
             endIndex += count;
+            BeginMeasurementBatch();
             for (int i = 0; i < count; i++)
             {
                 viewProvider.CreateViewHolder(index + i);
             }
 
-            UpdateVisibleRange();
-            layoutManager.UpdateLayout();
+            if (!EndMeasurementBatch())
+            {
+                UpdateVisibleRange();
+                layoutManager.UpdateLayout();
+            }
         }
 
         private void ApplyRemovedHolders(int index, int count)
@@ -2080,6 +2234,12 @@ namespace AlicizaX.UI
 
             UpdateVisibleRange();
             layoutManager.UpdateLayout();
+        }
+
+        private struct MeasuredItemLength
+        {
+            public int LayoutIndex;
+            public float Length;
         }
 
         private struct VisualAnchor

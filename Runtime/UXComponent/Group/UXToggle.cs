@@ -249,30 +249,25 @@ namespace UnityEngine.UI
 
         private void InternalToggle()
         {
-            if (!IsActive() || !IsInteractable())
-                return;
-
             isOn = !isOn;
         }
 
         public virtual void OnPointerClick(PointerEventData eventData)
         {
-            if (eventData.button != PointerEventData.InputButton.Left)
+            if (eventData.button != PointerEventData.InputButton.Left || !IsActive() || !IsInteractable())
                 return;
 
             InternalToggle();
-            RaiseToggleCue();
+            UXUiFeedback.Raise(this, UXUiCue.Press);
         }
 
         public virtual void OnSubmit(BaseEventData eventData)
         {
-            InternalToggle();
-            RaiseToggleCue();
-        }
+            if (!IsActive() || !IsInteractable())
+                return;
 
-        private void RaiseToggleCue()
-        {
-            UXUiFeedback.Raise(this, isOn ? UXUiCue.ToggleOn : UXUiCue.ToggleOff);
+            InternalToggle();
+            UXUiFeedback.Raise(this, UXUiCue.Press);
         }
     }
 }

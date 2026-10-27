@@ -61,7 +61,7 @@ namespace AlicizaX.UI
         /// <returns>列表项数量。</returns>
         public virtual int GetItemCount()
         {
-            return list == null ? 0 : list.Count;
+            return list.Count;
         }
 
         /// <summary>
@@ -337,7 +337,7 @@ namespace AlicizaX.UI
 
         public virtual void ReplaceAt(int index, T item, bool relayout = false)
         {
-            if (list == null || index < 0 || index >= list.Count)
+            if (index < 0 || index >= list.Count)
             {
                 return;
             }
@@ -352,11 +352,6 @@ namespace AlicizaX.UI
         /// <param name="item">要添加的业务数据。</param>
         public virtual void Add(T item)
         {
-            if (list == null)
-            {
-                list = new List<T>();
-            }
-
             int index = list.Count;
             list.Add(item);
             NotifyItemInserted(index);
@@ -367,11 +362,6 @@ namespace AlicizaX.UI
             if (collection == null)
             {
                 return;
-            }
-
-            if (list == null)
-            {
-                list = new List<T>();
             }
 
             int index = list.Count;
@@ -396,7 +386,7 @@ namespace AlicizaX.UI
 
         public virtual void Move(int fromIndex, int toIndex)
         {
-            if (list == null || fromIndex == toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= list.Count || toIndex >= list.Count)
+            if (fromIndex == toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= list.Count || toIndex >= list.Count)
             {
                 return;
             }
@@ -452,13 +442,19 @@ namespace AlicizaX.UI
         /// <param name="count">要移除的数据数量。</param>
         public virtual void RemoveRange(int index, int count)
         {
+            if (count <= 0 || index < 0 || index >= list.Count)
+            {
+                return;
+            }
+
+            count = Mathf.Min(count, list.Count - index);
             list.RemoveRange(index, count);
             NotifyItemRangeRemoved(index, count);
         }
 
         public virtual void RemoveAll(Predicate<T> match)
         {
-            if (list == null || match == null)
+            if (match == null)
             {
                 return;
             }
@@ -477,7 +473,7 @@ namespace AlicizaX.UI
         /// </summary>
         public virtual void Clear()
         {
-            if (list == null || list.Count == 0)
+            if (list.Count == 0)
             {
                 return;
             }
@@ -566,7 +562,7 @@ namespace AlicizaX.UI
         /// <returns>如果成功获取绑定数据，则返回 true；否则返回 false。</returns>
         protected virtual bool TryGetBindData(int index, out T data)
         {
-            if (list == null || index < 0 || index >= list.Count)
+            if (index < 0 || index >= list.Count)
             {
                 data = default;
                 return false;

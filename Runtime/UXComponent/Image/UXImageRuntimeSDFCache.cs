@@ -1,47 +1,86 @@
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 
 namespace UnityEngine.UI
 {
+    /// <summary>
+    /// Runtime signed-distance-field atlas used for the soft shadow of the UXImage adaptive effect.
+    ///
+    /// Lifetime/ownership:
+    /// - Pages are lazily created by this static cache and are capped by <see cref="MaxPages"/>
+    ///   (2048x2048 ARGB32, 16 MiB per page, 32 MiB maximum). When the cap is reached
+    ///   <see cref="TryGetOrRequest"/> returns false and UXImage falls back to the non-SDF shadow sampling.
+    /// - A bake uses temporary seed/result work textures that are destroyed as soon as the result has been copied
+    ///   into the page, so no MiB-sized work texture stays resident between bakes. They are recreated per new
+    ///   (sprite, spread bucket) bake only.
+    /// - The generator material is created on the first bake and destroyed by <see cref="ReleaseAll"/>.
+    /// - <see cref="ReleaseAll"/> destroys all pages, the generator material and clears both containers. It runs on
+    ///   play mode start (SubsystemRegistration) and through UXImage.ReleaseRuntimeEffectCaches().
+    /// - The atlas padding intentionally equals <see cref="UXImageRuntimeAtlas.MaxPadding"/>: the effect shader maps
+    ///   the padded rect of the main atlas texture onto the padded rect of the SDF texture, so both rings must match.
+    /// - Main-thread only (UGUI).
+    /// </summary>
     internal static class UXImageRuntimeSDFCache
     {
         public readonly struct Entry
         {
-            public readonly bool IsValid;
             public readonly Texture Texture;
             public readonly Vector4 UvRect;
-            public readonly Vector2 TexelSize;
-            public readonly float SpreadPixels;
-            public readonly int Padding;
 
-            public Entry(Texture texture, Vector4 uvRect, Vector2 texelSize, float spreadPixels, int padding)
+            public Entry(Texture texture, Vector4 uvRect)
             {
-                IsValid = texture != null;
                 Texture = texture;
                 UvRect = uvRect;
-                TexelSize = texelSize;
-                SpreadPixels = spreadPixels;
-                Padding = padding;
             }
         }
 
+        /// <summary>Smallest spread bucket. Matches <see cref="UXImageEffectSettings.RuntimeSdfSoftnessThreshold"/>.</summary>
+        internal const int MinSpreadBucket = 8;
+        internal const int MaxSpreadBucket = 64;
+
         private const int AtlasSize = 2048;
         private const int MaxSpriteSize = 512;
+        private const int MaxPages = 2;
+        private const int Padding = UXImageRuntimeAtlas.MaxPadding;
         private const string GeneratorShaderName = "Hidden/UI/UXImageSDFJFA";
         private const string GeneratorResourcePath = "UXImageSDFJFA";
 
-        private static readonly Dictionary<Key, Entry> s_Entries = new Dictionary<Key, Entry>();
-        private static readonly List<Page> s_Pages = new List<Page>();
+        private static readonly Dictionary<Key, Entry> s_Entries = new Dictionary<Key, Entry>(16);
+        private static readonly List<UXImageRuntimeAtlas.Page> s_Pages = new List<UXImageRuntimeAtlas.Page>(MaxPages);
         private static Material s_GeneratorMaterial;
-        private static RenderTexture s_SeedA;
-        private static RenderTexture s_SeedB;
-        private static RenderTexture s_Result;
+        private static int s_Version;
+
+        /// <summary>
+        /// Generation token incremented by <see cref="ReleaseAll"/>. UXImage uses it to invalidate materials that
+        /// still reference an SDF texture of an older generation.
+        /// </summary>
+        public static int Version
+        {
+            get { return s_Version; }
+        }
 
         public static bool ShouldUse(float shadowSoftness)
         {
             return shadowSoftness >= UXImageEffectSettings.RuntimeSdfSoftnessThreshold;
         }
 
-        public static bool TryGetOrRequest(Sprite sprite, float spreadPixels, int padding, out Entry entry)
+        /// <summary>
+        /// Quantizes the continuous shadow softness into a fixed bucket set. The bucket is part of the cache key and
+        /// is also the spread written into the SDF, so an animated softness cannot rebake the same sprite forever.
+        /// Values above <see cref="MaxSpreadBucket"/> are clamped to that bucket.
+        /// </summary>
+        internal static int QuantizeSpread(float spreadPixels)
+        {
+            if (spreadPixels <= MinSpreadBucket)
+                return MinSpreadBucket;
+            if (spreadPixels <= 16f)
+                return 16;
+            if (spreadPixels <= 32f)
+                return 32;
+            return MaxSpreadBucket;
+        }
+
+        public static bool TryGetOrRequest(Sprite sprite, float spreadPixels, out Entry entry)
         {
             entry = default;
             if (sprite == null || sprite.texture == null)
@@ -50,11 +89,9 @@ namespace UnityEngine.UI
             if (sprite.packed && (sprite.packingMode == SpritePackingMode.Tight || sprite.packingRotation != SpritePackingRotation.None))
                 return false;
 
-            spreadPixels = Mathf.Max(spreadPixels, 1f);
-            padding = Mathf.Clamp(padding, Mathf.CeilToInt(spreadPixels) + 2, 128);
-
-            Key key = new Key(sprite, Mathf.CeilToInt(spreadPixels), padding);
-            if (s_Entries.TryGetValue(key, out entry) && entry.IsValid)
+            int spreadBucket = QuantizeSpread(spreadPixels);
+            Key key = new Key(sprite, spreadBucket);
+            if (s_Entries.TryGetValue(key, out entry))
                 return true;
 
             Rect textureRect = sprite.textureRect;
@@ -63,22 +100,19 @@ namespace UnityEngine.UI
             if (width <= 0 || height <= 0 || width > MaxSpriteSize || height > MaxSpriteSize)
                 return false;
 
-            int paddedWidth = width + padding * 2;
-            int paddedHeight = height + padding * 2;
+            int paddedWidth = width + Padding * 2;
+            int paddedHeight = height + Padding * 2;
             if (paddedWidth > AtlasSize || paddedHeight > AtlasSize)
                 return false;
 
-            if (!EnsureGeneratorMaterial())
+            if (!EnsureGeneratorMaterial() || !TryGetSeedFormat(out RenderTextureFormat seedFormat))
                 return false;
 
-            Page page = Allocate(paddedWidth, paddedHeight, out int x, out int y);
+            UXImageRuntimeAtlas.Page page = Allocate(paddedWidth, paddedHeight, out int x, out int y);
             if (page == null)
                 return false;
 
-            if (!Generate(sprite, textureRect, width, height, paddedWidth, paddedHeight, padding, spreadPixels))
-                return false;
-
-            BlitToAtlas(s_Result, page.Texture, new Rect(x, y, paddedWidth, paddedHeight));
+            Bake(sprite, textureRect, width, height, spreadBucket, page.Texture, new Rect(x, y, paddedWidth, paddedHeight), seedFormat);
 
             float invSize = 1f / page.Size;
             entry = new Entry(
@@ -87,12 +121,31 @@ namespace UnityEngine.UI
                     x * invSize,
                     y * invSize,
                     (x + paddedWidth) * invSize,
-                    (y + paddedHeight) * invSize),
-                new Vector2(invSize, invSize),
-                spreadPixels,
-                padding);
+                    (y + paddedHeight) * invSize));
             s_Entries[key] = entry;
             return true;
+        }
+
+        /// <summary>
+        /// Destroys all pages, the generator material and clears the entry/page containers.
+        /// Safe to call repeatedly; live Graphics invalidate their material through <see cref="Version"/>.
+        /// </summary>
+        public static void ReleaseAll()
+        {
+            for (int i = 0; i < s_Pages.Count; i++)
+                s_Pages[i].Release();
+
+            s_Pages.Clear();
+            s_Entries.Clear();
+            UXImageEffectSettings.DestroyRuntimeObject(s_GeneratorMaterial);
+            s_GeneratorMaterial = null;
+            s_Version++;
+        }
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetOnPlayModeStart()
+        {
+            ReleaseAll();
         }
 
         private static bool EnsureGeneratorMaterial()
@@ -114,57 +167,97 @@ namespace UnityEngine.UI
             return true;
         }
 
-        private static bool Generate(
+        private static void Bake(
             Sprite sprite,
             Rect textureRect,
             int width,
             int height,
-            int paddedWidth,
-            int paddedHeight,
-            int padding,
-            float spreadPixels)
+            int spreadBucket,
+            RenderTexture atlas,
+            Rect targetRect,
+            RenderTextureFormat seedFormat)
         {
-            if (!TryGetSeedFormat(out var seedFormat))
-                return false;
+            int paddedWidth = (int)targetRect.width;
+            int paddedHeight = (int)targetRect.height;
 
-            EnsureWorkTexture(ref s_SeedA, paddedWidth, paddedHeight, seedFormat, FilterMode.Point);
-            EnsureWorkTexture(ref s_SeedB, paddedWidth, paddedHeight, seedFormat, FilterMode.Point);
-            EnsureWorkTexture(ref s_Result, paddedWidth, paddedHeight, RenderTextureFormat.ARGB32, FilterMode.Bilinear);
-
-            Vector4 sourceRect = new Vector4(
-                textureRect.x / sprite.texture.width,
-                textureRect.y / sprite.texture.height,
-                textureRect.width / sprite.texture.width,
-                textureRect.height / sprite.texture.height);
-            Vector4 spriteRect = new Vector4(
-                padding,
-                padding,
-                padding + width,
-                padding + height);
-            Vector4 textureSize = new Vector4(paddedWidth, paddedHeight, 1f / paddedWidth, 1f / paddedHeight);
-
-            s_GeneratorMaterial.SetTexture("_SourceTex", sprite.texture);
-            s_GeneratorMaterial.SetVector("_SourceRect", sourceRect);
-            s_GeneratorMaterial.SetVector("_SpriteRect", spriteRect);
-            s_GeneratorMaterial.SetVector("_TextureSize", textureSize);
-            s_GeneratorMaterial.SetFloat("_Spread", Mathf.Max(spreadPixels, 0.0001f));
-            Graphics.Blit(Texture2D.whiteTexture, s_SeedA, s_GeneratorMaterial, 0);
-
-            RenderTexture read = s_SeedA;
-            RenderTexture write = s_SeedB;
-            int step = HighestPowerOfTwo(Mathf.Max(paddedWidth, paddedHeight));
-            while (step >= 1)
+            RenderTexture seedA = null;
+            RenderTexture seedB = null;
+            RenderTexture resolved = null;
+            RenderTexture previous = RenderTexture.active;
+            try
             {
-                s_GeneratorMaterial.SetTexture("_SeedTex", read);
-                s_GeneratorMaterial.SetFloat("_Step", step);
-                Graphics.Blit(Texture2D.whiteTexture, write, s_GeneratorMaterial, 1);
-                Swap(ref read, ref write);
-                step >>= 1;
-            }
+                seedA = CreateWorkTexture(paddedWidth, paddedHeight, seedFormat, FilterMode.Point);
+                seedB = CreateWorkTexture(paddedWidth, paddedHeight, seedFormat, FilterMode.Point);
+                resolved = CreateWorkTexture(paddedWidth, paddedHeight, RenderTextureFormat.ARGB32, FilterMode.Bilinear);
 
-            s_GeneratorMaterial.SetTexture("_SeedTex", read);
-            Graphics.Blit(Texture2D.whiteTexture, s_Result, s_GeneratorMaterial, 2);
-            return true;
+                Vector4 sourceRect = new Vector4(
+                    textureRect.x / sprite.texture.width,
+                    textureRect.y / sprite.texture.height,
+                    textureRect.width / sprite.texture.width,
+                    textureRect.height / sprite.texture.height);
+                Vector4 spriteRect = new Vector4(
+                    Padding,
+                    Padding,
+                    Padding + width,
+                    Padding + height);
+                Vector4 textureSize = new Vector4(paddedWidth, paddedHeight, 1f / paddedWidth, 1f / paddedHeight);
+
+                s_GeneratorMaterial.SetTexture("_SourceTex", sprite.texture);
+                s_GeneratorMaterial.SetVector("_SourceRect", sourceRect);
+                s_GeneratorMaterial.SetVector("_SpriteRect", spriteRect);
+                s_GeneratorMaterial.SetVector("_TextureSize", textureSize);
+                s_GeneratorMaterial.SetFloat("_Spread", spreadBucket);
+                Graphics.Blit(Texture2D.whiteTexture, seedA, s_GeneratorMaterial, 0);
+
+                RenderTexture read = seedA;
+                RenderTexture write = seedB;
+                for (int step = HighestPowerOfTwo(Mathf.Max(paddedWidth, paddedHeight)); step >= 1; step >>= 1)
+                {
+                    s_GeneratorMaterial.SetTexture("_SeedTex", read);
+                    s_GeneratorMaterial.SetFloat("_Step", step);
+                    Graphics.Blit(Texture2D.whiteTexture, write, s_GeneratorMaterial, 1);
+                    RenderTexture swap = read;
+                    read = write;
+                    write = swap;
+                }
+
+                s_GeneratorMaterial.SetTexture("_SeedTex", read);
+                Graphics.Blit(Texture2D.whiteTexture, resolved, s_GeneratorMaterial, 2);
+
+                BlitToAtlas(resolved, atlas, targetRect);
+            }
+            finally
+            {
+                RenderTexture.active = previous;
+
+                // The generator material outlives the bake; drop its references to the sprite and the temporary
+                // seed texture so neither is retained between bakes.
+                Material material = s_GeneratorMaterial;
+                if (material != null)
+                {
+                    material.SetTexture("_SeedTex", null);
+                    material.SetTexture("_SourceTex", null);
+                }
+
+                UXImageEffectSettings.DestroyRenderTexture(seedA);
+                UXImageEffectSettings.DestroyRenderTexture(seedB);
+                UXImageEffectSettings.DestroyRenderTexture(resolved);
+            }
+        }
+
+        private static RenderTexture CreateWorkTexture(int width, int height, RenderTextureFormat format, FilterMode filterMode)
+        {
+            RenderTexture texture = new RenderTexture(width, height, 0, format)
+            {
+                name = "UXImage Runtime SDF Work",
+                hideFlags = HideFlags.HideAndDontSave,
+                useMipMap = false,
+                autoGenerateMips = false,
+                filterMode = filterMode,
+                wrapMode = TextureWrapMode.Clamp
+            };
+            texture.Create();
+            return texture;
         }
 
         private static bool TryGetSeedFormat(out RenderTextureFormat format)
@@ -188,65 +281,36 @@ namespace UnityEngine.UI
         private static void BlitToAtlas(RenderTexture source, RenderTexture atlas, Rect targetRect)
         {
             RenderTexture previous = RenderTexture.active;
-            RenderTexture.active = atlas;
-            GL.PushMatrix();
-            GL.LoadPixelMatrix(0, atlas.width, 0, atlas.height);
-            Graphics.DrawTexture(targetRect, source);
-            GL.PopMatrix();
-            RenderTexture.active = previous;
-        }
-
-        private static void EnsureWorkTexture(ref RenderTexture texture, int width, int height, RenderTextureFormat format, FilterMode filterMode)
-        {
-            if (texture != null && texture.width == width && texture.height == height && texture.format == format)
-                return;
-
-            if (texture != null)
-                DestroyRuntimeObject(texture);
-
-            texture = new RenderTexture(width, height, 0, format)
+            try
             {
-                name = "UXImage Runtime SDF Work",
-                hideFlags = HideFlags.HideAndDontSave,
-                useMipMap = false,
-                autoGenerateMips = false,
-                filterMode = filterMode,
-                wrapMode = TextureWrapMode.Clamp
-            };
-            texture.Create();
-        }
-
-        private static void DestroyRuntimeObject(Object target)
-        {
-            if (target == null)
-                return;
-
-#if UNITY_EDITOR
-            if (!Application.isPlaying)
-            {
-                Object.DestroyImmediate(target);
-                return;
+                RenderTexture.active = atlas;
+                GL.PushMatrix();
+                try
+                {
+                    GL.LoadPixelMatrix(0, atlas.width, 0, atlas.height);
+                    Graphics.DrawTexture(targetRect, source);
+                }
+                finally
+                {
+                    GL.PopMatrix();
+                }
             }
-#endif
-            Object.Destroy(target);
+            finally
+            {
+                RenderTexture.active = previous;
+            }
         }
 
         private static int HighestPowerOfTwo(int value)
         {
+            // Half of the next power of two, which is the usual JFA starting step.
             int result = 1;
             while (result < value)
                 result <<= 1;
             return result >> 1;
         }
 
-        private static void Swap(ref RenderTexture a, ref RenderTexture b)
-        {
-            RenderTexture temp = a;
-            a = b;
-            b = temp;
-        }
-
-        private static Page Allocate(int width, int height, out int x, out int y)
+        private static UXImageRuntimeAtlas.Page Allocate(int width, int height, out int x, out int y)
         {
             for (int i = 0; i < s_Pages.Count; i++)
             {
@@ -254,102 +318,54 @@ namespace UnityEngine.UI
                     return s_Pages[i];
             }
 
-            Page page = new Page(AtlasSize);
+            if (s_Pages.Count >= MaxPages)
+            {
+                x = 0;
+                y = 0;
+                return null;
+            }
+
+            UXImageRuntimeAtlas.Page page = new UXImageRuntimeAtlas.Page(AtlasSize, "UXImage Runtime SDF Atlas");
             s_Pages.Add(page);
             if (page.TryAllocate(width, height, out x, out y))
                 return page;
 
+            // Unreachable for callers that pre-check the block size against AtlasSize; never leak the page if a
+            // future caller forgets that check.
+            s_Pages.RemoveAt(s_Pages.Count - 1);
+            page.Release();
+            x = 0;
+            y = 0;
             return null;
         }
 
-        private readonly struct Key
+        private readonly struct Key : System.IEquatable<Key>
         {
             private readonly Sprite m_Sprite;
-            private readonly int m_SpreadPixels;
-            private readonly int m_Padding;
+            private readonly int m_SpreadBucket;
 
-            public Key(Sprite sprite, int spreadPixels, int padding)
+            public Key(Sprite sprite, int spreadBucket)
             {
                 m_Sprite = sprite;
-                m_SpreadPixels = spreadPixels;
-                m_Padding = padding;
+                m_SpreadBucket = spreadBucket;
+            }
+
+            public bool Equals(Key other)
+            {
+                return ReferenceEquals(m_Sprite, other.m_Sprite) && m_SpreadBucket == other.m_SpreadBucket;
             }
 
             public override bool Equals(object obj)
             {
-                return obj is Key other &&
-                       ReferenceEquals(m_Sprite, other.m_Sprite) &&
-                       m_SpreadPixels == other.m_SpreadPixels &&
-                       m_Padding == other.m_Padding;
+                return obj is Key other && Equals(other);
             }
 
             public override int GetHashCode()
             {
                 unchecked
                 {
-                    int hash = m_Sprite != null ? UnityObjectId.Get(m_Sprite).GetHashCode() : 0;
-                    hash = (hash * 397) ^ m_SpreadPixels;
-                    hash = (hash * 397) ^ m_Padding;
-                    return hash;
+                    return (RuntimeHelpers.GetHashCode(m_Sprite) * 397) ^ m_SpreadBucket;
                 }
-            }
-        }
-
-        private sealed class Page
-        {
-            public readonly int Size;
-            public readonly RenderTexture Texture;
-            private int m_X;
-            private int m_Y;
-            private int m_RowHeight;
-
-            public Page(int size)
-            {
-                Size = size;
-                Texture = new RenderTexture(size, size, 0, RenderTextureFormat.ARGB32)
-                {
-                    name = "UXImage Runtime SDF Atlas",
-                    hideFlags = HideFlags.HideAndDontSave,
-                    useMipMap = false,
-                    autoGenerateMips = false,
-                    filterMode = FilterMode.Bilinear,
-                    wrapMode = TextureWrapMode.Clamp
-                };
-                Texture.Create();
-                Clear(Texture);
-            }
-
-            public bool TryAllocate(int width, int height, out int x, out int y)
-            {
-                if (m_X + width > Size)
-                {
-                    m_X = 0;
-                    m_Y += m_RowHeight;
-                    m_RowHeight = 0;
-                }
-
-                if (m_Y + height > Size)
-                {
-                    x = 0;
-                    y = 0;
-                    return false;
-                }
-
-                x = m_X;
-                y = m_Y;
-                m_X += width;
-                if (height > m_RowHeight)
-                    m_RowHeight = height;
-
-                return true;
-            }
-
-            private static void Clear(RenderTexture texture)
-            {
-                RenderTexture previous = RenderTexture.active;
-                RenderTexture.active = texture;
-                GL.Clear(false, true, Color.clear);
-                RenderTexture.active = previous;
             }
         }
     }

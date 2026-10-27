@@ -125,7 +125,6 @@ namespace UnityEngine.UI
                     return;
 
                 m_OutlineEffectDistance = value;
-                ResetRuntimeEffectCache();
                 SetVerticesDirty();
             }
         }
@@ -140,7 +139,6 @@ namespace UnityEngine.UI
                     return;
 
                 m_OutlineSoftness = value;
-                ResetRuntimeEffectCache();
                 SetVerticesDirty();
             }
         }
@@ -168,7 +166,6 @@ namespace UnityEngine.UI
                     return;
 
                 m_ShadowEffectDistance = value;
-                ResetRuntimeEffectCache();
                 SetVerticesDirty();
             }
         }
@@ -183,7 +180,6 @@ namespace UnityEngine.UI
                     return;
 
                 m_ShadowSoftness = value;
-                ResetRuntimeEffectCache();
                 SetVerticesDirty();
             }
         }
@@ -206,19 +202,42 @@ namespace UnityEngine.UI
             get { return m_EnableOutline || m_EnableShadow; }
         }
 
+        /// <summary>
+        /// Releases the static runtime atlas/SDF caches used by the adaptive effect (RenderTextures, generator
+        /// material and cached sprite entries). Call it after the affected UI has been hidden or destroyed, e.g. on
+        /// content shutdown or scene transitions. Visible Graphics recreate their pages lazily on the next mesh
+        /// rebuild; until that rebuild their effect material falls back to the default UI material.
+        /// </summary>
+        public static void ReleaseRuntimeEffectCaches()
+        {
+            UXImageRuntimeSDFCache.ReleaseAll();
+            UXImageRuntimeAtlas.ReleaseAll();
+        }
+
+        // Adaptive effect state. All of it is prepared by ApplyAdaptiveEffectData (OnPopulateMesh path) and by
+        // EnsureEffectMaterial/ApplyEffectMaterialState; the mainTexture/defaultMaterial/materialForRendering
+        // getters only read these fields, so a property getter can never create atlas pages or touch GL state.
+
         private UXImageRuntimeAtlas.Entry m_RuntimeAtlasEntry;
         private Sprite m_RuntimeAtlasSprite;
-        private int m_RuntimeAtlasPadding;
-        private Texture m_RuntimeSdfTexture;
-        private Texture m_PendingRuntimeSdfTexture;
-        private Texture m_RuntimeMaterialSdfTexture;
+        private int m_RuntimeAtlasVersion;
+
+        private Material m_EffectMaterial;
+        private Texture m_EffectMaterialSdfTexture;
+        private Color m_EffectMaterialOutlineColor;
+        private Color m_EffectMaterialShadowColor;
+        private int m_EffectMaterialSdfVersion;
 
         public override Texture mainTexture
         {
             get
             {
-                if (HasAdaptiveEffect && TryGetRuntimeAtlasEntry(out var entry))
-                    return entry.Texture;
+                if (HasAdaptiveEffect &&
+                    m_RuntimeAtlasVersion == UXImageRuntimeAtlas.Version &&
+                    m_RuntimeAtlasEntry.IsValid)
+                {
+                    return m_RuntimeAtlasEntry.Texture;
+                }
 
                 return base.mainTexture;
             }
@@ -231,7 +250,7 @@ namespace UnityEngine.UI
                 if (!HasAdaptiveEffect)
                     return base.defaultMaterial;
 
-                Material effectMaterial = UXImageEffectSettings.GetEffectMaterial(m_RuntimeSdfTexture, m_OutlineEffectColor, m_ShadowEffectColor);
+                Material effectMaterial = PreparedEffectMaterial;
                 return effectMaterial != null ? effectMaterial : base.defaultMaterial;
             }
         }
@@ -244,14 +263,20 @@ namespace UnityEngine.UI
                 if (!HasAdaptiveEffect)
                     return base.materialForRendering;
 
-                if (m_PendingRuntimeSdfTexture != m_RuntimeMaterialSdfTexture)
-                {
-                    m_RuntimeSdfTexture = m_PendingRuntimeSdfTexture;
-                    m_RuntimeMaterialSdfTexture = m_PendingRuntimeSdfTexture;
-                }
-
-                Material effectMaterial = UXImageEffectSettings.GetEffectMaterial(m_RuntimeSdfTexture, m_OutlineEffectColor, m_ShadowEffectColor);
+                Material effectMaterial = PreparedEffectMaterial;
                 return effectMaterial != null ? GetModifiedMaterial(effectMaterial) : base.materialForRendering;
+            }
+        }
+
+        private Material PreparedEffectMaterial
+        {
+            get
+            {
+                Material material = m_EffectMaterial;
+                if (material == null || m_EffectMaterialSdfVersion != UXImageRuntimeSDFCache.Version)
+                    return null;
+
+                return material;
             }
         }
 
@@ -982,6 +1007,12 @@ namespace UnityEngine.UI
             EnsureEffectCanvasChannels();
         }
 
+        protected override void OnDestroy()
+        {
+            ReleaseEffectMaterial();
+            base.OnDestroy();
+        }
+
 #if UNITY_EDITOR
         protected override void OnValidate()
         {
@@ -989,7 +1020,6 @@ namespace UnityEngine.UI
             CacheGradientKeys();
             m_OutlineSoftness = Mathf.Max(m_OutlineSoftness, 0f);
             m_ShadowSoftness = Mathf.Max(m_ShadowSoftness, 0f);
-            ResetRuntimeEffectCache(false);
             EnsureEffectCanvasChannels();
         }
 #endif
@@ -1075,47 +1105,35 @@ namespace UnityEngine.UI
             float shadowSoftness = Mathf.Max(m_ShadowSoftness, 0.001f);
             Vector2 shadowOffset = m_ShadowEffectDistance;
             float useRuntimeSdf = 0f;
-            Vector2 spriteTexelSize;
             Vector4 sampleRect;
             Vector4 sdfRect = Vector4.zero;
-            m_PendingRuntimeSdfTexture = null;
-            bool usingRuntimeAtlas = false;
+            Texture sdfTexture = null;
 
-            if (TryGetRuntimeAtlasEntry(out var atlasEntry))
+            EnsureEffectMaterial();
+
+            if (TryPrepareRuntimeAtlasEntry(sprite, out var atlasEntry))
             {
-                usingRuntimeAtlas = true;
-                spriteTexelSize = atlasEntry.TexelSize;
+                Vector2 atlasTexelSize = atlasEntry.TexelSize;
                 sampleRect = GetPaddedRuntimeAtlasRect(atlasEntry);
                 RemapVerticesToRuntimeAtlas(toFill, count, atlasEntry);
+                ExpandSimpleEffectGeometry(toFill, count, atlasTexelSize);
+
+                if (m_EnableShadow && UXImageRuntimeSDFCache.ShouldUse(shadowSoftness) &&
+                    UXImageRuntimeSDFCache.TryGetOrRequest(sprite, shadowSoftness, out var sdfEntry))
+                {
+                    useRuntimeSdf = 1f;
+                    sdfRect = sdfEntry.UvRect;
+                    sdfTexture = sdfEntry.Texture;
+                }
             }
             else
             {
-                Texture texture = sprite != null ? sprite.texture : null;
-                Vector2 textureSize = texture != null
-                    ? new Vector2(texture.width, texture.height)
-                    : Vector2.one;
-
                 sampleRect = sprite != null
                     ? Sprites.DataUtility.GetOuterUV(sprite)
                     : new Vector4(0f, 0f, 1f, 1f);
-
-                float uvWidth = Mathf.Abs(sampleRect.z - sampleRect.x);
-                float uvHeight = Mathf.Abs(sampleRect.w - sampleRect.y);
-                spriteTexelSize = new Vector2(
-                    uvWidth > 0f ? 1f / (uvWidth * textureSize.x) : 0f,
-                    uvHeight > 0f ? 1f / (uvHeight * textureSize.y) : 0f);
             }
 
-            if (usingRuntimeAtlas)
-                ExpandSimpleEffectGeometry(toFill, count, spriteTexelSize);
-
-            if (usingRuntimeAtlas && m_EnableShadow && UXImageRuntimeSDFCache.ShouldUse(shadowSoftness) &&
-                UXImageRuntimeSDFCache.TryGetOrRequest(sprite, shadowSoftness, atlasEntry.Padding, out var sdfEntry) && sdfEntry.IsValid)
-            {
-                useRuntimeSdf = 1f;
-                sdfRect = sdfEntry.UvRect;
-                m_PendingRuntimeSdfTexture = sdfEntry.Texture;
-            }
+            ApplyEffectMaterialState(sdfTexture);
 
             if (useRuntimeSdf > 0f)
                 shadowEnabled = 2f;
@@ -1140,46 +1158,111 @@ namespace UnityEngine.UI
             }
         }
 
+        private void EnsureEffectMaterial()
+        {
+            if (m_EffectMaterial != null)
+                return;
+
+            m_EffectMaterial = UXImageEffectSettings.CreateEffectMaterial();
+            if (m_EffectMaterial == null)
+                return;
+
+            m_EffectMaterialSdfTexture = null;
+            m_EffectMaterialOutlineColor = m_OutlineEffectColor;
+            m_EffectMaterialShadowColor = m_ShadowEffectColor;
+            m_EffectMaterialSdfVersion = UXImageRuntimeSDFCache.Version;
+
+            m_EffectMaterial.SetTexture("_SDFTex", null);
+            m_EffectMaterial.SetColor("_OutlineColor", m_EffectMaterialOutlineColor);
+            m_EffectMaterial.SetColor("_ShadowColor", m_EffectMaterialShadowColor);
+        }
+
+        private void ApplyEffectMaterialState(Texture sdfTexture)
+        {
+            Material material = m_EffectMaterial;
+            if (material == null)
+                return;
+
+            if (!ReferenceEquals(m_EffectMaterialSdfTexture, sdfTexture))
+            {
+                m_EffectMaterialSdfTexture = sdfTexture;
+                material.SetTexture("_SDFTex", sdfTexture);
+            }
+
+            Color outlineColor = m_OutlineEffectColor;
+            if (m_EffectMaterialOutlineColor != outlineColor)
+            {
+                m_EffectMaterialOutlineColor = outlineColor;
+                material.SetColor("_OutlineColor", outlineColor);
+            }
+
+            Color shadowColor = m_ShadowEffectColor;
+            if (m_EffectMaterialShadowColor != shadowColor)
+            {
+                m_EffectMaterialShadowColor = shadowColor;
+                material.SetColor("_ShadowColor", shadowColor);
+            }
+
+            m_EffectMaterialSdfVersion = UXImageRuntimeSDFCache.Version;
+        }
+
+        private void ReleaseEffectMaterial()
+        {
+            if (m_EffectMaterial == null)
+                return;
+
+            UXImageEffectSettings.DestroyRuntimeObject(m_EffectMaterial);
+            m_EffectMaterial = null;
+            m_EffectMaterialSdfTexture = null;
+            m_EffectMaterialOutlineColor = default;
+            m_EffectMaterialShadowColor = default;
+            m_EffectMaterialSdfVersion = 0;
+        }
+
         private void EnsureEffectCanvasChannels()
         {
             if (HasAdaptiveEffect)
                 UXImageEffectSettings.EnsureCanvasChannels(canvas);
         }
 
-        private void ResetRuntimeEffectCache(bool setMaterialDirty = true)
-        {
-            m_RuntimeAtlasEntry = default;
-            m_RuntimeAtlasSprite = null;
-            m_RuntimeAtlasPadding = 0;
-            m_PendingRuntimeSdfTexture = null;
-            m_RuntimeSdfTexture = null;
-            m_RuntimeMaterialSdfTexture = null;
-            if (setMaterialDirty)
-                SetMaterialDirty();
-        }
-
-        private bool TryGetRuntimeAtlasEntry(out UXImageRuntimeAtlas.Entry entry)
+        /// <summary>
+        /// Resolves (and caches per Graphic) the runtime atlas entry for the current sprite. This is the only place
+        /// that may create atlas pages; it is called from the mesh update path, never from a rendering getter.
+        /// </summary>
+        private bool TryPrepareRuntimeAtlasEntry(Sprite sprite, out UXImageRuntimeAtlas.Entry entry)
         {
             entry = default;
-            if (!HasAdaptiveEffect || type == Type.Tiled)
+            if (!HasAdaptiveEffect || type == Type.Tiled || sprite == null)
+            {
+                ClearRuntimeAtlasEntry();
                 return false;
+            }
 
-            Sprite sprite = overrideSprite;
-            int padding = GetEffectPadding();
-            if (m_RuntimeAtlasSprite == sprite && m_RuntimeAtlasPadding >= padding && m_RuntimeAtlasEntry.IsValid)
+            if (m_RuntimeAtlasVersion == UXImageRuntimeAtlas.Version &&
+                m_RuntimeAtlasSprite == sprite &&
+                m_RuntimeAtlasEntry.IsValid)
             {
                 entry = m_RuntimeAtlasEntry;
                 return true;
             }
 
-            if (!UXImageRuntimeAtlas.TryGet(sprite, padding, out entry))
+            if (!UXImageRuntimeAtlas.TryGet(sprite, out entry))
+            {
+                ClearRuntimeAtlasEntry();
                 return false;
+            }
 
-            m_RuntimeAtlasSprite = sprite;
-            m_RuntimeAtlasPadding = padding;
             m_RuntimeAtlasEntry = entry;
-
+            m_RuntimeAtlasSprite = sprite;
+            m_RuntimeAtlasVersion = UXImageRuntimeAtlas.Version;
             return true;
+        }
+
+        private void ClearRuntimeAtlasEntry()
+        {
+            m_RuntimeAtlasEntry = default;
+            m_RuntimeAtlasSprite = null;
+            m_RuntimeAtlasVersion = 0;
         }
 
         private static Vector4 GetPaddedRuntimeAtlasRect(UXImageRuntimeAtlas.Entry entry)
@@ -1207,7 +1290,9 @@ namespace UnityEngine.UI
                 padding = Mathf.Max(padding, Mathf.Abs(m_ShadowEffectDistance.y) + m_ShadowSoftness);
             }
 
-            return Mathf.CeilToInt(padding) + 2;
+            // The atlas entry is allocated once with UXImageRuntimeAtlas.MaxPadding ring; larger requests would
+            // sample neighbouring sprites, so the effect padding is capped to the same value.
+            return Mathf.Clamp(Mathf.CeilToInt(padding) + 2, 1, UXImageRuntimeAtlas.MaxPadding);
         }
 
         private void RemapVerticesToRuntimeAtlas(VertexHelper toFill, int count, UXImageRuntimeAtlas.Entry entry)

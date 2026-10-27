@@ -16,7 +16,7 @@ namespace AlicizaX.UI
 
         public override int GetTemplateId(int index)
         {
-            return index >= 0 && list != null && index < list.Count
+            return index >= 0 && index < list.Count
                 ? list[index].TemplateId
                 : -1;
         }

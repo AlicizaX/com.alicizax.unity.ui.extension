@@ -6,6 +6,7 @@ namespace AlicizaX.UI
     public class GroupAdapter<TData> : Adapter<TData> where TData : class, IGroupViewData, new()
     {
         private readonly List<TData> showList = new();
+        private readonly List<TData> previousShowList = new();
         private readonly int groupTemplateId;
         private readonly Dictionary<int, TData> groupsByType = new();
         private readonly List<TData> groupOrder = new();
@@ -59,19 +60,6 @@ namespace AlicizaX.UI
                 return;
             }
 
-            if (list == null)
-            {
-                showList.Clear();
-                groupsByType.Clear();
-                groupOrder.Clear();
-                itemCountByType.Clear();
-                firstItemIndexByType.Clear();
-                lastItemIndexByType.Clear();
-                RestoreChoiceIndex(selectedData);
-                base.NotifyDataChanged();
-                return;
-            }
-
             BuildTypeIndex();
             RebuildShowList();
             RestoreChoiceIndex(selectedData);
@@ -94,11 +82,6 @@ namespace AlicizaX.UI
 
         public override void Add(TData item)
         {
-            if (list == null)
-            {
-                list = new List<TData>();
-            }
-
             list.Add(item);
             InsertSourceItemIntoShowList(item);
         }
@@ -110,10 +93,17 @@ namespace AlicizaX.UI
                 return;
             }
 
-            foreach (TData item in collection)
+            CaptureDisplaySnapshot();
+            TData selectedData = GetChoiceData();
+            int previousCount = list.Count;
+            list.AddRange(collection);
+            if (list.Count == previousCount)
             {
-                Add(item);
+                previousShowList.Clear();
+                return;
             }
+
+            ApplyDisplayChanges(selectedData);
         }
 
         public override void Insert(int index, TData item)
@@ -129,12 +119,17 @@ namespace AlicizaX.UI
                 return;
             }
 
-            int current = index;
-            foreach (TData item in collection)
+            CaptureDisplaySnapshot();
+            TData selectedData = GetChoiceData();
+            int previousCount = list.Count;
+            list.InsertRange(index, collection);
+            if (list.Count == previousCount)
             {
-                Insert(current, item);
-                current++;
+                previousShowList.Clear();
+                return;
             }
+
+            ApplyDisplayChanges(selectedData);
         }
 
         public override void Remove(TData item)
@@ -145,56 +140,54 @@ namespace AlicizaX.UI
 
         public override void RemoveAt(int index)
         {
-            if (list == null || index < 0 || index >= list.Count)
+            if (index < 0 || index >= list.Count)
             {
                 return;
             }
 
             TData item = list[index];
-            int displayIndex = FindDisplayIndex(item);
+            int displayIndex = IndexOfDisplayData(item);
             list.RemoveAt(index);
             RemoveSourceItemFromShowList(item, displayIndex);
         }
 
         public override void RemoveRange(int index, int count)
         {
-            if (count <= 0 || list == null)
+            if (count <= 0 || index < 0 || index >= list.Count)
             {
                 return;
             }
 
-            int last = index + count;
-            if (last > list.Count)
-            {
-                last = list.Count;
-            }
-
-            last--;
-            for (int i = last; i >= index; i--)
-            {
-                RemoveAt(i);
-            }
+            count = Math.Min(count, list.Count - index);
+            CaptureDisplaySnapshot();
+            TData selectedData = GetChoiceData();
+            list.RemoveRange(index, count);
+            ApplyDisplayChanges(selectedData);
         }
 
         public override void RemoveAll(Predicate<TData> match)
         {
-            if (list == null || match == null)
+            if (match == null)
             {
                 return;
             }
 
-            for (int i = list.Count - 1; i >= 0; i--)
+            CaptureDisplaySnapshot();
+            TData selectedData = GetChoiceData();
+            int previousCount = list.Count;
+            list.RemoveAll(match);
+            if (list.Count == previousCount)
             {
-                if (match(list[i]))
-                {
-                    RemoveAt(i);
-                }
+                previousShowList.Clear();
+                return;
             }
+
+            ApplyDisplayChanges(selectedData);
         }
 
         public override void Clear()
         {
-            if (list == null || list.Count == 0)
+            if (list.Count == 0)
             {
                 return;
             }
@@ -346,7 +339,7 @@ namespace AlicizaX.UI
             firstItemIndexByType.Clear();
             lastItemIndexByType.Clear();
 
-            if (list == null || list.Count <= 0)
+            if (list.Count <= 0)
             {
                 return;
             }
@@ -542,9 +535,105 @@ namespace AlicizaX.UI
             NotifyItemRemoved(groupIndex);
         }
 
-        private int FindDisplayIndex(TData item)
+        private void CaptureDisplaySnapshot()
         {
-            return IndexOfDisplayData(item);
+            previousShowList.Clear();
+            previousShowList.AddRange(showList);
+        }
+
+        /// <summary>
+        /// 批量改写数据源后统一重建索引与显示列表，并尽量只发出一次结构通知。
+        /// RecyclerView 的增量结构通知要求每次通知都对应数据源的中间状态；合并后的区间若同时
+        /// 包含移除与插入，则无法满足该前提，此时退回一次整体刷新以保证 Holder 绑定与最终数据一致。
+        /// </summary>
+        private void ApplyDisplayChanges(TData selectedData)
+        {
+            int previousChoiceIndex = choiceIndex;
+            BuildTypeIndex();
+            PruneEmptyGroups();
+            RebuildShowList();
+            choiceIndex = -1;
+            DisplayChange change = NotifyDisplayChange();
+            choiceIndex = previousChoiceIndex;
+            RestoreChoiceIndex(selectedData);
+            if (change == DisplayChange.Range)
+            {
+                RefreshVisibleChoice(previousChoiceIndex);
+            }
+            else if (change == DisplayChange.Replace)
+            {
+                base.NotifyDataChanged();
+            }
+        }
+
+        private DisplayChange NotifyDisplayChange()
+        {
+            int oldCount = previousShowList.Count;
+            int newCount = showList.Count;
+            int maxPrefix = Math.Min(oldCount, newCount);
+            int prefix = 0;
+            while (prefix < maxPrefix && ReferenceEquals(previousShowList[prefix], showList[prefix]))
+            {
+                prefix++;
+            }
+
+            int suffix = 0;
+            int maxSuffix = maxPrefix - prefix;
+            while (suffix < maxSuffix &&
+                   ReferenceEquals(previousShowList[oldCount - 1 - suffix], showList[newCount - 1 - suffix]))
+            {
+                suffix++;
+            }
+
+            int removedCount = oldCount - prefix - suffix;
+            int insertedCount = newCount - prefix - suffix;
+            previousShowList.Clear();
+            if (removedCount == 0 && insertedCount == 0)
+            {
+                return DisplayChange.None;
+            }
+
+            if (removedCount == 0)
+            {
+                NotifyItemRangeInserted(prefix, insertedCount);
+                return DisplayChange.Range;
+            }
+
+            if (insertedCount == 0)
+            {
+                NotifyItemRangeRemoved(prefix, removedCount);
+                return DisplayChange.Range;
+            }
+
+            return DisplayChange.Replace;
+        }
+
+        private void RefreshVisibleChoice(int previousChoiceIndex)
+        {
+            if (previousChoiceIndex != choiceIndex && previousChoiceIndex >= 0)
+            {
+                ApplySelection(previousChoiceIndex, false);
+            }
+
+            if (choiceIndex >= 0)
+            {
+                ApplySelection(choiceIndex, true);
+            }
+        }
+
+        private void PruneEmptyGroups()
+        {
+            for (int i = groupOrder.Count - 1; i >= 0; i--)
+            {
+                TData group = groupOrder[i];
+                if (itemCountByType.TryGetValue(group.Type, out int count) && count > 0)
+                {
+                    continue;
+                }
+
+                groupsByType.Remove(group.Type);
+                groupOrder.RemoveAt(i);
+            }
         }
 
         private int IndexOfDisplayData(TData data)
@@ -564,6 +653,13 @@ namespace AlicizaX.UI
             }
 
             return -1;
+        }
+
+        private enum DisplayChange
+        {
+            None,
+            Range,
+            Replace
         }
     }
 }

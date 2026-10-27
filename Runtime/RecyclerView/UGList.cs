@@ -66,7 +66,7 @@ namespace AlicizaX.UI
 
         public void SetData(List<TData> data, ListScrollPolicy scrollPolicy = ListScrollPolicy.KeepAnchor)
         {
-            _datas = data;
+            _datas = data ?? new List<TData>();
             if (_adapterBound)
             {
                 _adapter.SetList(_datas, scrollPolicy);
@@ -86,7 +86,6 @@ namespace AlicizaX.UI
             }
 
             _adapter.Add(item);
-            _datas = _adapter.Items as List<TData> ?? _datas;
         }
 
         public void AddRange(IEnumerable<TData> collection)
@@ -97,7 +96,6 @@ namespace AlicizaX.UI
             }
 
             _adapter.AddRange(collection);
-            _datas = _adapter.Items as List<TData> ?? _datas;
         }
 
         public void Insert(int index, TData item)
@@ -108,7 +106,6 @@ namespace AlicizaX.UI
             }
 
             _adapter.Insert(index, item);
-            _datas = _adapter.Items as List<TData> ?? _datas;
         }
 
         public void InsertRange(int index, IEnumerable<TData> collection)
@@ -119,7 +116,6 @@ namespace AlicizaX.UI
             }
 
             _adapter.InsertRange(index, collection);
-            _datas = _adapter.Items as List<TData> ?? _datas;
         }
 
         public void ReplaceAt(int index, TData item, bool relayout = false)

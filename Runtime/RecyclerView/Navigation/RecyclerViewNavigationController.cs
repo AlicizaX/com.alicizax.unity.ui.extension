@@ -793,29 +793,22 @@ namespace AlicizaX.UI
                 return;
             }
 
-            NavigationFocusSnapshot snapshot = new NavigationFocusSnapshot
+            bool hasSnapshot = navigationFocusSnapshots.TryGetValue(holder, out NavigationFocusSnapshot previous);
+            if (hasSnapshot &&
+                previous.DataIndex == holder.DataIndex &&
+                previous.BindingVersion == holder.BindingVersion &&
+                previous.Focused == focused)
+            {
+                return;
+            }
+
+            // 无论聚焦与否都记录最后一次通知值，未聚焦项才能在滚动帧内被去重。
+            navigationFocusSnapshots[holder] = new NavigationFocusSnapshot
             {
                 DataIndex = holder.DataIndex,
                 BindingVersion = holder.BindingVersion,
                 Focused = focused
             };
-
-            if (navigationFocusSnapshots.TryGetValue(holder, out NavigationFocusSnapshot previous) &&
-                previous.DataIndex == snapshot.DataIndex &&
-                previous.BindingVersion == snapshot.BindingVersion &&
-                previous.Focused == snapshot.Focused)
-            {
-                return;
-            }
-
-            if (focused)
-            {
-                navigationFocusSnapshots[holder] = snapshot;
-            }
-            else
-            {
-                navigationFocusSnapshots.Remove(holder);
-            }
 
             navigationHolder.HandleNavigationFocused(focused);
         }

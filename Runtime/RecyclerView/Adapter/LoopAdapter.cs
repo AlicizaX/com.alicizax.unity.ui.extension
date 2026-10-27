@@ -104,7 +104,7 @@ namespace AlicizaX.UI
 
         public override int GetRealCount()
         {
-            return list == null ? 0 : list.Count;
+            return list.Count;
         }
 
         public override void OnBindViewHolder(ViewHolder viewHolder, int index)
