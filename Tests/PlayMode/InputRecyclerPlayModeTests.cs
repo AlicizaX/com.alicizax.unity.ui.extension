@@ -146,7 +146,7 @@ namespace AlicizaX.UI.NavigationTests
         {
             yield return Ready();
             Assert.That(keyboard.anyKey.synthetic, Is.True);
-            Assert.That(Read<int>(typeof(UXInput.Watch), null, "_initialDeviceProbeFramesRemaining"), Is.Zero);
+            // UXInput.Watch 的初始设备探测帧字段已随输入包重构移除，不再断言该实现细节。
             int activity = 0;
             System.Action<UXInput.Watch.InputContext> listener = context =>
             {
@@ -259,12 +259,12 @@ namespace AlicizaX.UI.NavigationTests
             navigation.SetFocus(25);
             CheckFocus(25);
             var holders = listRoot.GetComponentsInChildren<IntegrationNavigationItem>(true);
-            var pool = Pool;
             Object.Destroy(canvasRoot);
             yield return null;
             yield return null;
             Assert.That(holders.All(item => item == null), Is.True);
-            Assert.That(pool.GetActiveCount(0), Is.Zero);
+            // 名称即契约：销毁后对象池必须把活跃实例清零（原断言在销毁前取快照，等于没验证这一步）。
+            Assert.That(PoolActiveCount(0), Is.Zero);
             Assert.That(Read<int>(typeof(UXNavigationSystem), null, "_scopeCount"), Is.Zero);
             Assert.That(eventSystem.currentSelectedGameObject, Is.Null);
             yield return MoveOnce(0);
@@ -292,7 +292,7 @@ namespace AlicizaX.UI.NavigationTests
             yield return SubmitOnce(true);
             Assert.That(Visible(), Is.Empty);
             Assert.That(holders.Sum(item => item.SubmitCalls), Is.Zero);
-            Assert.That(Pool.GetActiveCount(0), Is.Zero);
+            Assert.That(PoolActiveCount(0), Is.Zero);
             Assert.That(list.Adapter.ChoiceIndex, Is.EqualTo(-1));
             list.SetData(Enumerable.Range(0, 6).Select(i => new IntegrationData { Id = 2000 + i }).ToList());
             navigation.RestoreFocus(0);

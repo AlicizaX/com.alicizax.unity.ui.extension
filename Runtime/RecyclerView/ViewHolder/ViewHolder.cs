@@ -8,6 +8,7 @@ namespace AlicizaX.UI
     /// <summary>
     /// RecyclerView 列表项视图持有者基类，负责承载单个可复用列表项的视图逻辑。
     /// </summary>
+    [RequireComponent(typeof(RectTransform))]
     public abstract class ViewHolder : MonoBehaviour, IPointerDownHandler, IPointerUpHandler
     {
         private RectTransform rectTransform;
@@ -26,8 +27,6 @@ namespace AlicizaX.UI
                 return rectTransform;
             }
         }
-
-        internal bool IsPooled { get; set; }
 
         internal int TemplateId { get; set; } = -1;
 
@@ -49,6 +48,23 @@ namespace AlicizaX.UI
             return ItemMeasure.ReadAxisLength(RectTransform, measureDirection);
         }
 
+        /// <summary>
+        /// 一次性写入布局绑定信息，避免池/布局各写一半导致中间态。
+        /// </summary>
+        internal void SetTemplate(int templateId, int layoutIndex, int dataIndex, RecyclerView owner)
+        {
+            TemplateId = templateId;
+            Index = layoutIndex;
+            DataIndex = dataIndex;
+            RecyclerView = owner;
+        }
+
+        internal void ShiftIndexes(int delta)
+        {
+            Index += delta;
+            DataIndex += delta;
+        }
+
         public void RequestResize()
         {
             RecyclerView?.MeasureBoundHolder(this);
@@ -62,18 +78,11 @@ namespace AlicizaX.UI
 
         internal void Bind(ISimpleViewData data, int index)
         {
-            if (data == null)
-            {
-                AdvanceBindingVersion();
-                ClearFailedBinding();
-                return;
-            }
-
             AdvanceBindingVersion();
             DataIndex = index;
-            if (!OnBind(data, index))
+            if (data == null || !OnBind(data, index))
             {
-                ClearFailedBinding();
+                Clear();
                 return;
             }
 
@@ -108,20 +117,16 @@ namespace AlicizaX.UI
 
         internal void Clear()
         {
-            ApplySelection(false);
-            if (isBound)
-            {
-                OnClear();
-            }
-
-            isBound = false;
-            ResetBindingState();
+            ReleaseBinding();
+            DataIndex = -1;
         }
 
         internal void OnRecycled()
         {
+#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
             RecyclerView?.NotifyHolderRecycled(this);
-            Clear();
+#endif
+            ReleaseBinding();
             AdvanceBindingVersion();
             TemplateId = -1;
             Index = -1;
@@ -129,9 +134,7 @@ namespace AlicizaX.UI
             RecyclerView = null;
         }
 
-        private protected abstract bool OnBind(ISimpleViewData data, int index);
-
-        private protected void ClearFailedBinding()
+        private void ReleaseBinding()
         {
             ApplySelection(false);
             if (isBound)
@@ -140,9 +143,10 @@ namespace AlicizaX.UI
             }
 
             isBound = false;
-            DataIndex = -1;
             ResetBindingState();
         }
+
+        private protected abstract bool OnBind(ISimpleViewData data, int index);
 
         /// <summary>
         /// 将当前绑定的数据项设置为业务选中项，通常在点击或确认操作中主动调用。
@@ -159,7 +163,7 @@ namespace AlicizaX.UI
 
         public virtual void OnPointerDown(PointerEventData eventData)
         {
-            //帮导航模块兼容做拦截事件....后续在考虑单独增加脚本绑定 或者自己fork下来改
+            // 导航模块的双击保护：按下由本类吞掉，抬起时统一转发。
         }
 
         public virtual void OnPointerUp(PointerEventData eventData)
@@ -236,15 +240,9 @@ namespace AlicizaX.UI
             if (data is not TData typedData)
             {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                ClearFailedBinding();
-                throw new InvalidOperationException(
-                    ZString.Format("RecyclerView view holder '{0}' expects data '{1}', but got '{2}'.",
-                        GetType().FullName,
-                        typeof(TData).FullName,
-                        data.GetType().FullName));
-#else
-                return false;
+                ReportTypeMismatch(data);
 #endif
+                return false;
             }
 
             CurrentData = typedData;
@@ -268,9 +266,7 @@ namespace AlicizaX.UI
         /// <returns>如果版本号仍对应当前绑定数据，则返回 true；否则返回 false。</returns>
         protected bool IsBindingCurrent(uint bindingVersion)
         {
-            return CurrentBindingVersion != 0 &&
-                   CurrentBindingVersion == bindingVersion &&
-                   BindingVersion == bindingVersion;
+            return CurrentBindingVersion == bindingVersion && BindingVersion == bindingVersion;
         }
 
         private protected override void ResetBindingState()
@@ -279,5 +275,24 @@ namespace AlicizaX.UI
             CurrentIndex = -1;
             CurrentBindingVersion = 0;
         }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        private void ReportTypeMismatch(ISimpleViewData data)
+        {
+            // 一次绑定失败只报一次：类型不匹配是配置错误，不应在热路径里反复抛异常分配字符串。
+            if (typeMismatchLogged)
+            {
+                return;
+            }
+
+            typeMismatchLogged = true;
+            Log.Error(ZString.Format("RecyclerView view holder '{0}' expects data '{1}', but got '{2}'.",
+                GetType().FullName,
+                typeof(TData).FullName,
+                data.GetType().FullName));
+        }
+
+        private bool typeMismatchLogged;
+#endif
     }
 }

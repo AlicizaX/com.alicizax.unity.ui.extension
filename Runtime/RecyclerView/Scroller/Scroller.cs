@@ -508,15 +508,17 @@ namespace AlicizaX.UI
         {
             motionElapsed += deltaTime;
             float t = Mathf.Clamp01(motionElapsed / motionDuration);
-            position = Mathf.Lerp(motionStartPosition, motionTargetPosition, t);
-            OnValueChanged?.Invoke(position);
-
             if (t >= 1f)
             {
+                // 完成帧只发一次：调用方每次 OnValueChanged 都会做一次全量布局。
                 position = motionTargetPosition;
                 OnValueChanged?.Invoke(position);
                 CompleteMotion();
+                return;
             }
+
+            position = Mathf.Lerp(motionStartPosition, motionTargetPosition, t);
+            OnValueChanged?.Invoke(position);
         }
 
         private void TickInertia(float deltaTime)

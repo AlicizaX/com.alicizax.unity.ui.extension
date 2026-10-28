@@ -95,6 +95,7 @@ namespace UnityEngine.UI
             m_PulseRestoreState = restoreState;
             m_PulseRestoreTime = Time.unscaledTime + duration;
             m_ExternalPulseActive = true;
+            PulseDriver.Schedule(this);
         }
 
         /// <summary>
@@ -117,18 +118,17 @@ namespace UnityEngine.UI
 
             m_PulseRestoreTime = Time.unscaledTime + duration;
             m_DerivedPulseActive = true;
+            PulseDriver.Schedule(this);
         }
 
-        private void Update()
+        /// <summary>
+        /// 脉冲恢复。由唯一的 <see cref="PulseDriver"/> 在到期时调用，不再让每个 Selectable 常驻 Update。
+        /// </summary>
+        internal bool TryRestorePulse(float unscaledTime)
         {
-            if (!m_ExternalPulseActive && !m_DerivedPulseActive)
+            if (unscaledTime < m_PulseRestoreTime)
             {
-                return;
-            }
-
-            if (Time.unscaledTime < m_PulseRestoreTime)
-            {
-                return;
+                return false;
             }
 
             if (m_ExternalPulseActive)
@@ -148,6 +148,26 @@ namespace UnityEngine.UI
                     DoStateTransition(currentSelectionState, false);
                 }
             }
+
+            return true;
+        }
+
+        internal void CancelPulse()
+        {
+            m_ExternalPulseActive = false;
+            m_DerivedPulseActive = false;
+        }
+
+        protected override void OnDisable()
+        {
+            PulseDriver.Unschedule(this);
+            base.OnDisable();
+        }
+
+        protected override void OnDestroy()
+        {
+            PulseDriver.Unschedule(this);
+            base.OnDestroy();
         }
 
         static SelectionState ToSelectionState(UXSelectionState state)
@@ -342,6 +362,60 @@ namespace UnityEngine.UI
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// 所有待恢复脉冲共用的唯一驱动。没有待恢复项时不订阅任何帧回调，
+        /// 控件数量再多也不会产生 per-instance 的 Update 调用。
+        /// </summary>
+        private static class PulseDriver
+        {
+            private static readonly System.Collections.Generic.List<UXSelectable> Pending = new();
+            private static Driver driver;
+
+            public static void Schedule(UXSelectable selectable)
+            {
+                if (!Pending.Contains(selectable))
+                {
+                    Pending.Add(selectable);
+                }
+
+                if (driver == null)
+                {
+                    GameObject host = new GameObject("[UXSelectablePulseDriver]")
+                    {
+                        hideFlags = HideFlags.HideAndDontSave
+                    };
+                    driver = host.AddComponent<Driver>();
+                }
+            }
+
+            public static void Unschedule(UXSelectable selectable)
+            {
+                Pending.Remove(selectable);
+            }
+
+            private sealed class Driver : MonoBehaviour
+            {
+                private void Update()
+                {
+                    float now = Time.unscaledTime;
+                    for (int i = Pending.Count - 1; i >= 0; i--)
+                    {
+                        UXSelectable selectable = Pending[i];
+                        if (selectable == null || selectable.TryRestorePulse(now))
+                        {
+                            Pending.RemoveAt(i);
+                        }
+                    }
+
+                    if (Pending.Count == 0 && driver != null)
+                    {
+                        Object.Destroy(driver.gameObject);
+                        driver = null;
+                    }
+                }
+            }
         }
     }
 }

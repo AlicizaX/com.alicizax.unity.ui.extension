@@ -26,9 +26,9 @@ namespace AlicizaX.UI
         [HideInInspector] [SerializeField] private Direction direction;
 
         /// <summary>
-        /// 列表项在交叉轴上的对齐方式。
+        /// 内容不足一屏时是否在交叉轴上居中。
         /// </summary>
-        [HideInInspector] [SerializeField] private Alignment alignment;
+        [HideInInspector] [SerializeField] private bool centerCrossAxis;
 
         /// <summary>
         /// 列表项之间的间距。
@@ -155,8 +155,13 @@ namespace AlicizaX.UI
         private bool hasPendingScrollbarRatio;
 
         private float pendingScrollbarRatio;
-        private bool layoutDirty;
-        private bool visibleRangeDirty;
+
+        /// <summary>
+        /// 待处理的刷新意图。两个 bool 标志会互相覆盖，且一次数据变更会被重复登记，
+        /// 因此收敛成一个"取最重"的枚举，每帧只 flush 一次。
+        /// </summary>
+        private DirtyKind pendingDirty;
+
         private bool applyingDeferredRefresh;
         private readonly List<ViewHolder> pendingMeasurements = new List<ViewHolder>(16);
         private readonly List<MeasuredItemLength> measuredItemLengths = new List<MeasuredItemLength>(16);
@@ -203,25 +208,25 @@ namespace AlicizaX.UI
                 }
 
                 direction = value;
-                MarkLayoutDirty();
+                MarkDirty(DirtyKind.Layout);
             }
         }
 
         /// <summary>
-        /// 获取或设置列表项在交叉轴上的对齐方式。
+        /// 获取或设置内容不足一屏时是否在交叉轴上居中。
         /// </summary>
-        public Alignment Alignment
+        public bool CenterCrossAxis
         {
-            get => alignment;
+            get => centerCrossAxis;
             set
             {
-                if (alignment == value)
+                if (centerCrossAxis == value)
                 {
                     return;
                 }
 
-                alignment = value;
-                MarkLayoutDirty();
+                centerCrossAxis = value;
+                MarkDirty(DirtyKind.Layout);
             }
         }
 
@@ -239,7 +244,7 @@ namespace AlicizaX.UI
                 }
 
                 spacing = value;
-                MarkLayoutDirty();
+                MarkDirty(DirtyKind.Layout);
             }
         }
 
@@ -257,7 +262,7 @@ namespace AlicizaX.UI
                 }
 
                 padding = value;
-                MarkLayoutDirty();
+                MarkDirty(DirtyKind.Layout);
             }
         }
 
@@ -293,14 +298,7 @@ namespace AlicizaX.UI
             {
                 if (scroll == value) return;
                 scroll = value;
-
-                if (scroller != null)
-                {
-                    scroller.WheelSpeed = wheelSpeed;
-                    UpdateScrollerState();
-                }
-
-                MarkLayoutDirty();
+                UpdateScrollerState();
             }
         }
 
@@ -310,12 +308,7 @@ namespace AlicizaX.UI
         public bool Snap
         {
             get => snap;
-            set
-            {
-                if (snap == value) return;
-                snap = value;
-
-            }
+            set => snap = value;
         }
 
         public float SnapDuration
@@ -412,7 +405,7 @@ namespace AlicizaX.UI
             {
                 if (scrollbarVisibility == value) return;
                 scrollbarVisibility = value;
-                MarkLayoutDirty();
+                MarkDirty(DirtyKind.Layout);
             }
         }
 
@@ -441,14 +434,7 @@ namespace AlicizaX.UI
         /// </summary>
         public Scroller Scroller => scroller;
 
-        internal ViewProvider ViewProvider
-        {
-            get
-            {
-                BindViewProvider();
-                return viewProvider;
-            }
-        }
+        internal ViewProvider ViewProvider => viewProvider;
 
         /// <summary>
         /// 获取当前对象池的统计信息文本。
@@ -521,7 +507,7 @@ namespace AlicizaX.UI
                 return;
             }
 
-            TryUpdateViewportSizeCache(out _);
+            UpdateViewportSizeCache();
             InitializeTemplates();
             ConfigureScroller();
             ConfigureScrollbar();
@@ -531,7 +517,8 @@ namespace AlicizaX.UI
         {
             if (IsReady)
             {
-                FlushDeferredWork();
+                // 重新启用是生命周期边界：被 AfterSettle 推迟的刷新必须在这里补上。
+                FlushDeferredWork(true);
             }
         }
 
@@ -543,24 +530,19 @@ namespace AlicizaX.UI
 
         private void OnDisable()
         {
-            // 保留 layoutDirty/visibleRangeDirty，OnEnable 或下次 LateUpdate 继续处理，避免隐藏期间丢失刷新。
+            // 保留 pendingDirty，OnEnable 或下次 LateUpdate 继续处理，避免隐藏期间丢失刷新。
             applyingDeferredRefresh = false;
             ResetItemPresentation();
         }
 
         private void OnRectTransformDimensionsChange()
         {
-            if (!TryUpdateViewportSizeCache(out bool changed) || !changed)
+            if (!Application.isPlaying)
             {
                 return;
             }
 
-            if (!Application.isPlaying || !IsReady)
-            {
-                return;
-            }
-
-            MarkLayoutDirty();
+            UpdateViewportSizeCache();
         }
 
         private void OnDestroy()
@@ -644,17 +626,11 @@ namespace AlicizaX.UI
                 }
             }
 
-            if (UsesVariableItemLength(layoutManager) && !layoutManager.SupportsVariableItemLength)
+            if (layoutManager.VariableItemLengthEnabled && !layoutManager.SupportsVariableItemLength)
             {
                 LogValidationError("Current layout manager does not support variable item length.");
                 isValid = false;
             }
-        }
-
-        private static bool UsesVariableItemLength(LayoutManager manager)
-        {
-            return manager is LinearLayoutManager linear && linear.VariableItemLength ||
-                   manager is MixedLayoutManager mixed && mixed.VariableItemLength;
         }
 
         private void LogValidationError(string message)
@@ -692,6 +668,10 @@ namespace AlicizaX.UI
             if (scroller == null) return;
 
             ApplySerializedScrollerSettings();
+            // 幂等：Awake 与外部手动配置可能各调用一次，重复 += 会让每次滚动都走两遍布局。
+            scroller.OnValueChanged -= OnScrollChanged;
+            scroller.OnMoveStopped -= OnMoveStopped;
+            scroller.OnDragging -= OnScrollerDraggingChanged;
             scroller.OnValueChanged += OnScrollChanged;
             scroller.OnMoveStopped += OnMoveStopped;
             scroller.OnDragging += OnScrollerDraggingChanged;
@@ -705,14 +685,14 @@ namespace AlicizaX.UI
         {
             if (scrollbar == null) return;
 
+            scrollbar.onValueChanged.RemoveListener(OnScrollbarChanged);
             scrollbar.onValueChanged.AddListener(OnScrollbarChanged);
 
             scrollbarEx = scrollbar.gameObject.GetComponent<ScrollbarEx>();
             if (scrollbarEx == null)
             {
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                // 配置错误必须在 player 里也能看到，否则滚动条会静默失效。
                 Log.Error("ScrollbarEx is missing. Add it in prefab/editor setup.");
-#endif
                 return;
             }
 
@@ -732,18 +712,12 @@ namespace AlicizaX.UI
         {
             if (adapter == null)
             {
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-                Log.Error("Adapter cannot be null");
-#endif
-                return;
+                throw new ArgumentNullException(nameof(adapter));
             }
 
             if (layoutManager == null)
             {
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-                Log.Error("LayoutManager cannot be null");
-#endif
-                return;
+                throw new InvalidOperationException("RecyclerView requires a layout manager before an adapter can be bound.");
             }
 
             if (ReferenceEquals(RecyclerViewAdapter, adapter))
@@ -753,19 +727,12 @@ namespace AlicizaX.UI
 
             if (RecyclerViewAdapter != null)
             {
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-                Log.Error("RecyclerView adapter cannot be changed at runtime.");
-#endif
-                return;
+                throw new InvalidOperationException(
+                    $"RecyclerView already has adapter '{RecyclerViewAdapter.GetType().Name}'; binding '{adapter.GetType().Name}' at runtime is not supported.");
             }
 
             RecyclerViewAdapter = adapter;
             BindViewProvider();
-            if (viewProvider == null)
-            {
-                return;
-            }
-
             layoutManager.RecyclerView = this;
             layoutManager.Adapter = adapter;
             layoutManager.ViewProvider = viewProvider;
@@ -785,9 +752,8 @@ namespace AlicizaX.UI
                 return;
             }
 
-            layoutDirty = false;
-            visibleRangeDirty = false;
-            viewProvider?.Reset();
+            pendingDirty = DirtyKind.None;
+            viewProvider.Clear();
             startIndex = 0;
             endIndex = -1;
 
@@ -823,7 +789,7 @@ namespace AlicizaX.UI
         /// </summary>
         internal void Refresh()
         {
-            MarkVisibleRangeDirty();
+            MarkDirty(DirtyKind.Rebuild);
         }
 
         /// <summary>
@@ -831,17 +797,21 @@ namespace AlicizaX.UI
         /// </summary>
         internal void RequestLayout()
         {
-            MarkLayoutDirty();
+            MarkDirty(DirtyKind.Layout);
+        }
+
+        /// <summary>
+        /// 数据整体变化（数量/类型都可能变）：一次全量重建即可，不能再叠加一次 Refresh。
+        /// </summary>
+        internal void OnDataSetChanged()
+        {
+            layoutManager?.InvalidateItemLengths();
+            MarkDirty(DirtyKind.Rebuild);
         }
 
         #endregion
 
         private bool IsReady => isValid && layoutManager != null && RecyclerViewAdapter != null && viewProvider != null;
-
-        private bool NeedsMixedProvider =>
-            (RecyclerViewAdapter != null && RecyclerViewAdapter.UsesMultipleTemplates) ||
-            layoutManager is MixedLayoutManager ||
-            (templates != null && templates.Length > 1);
 
         private void BindViewProvider()
         {
@@ -850,11 +820,18 @@ namespace AlicizaX.UI
                 return;
             }
 
-            viewProvider = NeedsMixedProvider
-                ? new MixedViewProvider(this, templates)
-                : new SimpleViewProvider(this, templates);
-            viewProvider.Adapter = RecyclerViewAdapter;
-            viewProvider.LayoutManager = layoutManager;
+            viewProvider = new ViewProvider(this, templates)
+            {
+                Adapter = RecyclerViewAdapter,
+                LayoutManager = layoutManager
+            };
+        }
+
+        private enum DirtyKind
+        {
+            None = 0,
+            Layout = 1,
+            Rebuild = 2
         }
 
         private bool ShouldDeferRefresh =>
@@ -862,85 +839,96 @@ namespace AlicizaX.UI
             scroller != null &&
             (scroller.IsDragging || scroller.IsMoving);
 
-        private void MarkLayoutDirty()
+        /// <summary>
+        /// 登记一次刷新意图。刷新只在 <see cref="FlushDeferredWork"/> 里发生一次；
+        /// 拖拽/惯性期间一律推迟，这正是 <see cref="ListRefreshMode.AfterSettle"/> 的语义。
+        /// </summary>
+        private void MarkDirty(DirtyKind kind)
         {
-            layoutDirty = true;
-            visibleRangeDirty = true;
-            if (!ShouldDeferRefresh)
+            if (kind > pendingDirty)
             {
-                FlushDeferredWork();
+                pendingDirty = kind;
             }
+
+            FlushDeferredWork();
         }
 
-        private void MarkVisibleRangeDirty()
+        private void FlushDeferredWork(bool force = false)
         {
-            visibleRangeDirty = true;
-            if (!ShouldDeferRefresh)
-            {
-                FlushDeferredWork();
-            }
-        }
-
-        private void FlushDeferredWork()
-        {
-            if (applyingDeferredRefresh || (!layoutDirty && !visibleRangeDirty))
+            if (pendingDirty == DirtyKind.None || !IsReady || applyingDeferredRefresh)
             {
                 return;
             }
 
+            if (!force && ShouldDeferRefresh)
+            {
+                return;
+            }
+
+            DirtyKind dirty = pendingDirty;
+            pendingDirty = DirtyKind.None;
             applyingDeferredRefresh = true;
-            if (layoutDirty)
+            try
             {
-                layoutDirty = false;
                 ApplyLayoutNow();
-            }
+                if (dirty == DirtyKind.Rebuild)
+                {
+                    RebuildVisibleHolders();
+                    return;
+                }
 
-            if (visibleRangeDirty)
+                UpdateVisibleRange();
+                layoutManager.DoItemAnimation();
+                layoutManager.UpdateLayout();
+            }
+            finally
             {
-                visibleRangeDirty = false;
-                RebuildVisibleHolders();
+                applyingDeferredRefresh = false;
+                // 绑定/测量里抛出的异常不能把批次计数闩死，否则后续刷新全部失效。
+                measurementBatchDepth = 0;
             }
-
-            applyingDeferredRefresh = false;
         }
 
         private void ApplyLayoutNow()
         {
-            if (!isValid)
-            {
-                return;
-            }
-
-            if (layoutManager == null)
-            {
-                UpdateScrollbarVisibility();
-                return;
-            }
+            Debug.Assert(IsReady, "ApplyLayoutNow requires a bound adapter and layout manager.");
 
             ApplyLayoutSettings();
             layoutManager.SetContentSize();
 
-            if (scroller == null)
+            if (scroller != null)
             {
-                viewProvider?.PreparePool();
-                UpdateScrollbarVisibility();
-                return;
+                scroller.Direction = direction;
+                scroller.ViewSize = layoutManager.ViewportSize;
+                scroller.ContentSize = layoutManager.ContentSize;
+                ClampScrollPositionIfNeeded();
             }
 
-            scroller.Direction = direction;
-            scroller.ViewSize = layoutManager.ViewportSize;
-            scroller.ContentSize = layoutManager.ContentSize;
-            if (scroller.IsPositionInBounds || movementType == MovementType.Clamped)
-            {
-                scroller.Position = scroller.ClampPosition(scroller.Position);
-            }
-
-            viewProvider?.PreparePool();
+            viewProvider.PreparePool();
             UpdateScrollerState();
             UpdateScrollbarVisibility();
-            UpdateScrollbarValue(scroller.Position);
+            UpdateScrollbarValue(scroller != null ? scroller.Position : 0f);
         }
 
+        private void ClampScrollPositionIfNeeded()
+        {
+            scroller.Position = ClampScrollTarget(scroller.Position);
+        }
+
+        /// <summary>
+        /// 越界回弹允许保持过冲，其余情况一律夹到合法区间。这条规则只在这里定义一次。
+        /// </summary>
+        private float ClampScrollTarget(float target)
+        {
+            return scroller.IsPositionInBounds || movementType == MovementType.Clamped
+                ? scroller.ClampPosition(target)
+                : target;
+        }
+
+        /// <summary>
+        /// 唯一允许回收全部可见项并重新创建的地方（适配器/模板变更、循环重锚）。
+        /// 增量数据变化走 <see cref="UpdateVisibleRange"/>，不要走这里。
+        /// </summary>
         private void RebuildVisibleHolders()
         {
             if (!IsReady)
@@ -955,6 +943,7 @@ namespace AlicizaX.UI
             {
                 startIndex = 0;
                 endIndex = -1;
+                viewProvider.ValidateInvariants();
                 return;
             }
 
@@ -968,6 +957,7 @@ namespace AlicizaX.UI
             endIndex = NormalizeRangeEnd(startIndex, endIndex, Mathf.Max(1, layoutManager.Unit));
             if (endIndex < startIndex)
             {
+                viewProvider.ValidateInvariants();
                 return;
             }
 
@@ -978,13 +968,14 @@ namespace AlicizaX.UI
             }
 
             bool measured = EndMeasurementBatch();
-            if (UsesVariableItemLength(layoutManager) && !measured)
+            if (layoutManager.VariableItemLengthEnabled && !measured)
             {
                 UpdateVisibleRange();
                 layoutManager.UpdateLayout();
             }
 
             layoutManager.DoItemAnimation();
+            viewProvider.ValidateInvariants();
         }
 
         private void ResetItemPresentation()
@@ -1009,22 +1000,20 @@ namespace AlicizaX.UI
 
         private void ApplyLayoutSettings()
         {
-            if (layoutManager == null)
-            {
-                return;
-            }
-
+            Debug.Assert(layoutManager != null, "ApplyLayoutSettings requires a layout manager.");
             layoutManager.Direction = direction;
-            layoutManager.Alignment = alignment;
+            layoutManager.CenterCrossAxis = centerCrossAxis;
             layoutManager.Spacing = spacing;
             layoutManager.Padding = padding;
         }
 
         #region 公共方法 - 滚动
 
-        private bool TryUpdateViewportSizeCache(out bool changed)
+        /// <summary>
+        /// 视口尺寸缓存；尺寸真的变化时登记一次布局刷新。
+        /// </summary>
+        private void UpdateViewportSizeCache()
         {
-            changed = false;
             if (cachedRectTransform == null)
             {
                 cachedRectTransform = transform as RectTransform;
@@ -1032,19 +1021,22 @@ namespace AlicizaX.UI
 
             if (cachedRectTransform == null)
             {
-                return false;
+                return;
             }
 
             Vector2 size = cachedRectTransform.rect.size;
             if (hasLastViewportSize && size == lastViewportSize)
             {
-                return true;
+                return;
             }
 
-            changed = hasLastViewportSize;
+            bool changed = hasLastViewportSize;
             lastViewportSize = size;
             hasLastViewportSize = true;
-            return true;
+            if (changed)
+            {
+                MarkDirty(DirtyKind.Layout);
+            }
         }
 
         /// <summary>
@@ -1105,31 +1097,7 @@ namespace AlicizaX.UI
         {
             startDataIndex = -1;
             endDataIndex = -1;
-            if (!IsReady || viewProvider.VisibleCount <= 0)
-            {
-                return false;
-            }
-
-            for (int i = 0; i < viewProvider.VisibleCount; i++)
-            {
-                ViewHolder holder = viewProvider.GetVisibleViewHolder(i);
-                if (holder == null || holder.DataIndex < 0)
-                {
-                    continue;
-                }
-
-                if (startDataIndex < 0 || holder.DataIndex < startDataIndex)
-                {
-                    startDataIndex = holder.DataIndex;
-                }
-
-                if (holder.DataIndex > endDataIndex)
-                {
-                    endDataIndex = holder.DataIndex;
-                }
-            }
-
-            return startDataIndex >= 0;
+            return IsReady && viewProvider.TryGetVisibleDataRange(out startDataIndex, out endDataIndex);
         }
 
         public bool TryGetViewHolder(int dataIndex, out ViewHolder viewHolder)
@@ -1140,17 +1108,8 @@ namespace AlicizaX.UI
                 return false;
             }
 
-            for (int i = 0; i < viewProvider.VisibleCount; i++)
-            {
-                ViewHolder holder = viewProvider.GetVisibleViewHolder(i);
-                if (holder != null && holder.DataIndex == dataIndex)
-                {
-                    viewHolder = holder;
-                    return true;
-                }
-            }
-
-            return false;
+            viewHolder = viewProvider.FindByDataIndex(dataIndex);
+            return viewHolder != null;
         }
 
         /// <summary>
@@ -1235,7 +1194,7 @@ namespace AlicizaX.UI
             }
 
             int realCount = RecyclerViewAdapter.GetRealCount();
-            bool isLoop = realCount > 0 && itemCount != realCount;
+            bool isLoop = IsLoopingAdapter();
             if (!isLoop && (index < 0 || index >= itemCount))
             {
                 return false;
@@ -1281,21 +1240,17 @@ namespace AlicizaX.UI
 
         /// <summary>
         /// Loop 列表滚到虚拟地址空间边缘时，静默跳到中段等价位置，保持 data 连续。
+        /// 调用点已经用 <see cref="IsReady"/> 保证引用非空，这里不再重复判空。
         /// </summary>
         private bool TryReanchorLoopWindow(ref float position)
         {
-            if (scroller == null || layoutManager == null || RecyclerViewAdapter == null)
+            if (!IsLoopingAdapter())
             {
                 return false;
             }
 
             int realCount = RecyclerViewAdapter.GetRealCount();
             int virtualCount = RecyclerViewAdapter.GetItemCount();
-            if (realCount <= 0 || virtualCount <= realCount)
-            {
-                return false;
-            }
-
             int layoutIndex = layoutManager.PositionToIndex(position);
             if (!LoopVirtualRange.ShouldReanchor(layoutIndex, realCount, virtualCount))
             {
@@ -1320,8 +1275,7 @@ namespace AlicizaX.UI
 
             scroller.Position = targetPosition;
             position = targetPosition;
-            UpdateVisibleRange();
-            layoutManager.UpdateLayout();
+            PublishVisibleLayout();
             return true;
         }
 
@@ -1409,12 +1363,12 @@ namespace AlicizaX.UI
         /// <returns>是否触发了全量刷新。</returns>
         private bool UpdateVisibleRange()
         {
-            if (layoutManager == null || RecyclerViewAdapter == null || RecyclerViewAdapter.GetItemCount() <= 0)
+            int itemCount = RecyclerViewAdapter != null ? RecyclerViewAdapter.GetItemCount() : 0;
+            if (layoutManager == null || itemCount <= 0)
             {
                 return false;
             }
 
-            int itemCount = RecyclerViewAdapter.GetItemCount();
             int unit = Mathf.Max(1, layoutManager.Unit);
             bool virtualRange = layoutManager.UsesVirtualLayoutRange;
             int targetStart = layoutManager.GetStartIndex();
@@ -1429,9 +1383,9 @@ namespace AlicizaX.UI
 
             if (targetEnd < targetStart)
             {
-                if (ViewProvider.VisibleCount > 0)
+                if (viewProvider.VisibleCount > 0)
                 {
-                    ViewProvider.Clear();
+                    viewProvider.Clear();
                 }
 
                 startIndex = 0;
@@ -1483,7 +1437,7 @@ namespace AlicizaX.UI
 
         private bool ShouldRebuildVisibleRange(int targetStart, int targetEnd, int unit)
         {
-            if (endIndex < startIndex || ViewProvider.VisibleCount <= 0)
+            if (endIndex < startIndex || viewProvider.VisibleCount <= 0)
             {
                 return true;
             }
@@ -1525,13 +1479,12 @@ namespace AlicizaX.UI
         private void RebuildVisibleRange(int targetStart, int targetEnd, int unit)
         {
             BeginMeasurementBatch();
-            bool reused = ViewProvider.TryReuseVisibleRange(targetStart, targetEnd);
-            if (!reused)
+            if (!viewProvider.TryReuseVisibleRange(targetStart, targetEnd))
             {
-                ViewProvider.Clear();
+                viewProvider.Clear();
                 for (int i = targetStart; i <= targetEnd; i += unit)
                 {
-                    ViewProvider.CreateViewHolder(i);
+                    viewProvider.CreateViewHolder(i);
                 }
             }
 
@@ -1551,8 +1504,9 @@ namespace AlicizaX.UI
                 return;
             }
 
-            bool shouldShow = ShouldShowScrollbar();
-            bool shouldInteract = shouldShow && ShouldEnableScrollbarInteraction();
+            ScrollMetrics metrics = GetScrollMetrics();
+            bool shouldShow = ShouldShowScrollbar(metrics);
+            bool shouldInteract = shouldShow && ShouldEnableScrollbarInteraction(metrics);
             if (scrollbarVisibleState != shouldShow || scrollbar.gameObject.activeSelf != shouldShow)
             {
                 scrollbarVisibleState = shouldShow;
@@ -1573,32 +1527,24 @@ namespace AlicizaX.UI
         }
 
         /// <summary>
-        /// 判断当前是否应显示滚动条。
+        /// 一次布局内滚动相关的尺寸只算一次，供滚动条/滚动器共用。
         /// </summary>
-        /// <returns>应显示滚动条时返回 <see langword="true"/>；否则返回 <see langword="false"/>。</returns>
-        private bool ShouldShowScrollbar()
+        private ScrollMetrics GetScrollMetrics()
         {
-            if (scrollbarVisibility == ScrollbarVisibility.AlwaysHide || scrollbar == null || scroller == null || layoutManager == null)
+            if (layoutManager == null)
             {
-                return false;
+                return default;
             }
 
-            if (scrollbarVisibility == ScrollbarVisibility.AlwaysShow)
-            {
-                return true;
-            }
-
-            if (!SupportsOverflowCheck())
-            {
-                return false;
-            }
-
-            if (!HasValidScrollMetrics())
-            {
-                return false;
-            }
-
-            return HasScrollableContent();
+            float contentLength = direction == Direction.Vertical
+                ? layoutManager.ContentSize.y
+                : layoutManager.ContentSize.x;
+            float viewportLength = direction == Direction.Vertical
+                ? layoutManager.ViewportSize.y
+                : layoutManager.ViewportSize.x;
+            return new ScrollMetrics(
+                contentLength > 0f && viewportLength > 0f,
+                contentLength > viewportLength);
         }
 
         /// <summary>
@@ -1616,22 +1562,9 @@ namespace AlicizaX.UI
         /// </summary>
         private void ConfigureScrollbarSize()
         {
-            float contentLength;
-            float viewLength;
-            float trackLength;
-
-            if (direction == Direction.Vertical)
-            {
-                contentLength = scroller.ContentSize.y;
-                viewLength = scroller.ViewSize.y;
-                trackLength = GetScrollbarTrackLength(true);
-            }
-            else
-            {
-                contentLength = scroller.ContentSize.x;
-                viewLength = scroller.ViewSize.x;
-                trackLength = GetScrollbarTrackLength(false);
-            }
+            float contentLength = direction == Direction.Vertical ? scroller.ContentSize.y : scroller.ContentSize.x;
+            float viewLength = direction == Direction.Vertical ? scroller.ViewSize.y : scroller.ViewSize.x;
+            float trackLength = GetScrollbarTrackLength();
 
             if (contentLength <= 0f || viewLength <= 0f)
             {
@@ -1650,23 +1583,15 @@ namespace AlicizaX.UI
         /// <summary>
         /// 获取滚动条轨道的像素长度。
         /// </summary>
-        /// <param name="vertical">是否按垂直滚动条计算。</param>
-        /// <returns>滚动条轨道长度；无法获取时返回 <c>0</c>。</returns>
-        private float GetScrollbarTrackLength(bool vertical)
+        private float GetScrollbarTrackLength()
         {
-            if (scrollbar == null)
-            {
-                return 0f;
-            }
-
-            RectTransform scrollbarRect = scrollbar.transform as RectTransform;
-            if (scrollbarRect == null)
+            if (scrollbar.transform is not RectTransform scrollbarRect)
             {
                 return 0f;
             }
 
             Rect rect = scrollbarRect.rect;
-            return vertical ? rect.height : rect.width;
+            return direction == Direction.Vertical ? rect.height : rect.width;
         }
 
         /// <summary>
@@ -1679,83 +1604,56 @@ namespace AlicizaX.UI
                 return;
             }
 
-            scroller.InputEnabled = ShouldEnableScrollInput();
+            scroller.InputEnabled = ShouldEnableScrollInput(GetScrollMetrics());
         }
 
         /// <summary>
-        /// 判断是否需要将滚动能力限制在内容溢出场景下才启用。
+        /// 内容溢出时才启用滚动。
         /// </summary>
-        /// <returns>仅在内容溢出时才启用滚动时返回 <see langword="true"/>；否则返回 <see langword="false"/>。</returns>
-        private bool ShouldEnableScrollInput()
+        private bool ShouldEnableScrollInput(ScrollMetrics metrics)
         {
-            if (scroll == ScrollMode.AlwaysDisable)
+            switch (scroll)
             {
-                return false;
+                case ScrollMode.AlwaysDisable:
+                    return false;
+                case ScrollMode.AlwaysEnable:
+                    return true;
+                default:
+                    return metrics.Scrollable;
             }
-
-            if (scroll == ScrollMode.AlwaysEnable)
-            {
-                return true;
-            }
-
-            return SupportsOverflowCheck() && HasScrollableContent();
         }
 
-        private bool ShouldEnableScrollbarInteraction()
+        private bool ShouldEnableScrollbarInteraction(ScrollMetrics metrics)
         {
-            return ShouldEnableScrollInput() && HasValidScrollMetrics() && HasScrollableContent();
+            return ShouldEnableScrollInput(metrics) && metrics.Scrollable;
         }
 
         /// <summary>
-        /// 判断当前内容尺寸是否超过视口尺寸。
+        /// 判断当前是否应显示滚动条。
         /// </summary>
-        /// <returns>内容可滚动时返回 <see langword="true"/>；否则返回 <see langword="false"/>。</returns>
-        private bool HasScrollableContent()
+        private bool ShouldShowScrollbar(ScrollMetrics metrics)
         {
-            if (layoutManager == null)
+            switch (scrollbarVisibility)
             {
-                return false;
+                case ScrollbarVisibility.AlwaysHide:
+                    return false;
+                case ScrollbarVisibility.AlwaysShow:
+                    return true;
+                default:
+                    return metrics.Valid && metrics.Scrollable;
             }
-
-            if (direction == Direction.Vertical)
-            {
-                return layoutManager.ContentSize.y > layoutManager.ViewportSize.y;
-            }
-
-            if (direction == Direction.Horizontal)
-            {
-                return layoutManager.ContentSize.x > layoutManager.ViewportSize.x;
-            }
-
-            return false;
         }
 
-        /// <summary>
-        /// 判断当前方向是否支持溢出检测。
-        /// </summary>
-        /// <returns>支持垂直或水平溢出检测时返回 <see langword="true"/>；否则返回 <see langword="false"/>。</returns>
-        private bool SupportsOverflowCheck()
+        private readonly struct ScrollMetrics
         {
-            return direction == Direction.Vertical || direction == Direction.Horizontal;
-        }
+            public readonly bool Valid;
+            public readonly bool Scrollable;
 
-        /// <summary>
-        /// 判断当前布局是否已经具备有效的滚动尺寸信息。
-        /// </summary>
-        /// <returns>内容尺寸与视口尺寸均有效时返回 <see langword="true"/>；否则返回 <see langword="false"/>。</returns>
-        private bool HasValidScrollMetrics()
-        {
-            if (direction == Direction.Vertical)
+            public ScrollMetrics(bool valid, bool scrollable)
             {
-                return layoutManager.ContentSize.y > 0f && layoutManager.ViewportSize.y > 0f;
+                Valid = valid;
+                Scrollable = scrollable;
             }
-
-            if (direction == Direction.Horizontal)
-            {
-                return layoutManager.ContentSize.x > 0f && layoutManager.ViewportSize.x > 0f;
-            }
-
-            return false;
         }
 
         /// <summary>
@@ -1863,22 +1761,104 @@ namespace AlicizaX.UI
                 return 0;
             }
 
+            // 改高可能发生在视口内，也可能发生在视口上方（滚到下面再改首条）。
+            // 这里不能用 GetItemStartPosition 取锚点：调用方（Adapter.NotifyItemRangeChanged）已经先 Revise()，
+            // 读一次就会按新长度把偏移表重算，算出来的偏移正好把补偿抵消掉。
+            // 因此只记录"首条可见项"的渲染坐标（顶边），改完把它顶回原位。
+            bool hasAnchor = TryCaptureAxisAnchor(out int anchorDataIndex, out float anchorTop);
+            bool stickToEnd = IsPinnedToEnd();
+
             BeginMeasurementBatch();
             int rebound = viewProvider.RebindVisibleDataRange(startDataIndex, count);
             EndMeasurementBatch();
-            if (rebound <= 0 && UsesVariableItemLength(layoutManager))
+
+            if (layoutManager.VariableItemLengthEnabled)
             {
-                layoutManager.InvalidateItemLengths();
+                // 命中可见项时，测量里的 RefreshOffsetTable 会先按"声明长度"把表修好，
+                // ReplaceLength 因此返回 false（认为没变化），测量批就不会发布布局 ——
+                // 内容高度与可见项位置会停留在旧值（改高首条"没反应"就是这个）。
+                // 声明长度是权威值，这里统一失效并重新发布一次布局。
+                bool declaresLength = RecyclerViewAdapter != null &&
+                                      RecyclerViewAdapter.TryGetDeclaredLength(startDataIndex, out float declared) &&
+                                      declared > 0f;
+                if (rebound <= 0 || declaresLength)
+                {
+                    layoutManager.InvalidateItemLengths();
+                }
+
                 ApplyLayoutNow();
+                layoutManager.UpdateLayout();
+
+                if (stickToEnd)
+                {
+                    scroller.Position = scroller.MaxPosition;
+                }
+                else if (hasAnchor && TryGetAxisAnchorTop(anchorDataIndex, out float currentTop))
+                {
+                    float delta = anchorTop - currentTop;
+                    if (!Mathf.Approximately(delta, 0f))
+                    {
+                        scroller.Position = ClampScrollTarget(scroller.Position + delta);
+                    }
+                }
+
+                UpdateVisibleRange();
                 layoutManager.UpdateLayout();
             }
 
             return rebound;
         }
 
+        /// <summary>记录当前首条可见项的数据索引与主轴"顶边"渲染坐标（不读偏移表）。</summary>
+        private bool TryCaptureAxisAnchor(out int dataIndex, out float top)
+        {
+            dataIndex = -1;
+            top = 0f;
+            if (!IsReady || scroller == null || viewProvider == null)
+            {
+                return false;
+            }
+
+            ViewHolder holder = viewProvider.FindFirstVisible();
+            if (holder == null || holder.DataIndex < 0)
+            {
+                return false;
+            }
+
+            dataIndex = holder.DataIndex;
+            top = AxisTop(holder);
+            return true;
+        }
+
+        /// <summary>按数据索引取当前主轴顶边坐标；找不到（已回收）时返回 false。</summary>
+        private bool TryGetAxisAnchorTop(int dataIndex, out float top)
+        {
+            top = 0f;
+            ViewHolder holder = viewProvider != null ? viewProvider.FindByDataIndex(dataIndex) : null;
+            if (holder == null)
+            {
+                return false;
+            }
+
+            top = AxisTop(holder);
+            return true;
+        }
+
+        private float AxisTop(ViewHolder holder)
+        {
+            RectTransform rect = holder.RectTransform;
+            Vector2 position = rect.anchoredPosition;
+            if (direction == Direction.Vertical)
+            {
+                return position.y + rect.rect.height * 0.5f;
+            }
+
+            return position.x - rect.rect.width * 0.5f;
+        }
+
         internal void MeasureBoundHolder(ViewHolder viewHolder)
         {
-            if (!IsReady || viewHolder == null || !UsesVariableItemLength(layoutManager))
+            if (!IsReady || viewHolder == null || !layoutManager.VariableItemLengthEnabled)
             {
                 return;
             }
@@ -1949,50 +1929,59 @@ namespace AlicizaX.UI
 
         private bool FlushPendingMeasurements()
         {
-            if (!IsReady || !UsesVariableItemLength(layoutManager) || pendingMeasurements.Count == 0)
+            // 上一次若被异常中断，残留的测量记录不能重复上报。
+            measuredItemLengths.Clear();
+            if (!IsReady || !layoutManager.VariableItemLengthEnabled || pendingMeasurements.Count == 0)
             {
                 pendingMeasurements.Clear();
                 return false;
             }
 
-            flushingMeasurements = true;
             bool applied = false;
-            VisualAnchor anchor = CaptureVisualAnchor();
-            while (pendingMeasurements.Count > 0)
+            flushingMeasurements = true;
+            try
             {
-                bool changed = false;
-                for (int i = 0; i < pendingMeasurements.Count; i++)
+                VisualAnchor anchor = CaptureVisualAnchor();
+                while (pendingMeasurements.Count > 0)
                 {
-                    ViewHolder viewHolder = pendingMeasurements[i];
-                    if (viewHolder == null || viewHolder.RecyclerView != this || viewHolder.DataIndex < 0)
+                    bool changed = false;
+                    for (int i = 0; i < pendingMeasurements.Count; i++)
                     {
-                        continue;
-                    }
-
-                    float length = MeasureViewHolder(viewHolder);
-                    int layoutIndex = viewHolder.Index;
-                    if (layoutManager.ApplyMeasuredLength(layoutIndex, length))
-                    {
-                        changed = true;
-                        measuredItemLengths.Add(new MeasuredItemLength
+                        ViewHolder viewHolder = pendingMeasurements[i];
+                        if (viewHolder == null || viewHolder.RecyclerView != this || viewHolder.DataIndex < 0)
                         {
-                            LayoutIndex = layoutIndex,
-                            Length = length
-                        });
+                            continue;
+                        }
+
+                        float length = MeasureViewHolder(viewHolder);
+                        int layoutIndex = viewHolder.Index;
+                        if (layoutManager.ApplyMeasuredLength(layoutIndex, length))
+                        {
+                            changed = true;
+                            measuredItemLengths.Add(new MeasuredItemLength
+                            {
+                                LayoutIndex = layoutIndex,
+                                Length = length
+                            });
+                        }
                     }
-                }
 
-                pendingMeasurements.Clear();
-                if (!changed)
-                {
-                    break;
-                }
+                    pendingMeasurements.Clear();
+                    if (!changed)
+                    {
+                        break;
+                    }
 
-                PublishMeasuredLayout(anchor);
-                applied = true;
+                    PublishMeasuredLayout(anchor);
+                    applied = true;
+                }
+            }
+            finally
+            {
+                // 用户 OnBind / OnItemResized 抛异常时不能把这个闩锁留在 true。
+                flushingMeasurements = false;
             }
 
-            flushingMeasurements = false;
             for (int i = 0; i < measuredItemLengths.Count; i++)
             {
                 MeasuredItemLength item = measuredItemLengths[i];
@@ -2115,16 +2104,32 @@ namespace AlicizaX.UI
                 return;
             }
 
-            VisualAnchor anchor = CaptureVisualAnchor();
-            ApplyLayoutNow();
-            RebuildVisibleHolders();
-            RestoreVisualAnchor(anchor, true);
+            // 顺序变化无法用索引平移表达，交给统一的重建刷新。
+            layoutManager.InvalidateItemLengths();
+            MarkDirty(DirtyKind.Rebuild);
         }
 
         private void ApplyStructureChange(int index, int count, bool inserted)
         {
             if (!IsReady || count <= 0)
             {
+                return;
+            }
+
+            // 尾部追加是唯一的可增量路径：变长索引表只并入新增段。
+            if (inserted && index + count == RecyclerViewAdapter.GetItemCount())
+            {
+                layoutManager.NotifyItemsAppended(count);
+            }
+            else
+            {
+                layoutManager.InvalidateItemLengths();
+            }
+
+            if (ShouldDeferRefresh)
+            {
+                // AfterSettle：拖拽/惯性期间不做重建，落定后由唯一 flush 处理。
+                MarkDirty(DirtyKind.Rebuild);
                 return;
             }
 
@@ -2166,22 +2171,19 @@ namespace AlicizaX.UI
 
             if (index > endIndex)
             {
-                UpdateVisibleRange();
-                layoutManager.UpdateLayout();
-                return;
-            }
-
-            if (index <= startIndex)
-            {
-                viewProvider.ShiftIndexesFrom(index, count);
-                startIndex += count;
-                endIndex += count;
-                UpdateVisibleRange();
-                layoutManager.UpdateLayout();
+                PublishVisibleLayout();
                 return;
             }
 
             viewProvider.ShiftIndexesFrom(index, count);
+            if (index <= startIndex)
+            {
+                startIndex += count;
+                endIndex += count;
+                PublishVisibleLayout();
+                return;
+            }
+
             endIndex += count;
             BeginMeasurementBatch();
             for (int i = 0; i < count; i++)
@@ -2191,36 +2193,29 @@ namespace AlicizaX.UI
 
             if (!EndMeasurementBatch())
             {
-                UpdateVisibleRange();
-                layoutManager.UpdateLayout();
+                PublishVisibleLayout();
             }
         }
 
         private void ApplyRemovedHolders(int index, int count)
         {
-            if (viewProvider.VisibleCount > 0 && endIndex >= startIndex)
+            int visibleCount = viewProvider.VisibleCount;
+            if (visibleCount > 0 && endIndex >= startIndex)
             {
                 viewProvider.RecycleLayoutRange(index, index + count);
                 viewProvider.ShiftIndexesFrom(index, -count);
 
-                if (endIndex >= index)
-                {
-                    int removeEnd = index + count - 1;
-                    if (startIndex > removeEnd)
-                    {
-                        startIndex -= count;
-                        endIndex -= count;
-                    }
-                    else if (startIndex >= index)
-                    {
-                        startIndex = index;
-                        endIndex = Mathf.Max(index - 1, endIndex - count);
-                    }
-                    else
-                    {
-                        endIndex -= count;
-                    }
-                }
+                // 可见区间与 [index, index + count) 求差，三种位置关系分别平移
+                int removedEnd = index + count - 1;
+                bool visibleStartsAfterRemoval = startIndex > removedEnd;
+                bool visibleStartsInsideRemoval = !visibleStartsAfterRemoval && startIndex >= index;
+                startIndex = visibleStartsAfterRemoval ? startIndex - count
+                    : visibleStartsInsideRemoval ? index
+                    : startIndex;
+                endIndex = endIndex > removedEnd ? endIndex - count
+                    : endIndex >= index ? index - 1
+                    : endIndex;
+                startIndex = Mathf.Max(0, startIndex);
             }
 
             ApplyLayoutNow();
@@ -2232,6 +2227,14 @@ namespace AlicizaX.UI
                 return;
             }
 
+            PublishVisibleLayout();
+        }
+
+        /// <summary>
+        /// 增量更新可见区间并发布布局（结构增量用；重建路径自己已经动画过）。
+        /// </summary>
+        private void PublishVisibleLayout()
+        {
             UpdateVisibleRange();
             layoutManager.UpdateLayout();
         }
@@ -2274,27 +2277,7 @@ namespace AlicizaX.UI
 
         private ViewHolder FirstVisibleHolder()
         {
-            if (viewProvider == null || viewProvider.VisibleCount <= 0)
-            {
-                return null;
-            }
-
-            ViewHolder first = null;
-            for (int i = 0; i < viewProvider.VisibleCount; i++)
-            {
-                ViewHolder holder = viewProvider.GetVisibleViewHolder(i);
-                if (holder == null || holder.DataIndex < 0)
-                {
-                    continue;
-                }
-
-                if (first == null || holder.Index < first.Index)
-                {
-                    first = holder;
-                }
-            }
-
-            return first;
+            return IsReady ? viewProvider.FindFirstVisible() : null;
         }
 
         private bool IsPinnedToEnd()
@@ -2347,11 +2330,7 @@ namespace AlicizaX.UI
             else
             {
                 int layoutIndex = layoutManager.GetLayoutIndex(anchor.DataIndex);
-                target = layoutManager.GetItemStartPosition(layoutIndex) + anchor.ItemOffset;
-                if (scroller.IsPositionInBounds || movementType == MovementType.Clamped)
-                {
-                    target = scroller.ClampPosition(target);
-                }
+                target = ClampScrollTarget(layoutManager.GetItemStartPosition(layoutIndex) + anchor.ItemOffset);
             }
 
             if (!Mathf.Approximately(scroller.Position, target))

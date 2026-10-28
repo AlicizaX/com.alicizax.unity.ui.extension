@@ -127,9 +127,6 @@ namespace UnityEngine.UI
                     newGroup.RegisterToggle(this);
                 }
 
-                if (newGroup != null)
-                    newGroup.EnsureValidState();
-
                 return;
             }
 
@@ -149,7 +146,7 @@ namespace UnityEngine.UI
                 if (isOn)
                     newGroup.NotifyToggleOn(this);
 
-                newGroup.EnsureValidState();
+                newGroup.MarkDirty();
             }
         }
 
@@ -183,18 +180,23 @@ namespace UnityEngine.UI
         protected virtual void Set(bool value, bool sendCallback = true)
         {
             if (m_IsOn == value)
+            {
                 return;
+            }
+
+            // 单选组不允许关掉最后一项：请求被拒绝时值没有变化，因此不发 onValueChanged、也不做过渡。
+            bool hasGroup = m_Group != null && m_Group.isActiveAndEnabled && IsActive();
+            if (!value && hasGroup && !m_Group.IsSwitchOffAllowed && !m_Group.HasOtherActiveToggle(this))
+            {
+                return;
+            }
 
             OnBeforeValueChanged(value);
 
             m_IsOn = value;
-            if (m_Group != null && m_Group.isActiveAndEnabled && IsActive())
+            if (hasGroup && m_IsOn)
             {
-                if (m_IsOn || (!m_Group.AnyTogglesOn() && !m_Group.allowSwitchOff))
-                {
-                    m_IsOn = true;
-                    m_Group.NotifyToggleOn(this, sendCallback);
-                }
+                m_Group.NotifyToggleOn(this, sendCallback);
             }
 
             if (sendCallback)

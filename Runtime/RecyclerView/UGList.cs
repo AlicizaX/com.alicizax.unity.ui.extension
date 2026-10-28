@@ -23,9 +23,8 @@ namespace AlicizaX.UI
         /// </summary>
         protected readonly TAdapter _adapter;
 
+        private readonly List<TData> emptyList = new List<TData>();
         private List<TData> _datas;
-        private readonly bool _adapterBound;
-        protected bool AdapterBound => _adapterBound;
 
         /// <summary>
         /// 使用指定 RecyclerView 和适配器创建业务层列表封装。
@@ -34,15 +33,13 @@ namespace AlicizaX.UI
         /// <param name="adapter">列表使用的适配器实例。</param>
         protected UGListBase(RecyclerView recyclerView, TAdapter adapter)
         {
-            _recyclerView = recyclerView;
-            _adapter = adapter;
+            _recyclerView = recyclerView != null
+                ? recyclerView
+                : throw new ArgumentNullException(nameof(recyclerView));
+            _adapter = adapter != null ? adapter : throw new ArgumentNullException(nameof(adapter));
 
-            if (_recyclerView != null &&
-                ValidateAdapterLayoutCompatibility(_adapter, _recyclerView.LayoutManager))
-            {
-                _recyclerView.SetAdapter(_adapter);
-                _adapterBound = ReferenceEquals(_recyclerView.RecyclerViewAdapter, _adapter);
-            }
+            ValidateAdapterLayoutCompatibility(_adapter, _recyclerView.LayoutManager);
+            _recyclerView.SetAdapter(_adapter);
         }
 
         /// <summary>
@@ -66,126 +63,73 @@ namespace AlicizaX.UI
 
         public void SetData(List<TData> data, ListScrollPolicy scrollPolicy = ListScrollPolicy.KeepAnchor)
         {
-            _datas = data ?? new List<TData>();
-            if (_adapterBound)
+            _datas = data ?? emptyList;
+            if (ReferenceEquals(_datas, emptyList))
             {
-                _adapter.SetList(_datas, scrollPolicy);
+                emptyList.Clear();
             }
+
+            _adapter.SetList(_datas, scrollPolicy);
         }
 
         public TData GetItem(int index)
         {
-            return _adapter != null ? _adapter.GetData(index) : default;
+            return _adapter.GetData(index);
         }
 
         public void Add(TData item)
         {
-            if (!CanMutate())
-            {
-                return;
-            }
-
             _adapter.Add(item);
         }
 
         public void AddRange(IEnumerable<TData> collection)
         {
-            if (!CanMutate())
-            {
-                return;
-            }
-
-            _adapter.AddRange(collection);
+                        _adapter.AddRange(collection);
         }
 
         public void Insert(int index, TData item)
         {
-            if (!CanMutate())
-            {
-                return;
-            }
-
-            _adapter.Insert(index, item);
+                        _adapter.Insert(index, item);
         }
 
         public void InsertRange(int index, IEnumerable<TData> collection)
         {
-            if (!CanMutate())
-            {
-                return;
-            }
-
-            _adapter.InsertRange(index, collection);
+                        _adapter.InsertRange(index, collection);
         }
 
         public void ReplaceAt(int index, TData item, bool relayout = false)
         {
-            if (!CanMutate())
-            {
-                return;
-            }
-
-            _adapter.ReplaceAt(index, item, relayout);
+                        _adapter.ReplaceAt(index, item, relayout);
         }
 
         public void RemoveAt(int index)
         {
-            if (!CanMutate())
-            {
-                return;
-            }
-
-            _adapter.RemoveAt(index);
+                        _adapter.RemoveAt(index);
         }
 
         public void RemoveRange(int index, int count)
         {
-            if (!CanMutate())
-            {
-                return;
-            }
-
-            _adapter.RemoveRange(index, count);
+                        _adapter.RemoveRange(index, count);
         }
 
         public void RemoveAll(Predicate<TData> match)
         {
-            if (!CanMutate())
-            {
-                return;
-            }
-
-            _adapter.RemoveAll(match);
+                        _adapter.RemoveAll(match);
         }
 
         public void Move(int fromIndex, int toIndex)
         {
-            if (!CanMutate())
-            {
-                return;
-            }
-
-            _adapter.Move(fromIndex, toIndex);
+                        _adapter.Move(fromIndex, toIndex);
         }
 
         public void RefreshItem(int index, bool relayout = false)
         {
-            if (!CanMutate())
-            {
-                return;
-            }
-
-            _adapter.NotifyItemChanged(index, relayout);
+                        _adapter.NotifyItemChanged(index, relayout);
         }
 
         public void Sort(Comparison<TData> comparison)
         {
-            if (!CanMutate())
-            {
-                return;
-            }
-
-            _adapter.Sort(comparison);
+                        _adapter.Sort(comparison);
         }
 
         public void ApplyUpdateOptions(in ListUpdateOptions options)
@@ -393,12 +337,8 @@ namespace AlicizaX.UI
             bool smooth = false,
             float duration = 0.3f)
         {
-            if (!CanScrollToWithAlignment())
-            {
-                return;
-            }
-
-            _recyclerView?.ScrollToAligned(index, alignment, offset, smooth, duration);
+            EnsureAlignmentScrollSupported();
+            _recyclerView.ScrollToAligned(index, alignment, offset, smooth, duration);
         }
 
         public void StickToEnd(bool smooth = false)
@@ -504,11 +444,14 @@ namespace AlicizaX.UI
             ScrollTo(index, ScrollAlignment.End, offset, smooth, duration);
         }
 
-        private static bool ValidateAdapterLayoutCompatibility(IAdapter adapter, LayoutManager layoutManager)
+        /// <summary>
+        /// 校验适配器与布局管理器的组合。组合非法是配置错误，直接抛出而不是让后续调用静默失效。
+        /// </summary>
+        private static void ValidateAdapterLayoutCompatibility(IAdapter adapter, LayoutManager layoutManager)
         {
-            if (adapter == null || layoutManager == null)
+            if (layoutManager == null)
             {
-                return true;
+                throw new ArgumentNullException(nameof(layoutManager), "RecyclerView requires a layout manager before a list can be created.");
             }
 
             Type adapterType = adapter.GetType();
@@ -516,40 +459,28 @@ namespace AlicizaX.UI
             {
                 if (layoutManager is MixedLayoutManager)
                 {
-                    LogIncompatibleAdapterLayout(adapterType, layoutManager,
+                    throw Incompatible(adapterType, layoutManager,
                         "LoopAdapter cannot be used with MixedLayoutManager because it exposes a virtual item count.");
-                    return false;
                 }
 
                 if (layoutManager is CircleLayoutManager)
                 {
-                    LogIncompatibleAdapterLayout(adapterType, layoutManager,
+                    throw Incompatible(adapterType, layoutManager,
                         "LoopAdapter cannot be used with CircleLayoutManager until circle layout uses the real item count.");
-                    return false;
                 }
             }
 
             if (IsAdapterType(adapterType, typeof(MixedAdapter<>)) && layoutManager is not MixedLayoutManager)
             {
-                LogIncompatibleAdapterLayout(adapterType, layoutManager,
+                throw Incompatible(adapterType, layoutManager,
                     "MixedAdapter requires MixedLayoutManager so template sizes and item positions stay consistent.");
-                return false;
             }
 
-            if (UsesVariableItemLength(layoutManager) && !layoutManager.SupportsVariableItemLength)
+            if (layoutManager.VariableItemLengthEnabled && !layoutManager.SupportsVariableItemLength)
             {
-                LogIncompatibleAdapterLayout(adapterType, layoutManager,
+                throw Incompatible(adapterType, layoutManager,
                     "Variable item length is only supported by LinearLayoutManager and MixedLayoutManager.");
-                return false;
             }
-
-            return true;
-        }
-
-        private static bool UsesVariableItemLength(LayoutManager layoutManager)
-        {
-            return layoutManager is LinearLayoutManager linear && linear.VariableItemLength ||
-                   layoutManager is MixedLayoutManager mixed && mixed.VariableItemLength;
         }
 
         private static bool IsAdapterType(Type type, Type openGenericAdapterType)
@@ -567,33 +498,18 @@ namespace AlicizaX.UI
             return false;
         }
 
-        private static void LogIncompatibleAdapterLayout(Type adapterType, LayoutManager layoutManager, string reason)
+        private static InvalidOperationException Incompatible(Type adapterType, LayoutManager layoutManager, string reason)
         {
-            Log.Error(
+            return new InvalidOperationException(
                 $"RecyclerView adapter/layout combination is invalid. Adapter={adapterType.Name}, Layout={layoutManager.GetType().Name}. {reason}");
         }
 
-        private bool CanMutate()
+        private void EnsureAlignmentScrollSupported()
         {
-            return _adapterBound && _adapter != null;
-        }
-
-        private bool CanScrollToWithAlignment()
-        {
-            if (_recyclerView == null)
-            {
-                return false;
-            }
-
             if (_recyclerView.LayoutManager is CircleLayoutManager)
             {
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-                Log.Warning("UGList alignment scrolling is not supported for CircleLayoutManager.");
-#endif
-                return false;
+                throw new NotSupportedException("UGList alignment scrolling is not supported for CircleLayoutManager.");
             }
-
-            return true;
         }
     }
 
@@ -714,7 +630,7 @@ namespace AlicizaX.UI
                 bool sameDataSource = ReferenceEquals(base.Data, value);
                 int previousDataIndex = _recyclerView != null ? _recyclerView.ScrollDataIndex : -1;
 
-                if (sameDataSource && AdapterBound)
+                if (sameDataSource)
                 {
                     _adapter.NotifyDataChanged();
                     if (DataCount <= 0)

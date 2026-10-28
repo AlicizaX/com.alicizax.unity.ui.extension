@@ -155,7 +155,7 @@ namespace AlicizaX.UI.NavigationTests
                     if (!Application.isPlaying)
                     {
                         list.SetData(new List<IntegrationData>());
-                        Assert.That(Pool.GetActiveCount(0), Is.Zero);
+                        Assert.That(PoolActiveCount(0), Is.Zero);
                         Call(typeof(RecyclerViewNavigationController), navigation, "OnDisable");
                         Call(typeof(UXNavigationScope), scope, "OnDestroy");
                         recycler.LayoutManager.Release();
@@ -180,13 +180,11 @@ namespace AlicizaX.UI.NavigationTests
             finally { base.TearDown(); }
         }
 
-        protected MixedObjectPool<ViewHolder> Pool
+        /// <summary>对象池活跃实例数。池本身是内部实现，不通过 protected 成员泄漏到子类。</summary>
+        protected int PoolActiveCount(int templateId)
         {
-            get
-            {
-                var provider = Read<object>(typeof(RecyclerView), recycler, "viewProvider");
-                return Read<MixedObjectPool<ViewHolder>>(provider.GetType(), provider, "objectPool");
-            }
+            var provider = Read<object>(typeof(RecyclerView), recycler, "viewProvider");
+            return Read<ViewHolderPool>(provider.GetType(), provider, "pool").GetActiveCount(templateId);
         }
 
         protected void QueueMove(int device, bool pressed, bool up = false)
@@ -217,7 +215,7 @@ namespace AlicizaX.UI.NavigationTests
             Assert.That(navigation.FocusedDataIndex, Is.EqualTo(index));
             Assert.That(eventSystem.currentSelectedGameObject, Is.SameAs(listRoot));
             var visible = Visible();
-            Assert.That(Pool.GetActiveCount(0), Is.EqualTo(visible.Length));
+            Assert.That(PoolActiveCount(0), Is.EqualTo(visible.Length));
             Assert.That(visible.Count(item => item.Focused), Is.EqualTo(1));
             Assert.That(visible.Single(item => item.Focused).BoundIndex, Is.EqualTo(index));
         }
@@ -290,7 +288,7 @@ namespace AlicizaX.UI.NavigationTests
             list.SetData(new List<IntegrationData>());
             Assert.That(Visible(), Is.Empty);
             Assert.That(navigation.HasFocus, Is.False);
-            Assert.That(Pool.GetActiveCount(0), Is.Zero);
+            Assert.That(PoolActiveCount(0), Is.Zero);
             Assert.That(holders.All(item => !item.Focused && item.ClearCalls > 0 && item.BoundIndex == -1), Is.True);
             list.SetData(Enumerable.Range(0, 6).Select(i => new IntegrationData { Id = 2000 + i }).ToList());
             navigation.RestoreFocus(0);

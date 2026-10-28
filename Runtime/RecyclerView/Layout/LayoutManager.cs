@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 namespace AlicizaX.UI
 {
@@ -7,35 +7,16 @@ namespace AlicizaX.UI
     {
         protected Vector2 viewportSize;
 
-        public Vector2 ViewportSize
-        {
-            get => viewportSize;
-            private set => viewportSize = value;
-        }
+        public Vector2 ViewportSize => viewportSize;
 
         protected Vector2 contentSize;
 
-        public Vector2 ContentSize
-        {
-            get => contentSize;
-            private set => contentSize = value;
-        }
+        public Vector2 ContentSize => contentSize;
 
+        /// <summary>
+        /// 内容在交叉轴/主轴上的居中偏移，仅由 <see cref="Layout"/> 使用，不对外暴露。
+        /// </summary>
         protected Vector2 contentOffset;
-
-        public Vector2 ContentOffset
-        {
-            get => contentOffset;
-            private set => contentOffset = value;
-        }
-
-        protected Vector2 viewportOffset;
-
-        public Vector2 ViewportOffset
-        {
-            get => viewportOffset;
-            private set => viewportOffset = value;
-        }
 
         protected IAdapter adapter;
 
@@ -47,7 +28,7 @@ namespace AlicizaX.UI
 
         internal ViewProvider viewProvider;
 
-        internal ViewProvider ViewProvider
+        internal virtual ViewProvider ViewProvider
         {
             get => viewProvider;
             set => viewProvider = value;
@@ -75,12 +56,15 @@ namespace AlicizaX.UI
             set => direction = value;
         }
 
-        protected Alignment alignment;
+        /// <summary>
+        /// 内容不足一屏时是否在交叉轴上居中。
+        /// </summary>
+        protected bool centerCrossAxis;
 
-        public Alignment Alignment
+        public bool CenterCrossAxis
         {
-            get => alignment;
-            set => alignment = value;
+            get => centerCrossAxis;
+            set => centerCrossAxis = value;
         }
 
         protected Vector2 spacing;
@@ -99,20 +83,21 @@ namespace AlicizaX.UI
             set => padding = value;
         }
 
-        protected int unit = 1;
-
-        public int Unit
-        {
-            get => unit;
-            set => unit = value;
-        }
-
+        /// <summary>
+        /// 一个布局单元包含的项数（网格的列/行数）。由具体布局派生，不再作为可变字段。
+        /// </summary>
+        public virtual int Unit => 1;
 
         public float ScrollPosition => recyclerView.GetScrollPosition();
 
         public virtual bool UsesVirtualLayoutRange => false;
 
         public virtual bool SupportsVariableItemLength => false;
+
+        /// <summary>
+        /// 当前是否真的启用了变长项。变长协议的判定只在这里定义，RecyclerView/UGList 不再各写一份。
+        /// </summary>
+        public virtual bool VariableItemLengthEnabled => false;
 
         public LayoutManager()
         {
@@ -124,6 +109,14 @@ namespace AlicizaX.UI
 
         public virtual void InvalidateItemLengths()
         {
+        }
+
+        /// <summary>
+        /// 数据是"尾部追加"时调用。变长管理器可只把新增段并入索引，避免整表 O(n) 重建。
+        /// </summary>
+        public virtual void NotifyItemsAppended(int count)
+        {
+            InvalidateItemLengths();
         }
 
         public virtual bool ApplyMeasuredLength(int index, float length)
@@ -140,7 +133,6 @@ namespace AlicizaX.UI
 
             contentSize = CalculateContentSize();
             contentOffset = CalculateContentOffset();
-            viewportOffset = CalculateViewportOffset();
         }
 
         public void UpdateLayout()
@@ -193,13 +185,20 @@ namespace AlicizaX.UI
                 : new Vector2(viewportSize.x * 0.5f, 0f);
         }
 
+        /// <summary>
+        /// 主轴方向上的内边距。坐标空间统一包含 padding，避免 culling 与位置计算各算一套。
+        /// </summary>
+        protected float AxisPadding => direction == Direction.Vertical ? padding.y : padding.x;
+
+        protected float AxisSpacing => direction == Direction.Vertical ? spacing.y : spacing.x;
+
+        protected float AxisViewportLength => direction == Direction.Vertical ? viewportSize.y : viewportSize.x;
+
         public abstract Vector2 CalculateContentSize();
 
         public abstract Vector2 CalculatePosition(int index);
 
         public abstract Vector2 CalculateContentOffset();
-
-        public abstract Vector2 CalculateViewportOffset();
 
         public abstract int GetStartIndex();
 
@@ -300,91 +299,26 @@ namespace AlicizaX.UI
             return candidate;
         }
 
-        public virtual bool IsFullVisibleStart(int index)
-        {
-            Vector2 vector2 = CalculatePosition(index);
-            float position = direction == Direction.Vertical ? vector2.y : vector2.x;
-            return position + GetOffset() >= 0;
-        }
-
-        public virtual bool IsFullInvisibleStart(int index)
-        {
-            Vector2 vector2 = CalculatePosition(index + unit);
-            float position = direction == Direction.Vertical ? vector2.y : vector2.x;
-            return position + GetOffset() < 0;
-        }
-
-        public virtual bool IsFullVisibleEnd(int index)
-        {
-            Vector2 vector2 = CalculatePosition(index + unit);
-            float position = direction == Direction.Vertical ? vector2.y : vector2.x;
-            float viewLength = direction == Direction.Vertical ? viewportSize.y : viewportSize.x;
-            return position + GetOffset() <= viewLength;
-        }
-
-        public virtual bool IsFullInvisibleEnd(int index)
-        {
-            Vector2 vector2 = CalculatePosition(index);
-            float position = direction == Direction.Vertical ? vector2.y : vector2.x;
-            float viewLength = direction == Direction.Vertical ? viewportSize.y : viewportSize.x;
-            return position + GetOffset() > viewLength;
-        }
-
-        public virtual bool IsVisible(int index)
-        {
-            float position, viewLength;
-            viewLength = direction == Direction.Vertical ? viewportSize.y : viewportSize.x;
-
-            Vector2 vector2 = CalculatePosition(index);
-            position = direction == Direction.Vertical ? vector2.y : vector2.x;
-            if (position + GetOffset() > 0 && position + GetOffset() <= viewLength)
-            {
-                return true;
-            }
-
-            vector2 = CalculatePosition(index + unit);
-            position = direction == Direction.Vertical ? vector2.y : vector2.x;
-            if (position + GetOffset() > 0 && position + GetOffset() <= viewLength)
-            {
-                return true;
-            }
-
-            return false;
-        }
-
         protected virtual float GetFitContentSize()
         {
             float len;
             if (direction == Direction.Vertical)
             {
-                len = alignment == Alignment.Center ? Mathf.Min(contentSize.y, viewportSize.y) : viewportSize.y;
+                len = centerCrossAxis ? Mathf.Min(contentSize.y, viewportSize.y) : viewportSize.y;
             }
             else
             {
-                len = alignment == Alignment.Center ? Mathf.Min(contentSize.x, viewportSize.x) : viewportSize.x;
+                len = centerCrossAxis ? Mathf.Min(contentSize.x, viewportSize.x) : viewportSize.x;
             }
 
             return len;
-        }
-
-        protected virtual float GetOffset()
-        {
-            return direction == Direction.Vertical ? -contentOffset.y + viewportOffset.y : -contentOffset.x + viewportOffset.x;
         }
     }
 
     public enum Direction
     {
         Vertical = 0,
-        Horizontal = 1,
-        Custom = 2
-    }
-
-    public enum Alignment
-    {
-        Left,
-        Center,
-        Top
+        Horizontal = 1
     }
 
     public enum ScrollbarVisibility

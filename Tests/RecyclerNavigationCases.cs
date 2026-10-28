@@ -24,11 +24,10 @@ namespace AlicizaX.UI.NavigationTests
             public int Choice = -1;
             public int GetItemCount() => Count;
             public int GetRealCount() => Count;
-            public bool UsesMultipleTemplates => false;
+            public int DataRevision => 0;
             public int GetTemplateId(int index) => 0;
             public bool TryGetDeclaredLength(int index, out float length) { length = 32; return true; }
             public void OnBindViewHolder(ViewHolder holder, int index) { }
-            public void OnRecycleViewHolder(ViewHolder holder) { }
             public void SetChoiceIndex(int index) => Choice = index;
             public void NotifyDataChanged() { }
         }
@@ -171,7 +170,6 @@ namespace AlicizaX.UI.NavigationTests
             Assert.That(navigation.FocusedDataIndex, Is.EqualTo(1));
             Assert.That(navigation.HandleSubmit(), Is.True);
             Assert.That(adapter.Choice, Is.EqualTo(1));
-            Assert.That(navigation.HandleCancel(), Is.False);
         }
 
         [Test]
@@ -195,6 +193,29 @@ namespace AlicizaX.UI.NavigationTests
             navigation.HandleSubmit();
             Assert.That(navigation.HasFocus, Is.False);
             Assert.That(adapter.Choice, Is.EqualTo(-1));
+        }
+
+        [Test]
+        public void SingleColumnGridStillMovesVertically()
+        {
+            // cellCount = 1 时行内/跨行必须由移动方向判定，否则上/下会被当成行内移动而直接判边界。
+            adapter.Count = 3;
+            Set(list, "layoutManager", new GridLayoutManager());
+            navigation.SetFocus(0, false);
+
+            Assert.That(Move(MoveDirection.Down), Is.True);
+            Assert.That(navigation.FocusedDataIndex, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void BoundaryWithoutConfiguredExitDoesNotConsumeTheInput()
+        {
+            adapter.Count = 2;
+            navigation.SetFocus(1, false);
+
+            Assert.That(Move(MoveDirection.Down), Is.False,
+                "没有把焦点交给外部控件时不能吃掉输入，否则 EventSystem 永远离不开列表。");
+            Assert.That(navigation.FocusedDataIndex, Is.EqualTo(1));
         }
     }
 }

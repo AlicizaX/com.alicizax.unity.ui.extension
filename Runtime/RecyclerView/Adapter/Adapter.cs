@@ -25,6 +25,11 @@ namespace AlicizaX.UI
         /// </summary>
         protected int choiceIndex = -1;
 
+        internal Action<int> OnChoiceIndexChanged;
+
+        private readonly List<T> emptyList = new List<T>();
+        private int dataRevision;
+
         /// <summary>
         /// 当前业务选中索引，赋值时会同步刷新可见项选中状态。
         /// </summary>
@@ -34,13 +39,13 @@ namespace AlicizaX.UI
             set => SetChoiceIndex(value);
         }
 
-        internal Action<int> OnChoiceIndexChanged;
+        public int DataRevision => dataRevision;
 
         /// <summary>
         /// 创建普通列表适配器。
         /// </summary>
         /// <param name="recyclerView">要绑定的 RecyclerView 组件。</param>
-        public Adapter(RecyclerView recyclerView) : this(recyclerView, new List<T>())
+        public Adapter(RecyclerView recyclerView) : this(recyclerView, null)
         {
         }
 
@@ -52,7 +57,7 @@ namespace AlicizaX.UI
         public Adapter(RecyclerView recyclerView, List<T> list)
         {
             this.recyclerView = recyclerView;
-            this.list = list ?? new List<T>();
+            SetSourceList(list);
         }
 
         /// <summary>
@@ -78,7 +83,6 @@ namespace AlicizaX.UI
         /// </summary>
         /// <param name="index">数据索引。</param>
         /// <returns>模板 ID。</returns>
-        public virtual bool UsesMultipleTemplates => false;
 
         public virtual int GetTemplateId(int index)
         {
@@ -105,23 +109,14 @@ namespace AlicizaX.UI
         /// <param name="index">数据索引。</param>
         public virtual void OnBindViewHolder(ViewHolder viewHolder, int index)
         {
-            if (viewHolder == null) return;
-            if (!TryGetBindData(index, out var data) || data == null)
+            if (!TryGetBindData(index, out T data))
             {
                 viewHolder.Bind(null, index);
                 return;
             }
 
             viewHolder.Bind(data, index);
-            viewHolder.ApplySelection(index == choiceIndex, true);
-        }
-
-        /// <summary>
-        /// 当列表项视图被回收时调用。默认空实现；状态清理由 <see cref="ViewHolder.OnRecycled"/> 统一处理，避免双重 Clear。
-        /// </summary>
-        /// <param name="viewHolder">被回收的列表项视图持有者。</param>
-        public virtual void OnRecycleViewHolder(ViewHolder viewHolder)
-        {
+            viewHolder.ApplySelection(index == choiceIndex);
         }
 
         /// <summary>
@@ -129,23 +124,33 @@ namespace AlicizaX.UI
         /// </summary>
         public virtual void NotifyDataChanged()
         {
-            CoerceChoiceIndex();
-            recyclerView.RequestLayout();
-            recyclerView.Refresh();
-#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
+            Revise();
+            SetChoiceIndex(choiceIndex);
+            recyclerView.OnDataSetChanged();
             NotifyNavigationDataChanged();
-#endif
         }
 
         /// <summary>
         /// 替换当前业务数据列表，并重置 RecyclerView 后刷新。
         /// </summary>
-        /// <param name="list">新的业务数据列表。</param>
         public virtual void SetList(List<T> list, ListScrollPolicy scrollPolicy = ListScrollPolicy.KeepAnchor)
         {
-            this.list = list ?? new List<T>();
+            SetSourceList(list);
+            Revise();
             recyclerView.Reset(scrollPolicy);
             NotifyDataChanged();
+        }
+
+        /// <summary>
+        /// 绑定源列表。<c>null</c> 复用同一份空表，避免"清空"路径每次分配一个 List。
+        /// </summary>
+        protected void SetSourceList(List<T> source)
+        {
+            this.list = source ?? emptyList;
+            if (ReferenceEquals(this.list, emptyList))
+            {
+                emptyList.Clear();
+            }
         }
 
         /// <summary>
@@ -155,25 +160,23 @@ namespace AlicizaX.UI
         /// <param name="relayout">是否需要重新布局；当尺寸或位置可能变化时传入 true。</param>
         public virtual void NotifyItemChanged(int index, bool relayout = false)
         {
-            if (index < 0 || index >= GetRealCount())
+            if ((uint)index >= (uint)GetRealCount())
             {
                 return;
             }
 
-            CoerceChoiceIndex();
+            Revise();
+            SetChoiceIndex(choiceIndex);
             if (relayout)
             {
                 recyclerView.RelayoutDataIndex(index);
-#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
-                NotifyNavigationDataChanged();
-#endif
-                return;
+            }
+            else
+            {
+                recyclerView.RebindVisibleDataIndex(index);
             }
 
-            recyclerView.RebindVisibleDataIndex(index);
-#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
             NotifyNavigationDataChanged();
-#endif
         }
 
         /// <summary>
@@ -184,34 +187,23 @@ namespace AlicizaX.UI
         /// <param name="relayout">是否需要重新布局；当尺寸或位置可能变化时传入 true。</param>
         public virtual void NotifyItemRangeChanged(int index, int count, bool relayout = false)
         {
-            if (count <= 0 || index < 0 || index >= GetRealCount())
+            if (count <= 0 || (uint)index >= (uint)GetRealCount())
             {
                 return;
             }
 
-            CoerceChoiceIndex();
+            Revise();
+            SetChoiceIndex(choiceIndex);
             if (relayout)
             {
                 recyclerView.RelayoutDataRange(index, count);
-#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
-                NotifyNavigationDataChanged();
-#endif
-                return;
+            }
+            else
+            {
+                recyclerView.RebindVisibleDataRange(index, count);
             }
 
-            recyclerView.RebindVisibleDataRange(index, count);
-#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
             NotifyNavigationDataChanged();
-#endif
-        }
-
-        /// <summary>
-        /// 通知在列表末尾插入了一项（兼容旧调用）。
-        /// </summary>
-        public virtual void NotifyItemInserted()
-        {
-            int index = Mathf.Max(0, GetRealCount() - 1);
-            NotifyItemRangeInserted(index, 1);
         }
 
         /// <summary>
@@ -222,23 +214,6 @@ namespace AlicizaX.UI
             NotifyItemRangeInserted(index, 1);
         }
 
-        /// <summary>
-        /// 通知从列表尾部向前插入了 count 项（兼容旧调用）。
-        /// </summary>
-        public virtual void NotifyItemRangeInserted(int count)
-        {
-            if (count <= 0)
-            {
-                return;
-            }
-
-            int index = Mathf.Max(0, GetRealCount() - count);
-            NotifyItemRangeInserted(index, count);
-        }
-
-        /// <summary>
-        /// 通知在 index 处插入了 count 项。调用前数据源必须已插入完成。
-        /// </summary>
         public virtual void NotifyItemRangeInserted(int index, int count)
         {
             if (count <= 0 || index < 0)
@@ -246,17 +221,14 @@ namespace AlicizaX.UI
                 return;
             }
 
+            Revise();
             if (choiceIndex >= index)
             {
-                choiceIndex += count;
-                OnChoiceIndexChanged?.Invoke(choiceIndex);
+                SetChoiceInternal(choiceIndex + count);
             }
 
-            CoerceChoiceIndex();
             recyclerView.ApplyItemsInserted(index, count);
-#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
             NotifyNavigationDataChanged();
-#endif
         }
 
         public virtual void NotifyItemRemoved(int index)
@@ -272,27 +244,22 @@ namespace AlicizaX.UI
                 return;
             }
 
+            Revise();
             if (choiceIndex == fromIndex)
             {
-                choiceIndex = toIndex;
-                OnChoiceIndexChanged?.Invoke(choiceIndex);
+                SetChoiceInternal(toIndex);
             }
             else if (fromIndex < toIndex && choiceIndex > fromIndex && choiceIndex <= toIndex)
             {
-                choiceIndex--;
-                OnChoiceIndexChanged?.Invoke(choiceIndex);
+                SetChoiceInternal(choiceIndex - 1);
             }
             else if (toIndex < fromIndex && choiceIndex >= toIndex && choiceIndex < fromIndex)
             {
-                choiceIndex++;
-                OnChoiceIndexChanged?.Invoke(choiceIndex);
+                SetChoiceInternal(choiceIndex + 1);
             }
 
-            CoerceChoiceIndex();
             recyclerView.ApplyItemsMoved(fromIndex, toIndex);
-#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
             NotifyNavigationDataChanged();
-#endif
         }
 
         /// <summary>
@@ -305,29 +272,23 @@ namespace AlicizaX.UI
                 return;
             }
 
+            Revise();
             if (choiceIndex >= index && choiceIndex < index + count)
             {
-                choiceIndex = -1;
-                OnChoiceIndexChanged?.Invoke(choiceIndex);
+                SetChoiceInternal(-1);
             }
             else if (choiceIndex >= index + count)
             {
-                choiceIndex -= count;
-                OnChoiceIndexChanged?.Invoke(choiceIndex);
+                SetChoiceInternal(choiceIndex - count);
             }
 
-            CoerceChoiceIndex();
             recyclerView.ApplyItemsRemoved(index, count);
-#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
             NotifyNavigationDataChanged();
-#endif
         }
 
         /// <summary>
-        /// 获取指定索引对应的绑定数据（与 OnBind / GetItemCount 同一语义）。
+        /// 当前业务数据的只读视图。
         /// </summary>
-        /// <param name="index">显示/绑定索引。</param>
-        /// <returns>如果索引有效则返回数据；否则返回 null。</returns>
         public IReadOnlyList<T> Items => list;
 
         public T GetData(int index)
@@ -337,23 +298,24 @@ namespace AlicizaX.UI
 
         public virtual void ReplaceAt(int index, T item, bool relayout = false)
         {
-            if (index < 0 || index >= list.Count)
+            if ((uint)index >= (uint)list.Count)
             {
                 return;
             }
 
             list[index] = item;
+            Revise();
             NotifyItemChanged(index, relayout);
         }
 
         /// <summary>
         /// 向列表末尾添加一个业务数据项，并刷新列表。
         /// </summary>
-        /// <param name="item">要添加的业务数据。</param>
         public virtual void Add(T item)
         {
             int index = list.Count;
             list.Add(item);
+            Revise();
             NotifyItemInserted(index);
         }
 
@@ -369,6 +331,7 @@ namespace AlicizaX.UI
             int added = list.Count - index;
             if (added > 0)
             {
+                Revise();
                 NotifyItemRangeInserted(index, added);
             }
         }
@@ -381,20 +344,8 @@ namespace AlicizaX.UI
         public virtual void Insert(int index, T item)
         {
             list.Insert(index, item);
+            Revise();
             NotifyItemInserted(index);
-        }
-
-        public virtual void Move(int fromIndex, int toIndex)
-        {
-            if (fromIndex == toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= list.Count || toIndex >= list.Count)
-            {
-                return;
-            }
-
-            T item = list[fromIndex];
-            list.RemoveAt(fromIndex);
-            list.Insert(toIndex, item);
-            NotifyItemMoved(fromIndex, toIndex);
         }
 
         public virtual void InsertRange(int index, IEnumerable<T> collection)
@@ -409,6 +360,7 @@ namespace AlicizaX.UI
             int added = list.Count - previousCount;
             if (added > 0)
             {
+                Revise();
                 NotifyItemRangeInserted(index, added);
             }
         }
@@ -420,52 +372,79 @@ namespace AlicizaX.UI
         public virtual void Remove(T item)
         {
             int index = list.IndexOf(item);
-            RemoveAt(index);
-        }
-
-        /// <summary>
-        /// 移除指定索引处的业务数据项，并刷新列表。
-        /// </summary>
-        /// <param name="index">要移除的数据索引。</param>
-        public virtual void RemoveAt(int index)
-        {
-            if (index < 0 || index >= GetRealCount()) return;
+            if (index < 0)
+            {
+                return;
+            }
 
             list.RemoveAt(index);
+            Revise();
             NotifyItemRemoved(index);
         }
 
-        /// <summary>
-        /// 移除指定范围内的业务数据项，并刷新列表。
-        /// </summary>
-        /// <param name="index">起始数据索引。</param>
-        /// <param name="count">要移除的数据数量。</param>
+        public virtual void RemoveAt(int index)
+        {
+            if ((uint)index >= (uint)list.Count)
+            {
+                return;
+            }
+
+            list.RemoveAt(index);
+            Revise();
+            NotifyItemRemoved(index);
+        }
+
         public virtual void RemoveRange(int index, int count)
         {
-            if (count <= 0 || index < 0 || index >= list.Count)
+            if (count <= 0 || (uint)index >= (uint)list.Count)
             {
                 return;
             }
 
             count = Mathf.Min(count, list.Count - index);
             list.RemoveRange(index, count);
+            Revise();
             NotifyItemRangeRemoved(index, count);
         }
 
+        /// <summary>
+        /// 单趟压缩删除，避免逐项 <see cref="RemoveAt"/> 造成的 O(n²) 搬移与逐次重布局。
+        /// 删除是散点，唯一正确的通知是一次整体刷新。
+        /// </summary>
         public virtual void RemoveAll(Predicate<T> match)
         {
             if (match == null)
             {
+                throw new ArgumentNullException(nameof(match));
+            }
+
+            T selected = choiceIndex >= 0 && choiceIndex < list.Count ? list[choiceIndex] : null;
+            int write = 0;
+            for (int read = 0; read < list.Count; read++)
+            {
+                T item = list[read];
+                if (match(item))
+                {
+                    continue;
+                }
+
+                if (write != read)
+                {
+                    list[write] = item;
+                }
+
+                write++;
+            }
+
+            if (write == list.Count)
+            {
                 return;
             }
 
-            for (int i = list.Count - 1; i >= 0; i--)
-            {
-                if (match(list[i]))
-                {
-                    RemoveAt(i);
-                }
-            }
+            list.RemoveRange(write, list.Count - write);
+            Revise();
+            choiceIndex = selected != null ? list.IndexOf(selected) : -1;
+            NotifyDataChanged();
         }
 
         /// <summary>
@@ -480,6 +459,8 @@ namespace AlicizaX.UI
 
             int count = list.Count;
             list.Clear();
+            Revise();
+            SetChoiceInternal(-1);
             NotifyItemRangeRemoved(0, count);
         }
 
@@ -491,6 +472,7 @@ namespace AlicizaX.UI
         public virtual void Reverse(int index, int count)
         {
             list.Reverse(index, count);
+            Revise();
             NotifyDataChanged();
         }
 
@@ -500,13 +482,33 @@ namespace AlicizaX.UI
         public virtual void Reverse()
         {
             list.Reverse();
+            Revise();
             NotifyDataChanged();
         }
 
         public virtual void Sort(Comparison<T> comparison)
         {
+            T selected = choiceIndex >= 0 && choiceIndex < list.Count ? list[choiceIndex] : null;
             list.Sort(comparison);
+            Revise();
+            choiceIndex = selected != null ? list.IndexOf(selected) : -1;
             NotifyDataChanged();
+        }
+
+        public virtual void Move(int fromIndex, int toIndex)
+        {
+            if (fromIndex == toIndex ||
+                (uint)fromIndex >= (uint)list.Count ||
+                (uint)toIndex >= (uint)list.Count)
+            {
+                return;
+            }
+
+            T item = list[fromIndex];
+            list.RemoveAt(fromIndex);
+            list.Insert(toIndex, item);
+            Revise();
+            NotifyItemMoved(fromIndex, toIndex);
         }
 
         /// <summary>
@@ -516,27 +518,8 @@ namespace AlicizaX.UI
         public void SetChoiceIndex(int index)
         {
             int itemCount = GetRealCount();
-            if (itemCount <= 0)
-            {
-                index = -1;
-            }
-            else if (index >= itemCount)
-            {
-                index = itemCount - 1;
-            }
-            else if (index < -1)
-            {
-                index = -1;
-            }
-
-            if (index == choiceIndex) return;
-
-            int previousIndex = choiceIndex;
-            choiceIndex = index;
-
-            ApplySelection(previousIndex, false);
-            ApplySelection(choiceIndex, true);
-            OnChoiceIndexChanged?.Invoke(choiceIndex);
+            int clamped = itemCount <= 0 ? -1 : Mathf.Clamp(index, -1, itemCount - 1);
+            SetChoiceInternal(clamped);
         }
 
         /// <summary>
@@ -546,7 +529,7 @@ namespace AlicizaX.UI
         /// <param name="selected">是否选中。</param>
         protected void ApplySelection(int index, bool selected)
         {
-            if (recyclerView == null || index < 0)
+            if (index < 0)
             {
                 return;
             }
@@ -562,7 +545,7 @@ namespace AlicizaX.UI
         /// <returns>如果成功获取绑定数据，则返回 true；否则返回 false。</returns>
         protected virtual bool TryGetBindData(int index, out T data)
         {
-            if (index < 0 || index >= list.Count)
+            if ((uint)index >= (uint)list.Count)
             {
                 data = default;
                 return false;
@@ -572,18 +555,25 @@ namespace AlicizaX.UI
             return true;
         }
 
-        private void CoerceChoiceIndex()
+        protected void SetChoiceInternal(int index)
         {
-            int itemCount = GetRealCount();
-            if (itemCount <= 0)
+            if (index == choiceIndex)
             {
-                SetChoiceIndex(-1);
                 return;
             }
 
-            if (choiceIndex >= itemCount)
+            int previous = choiceIndex;
+            choiceIndex = index;
+            ApplySelection(previous, false);
+            ApplySelection(choiceIndex, true);
+            OnChoiceIndexChanged?.Invoke(choiceIndex);
+        }
+
+        protected void Revise()
+        {
+            unchecked
             {
-                SetChoiceIndex(itemCount - 1);
+                dataRevision = dataRevision == int.MaxValue ? 1 : dataRevision + 1;
             }
         }
 
@@ -591,6 +581,10 @@ namespace AlicizaX.UI
         private void NotifyNavigationDataChanged()
         {
             recyclerView?.NotifyNavigationDataChanged();
+        }
+#else
+        private void NotifyNavigationDataChanged()
+        {
         }
 #endif
     }

@@ -51,7 +51,7 @@ namespace AlicizaX.UI.Editor
         #region Serialized Properties - Base Settings
 
         private SerializedProperty _direction;
-        private SerializedProperty _alignment;
+        private SerializedProperty _centerCrossAxis;
         private SerializedProperty _content;
         private SerializedProperty _spacing;
         private SerializedProperty _padding;
@@ -121,7 +121,7 @@ namespace AlicizaX.UI.Editor
         private void InitializeBaseProperties()
         {
             _direction = serializedObject.FindProperty("direction");
-            _alignment = serializedObject.FindProperty("alignment");
+            _centerCrossAxis = serializedObject.FindProperty("centerCrossAxis");
             _content = serializedObject.FindProperty("content");
             _spacing = serializedObject.FindProperty("spacing");
             _padding = serializedObject.FindProperty("padding");
@@ -354,7 +354,7 @@ namespace AlicizaX.UI.Editor
                     EditorGUI.BeginChangeCheck();
                     DrawPropertyRow(_direction);
                     bool directionChanged = EditorGUI.EndChangeCheck();
-                    DrawPropertyRow(_alignment);
+                    DrawPropertyRow(_centerCrossAxis);
                     DrawPropertyRow(_content);
                     if (directionChanged && !isPlaying)
                     {

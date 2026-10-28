@@ -13,7 +13,7 @@ namespace AlicizaX.UI
     [AddComponentMenu("UI/RecyclerView Navigation Controller")]
     [DisallowMultipleComponent]
     [RequireComponent(typeof(RecyclerView))]
-    public sealed class RecyclerViewNavigationController : Selectable, ISubmitHandler, ICancelHandler
+    public sealed class RecyclerViewNavigationController : Selectable, ISubmitHandler
     {
         [SerializeField] private RecyclerView recyclerView;
         [SerializeField] private UXNavigationScope navigationScope;
@@ -143,14 +143,6 @@ namespace AlicizaX.UI
         /// 处理 Unity UI 的取消事件。
         /// </summary>
         /// <param name="eventData">取消事件数据。</param>
-        public void OnCancel(BaseEventData eventData)
-        {
-            if (HandleCancel())
-            {
-                eventData.Use();
-            }
-        }
-
         /// <summary>
         /// 手动处理一次方向移动输入。
         /// </summary>
@@ -190,7 +182,9 @@ namespace AlicizaX.UI
 
             if (result == MoveResult.Boundary)
             {
-                TrySelectExit(eventData.moveDir);
+                // 只有真正把焦点交给了外部控件，才算消费了这次输入；
+                // 否则必须放行给 base.OnMove，让 EventSystem 能离开列表。
+                return TrySelectExit(eventData.moveDir);
             }
 
             return true;
@@ -223,15 +217,6 @@ namespace AlicizaX.UI
 
             recyclerView.RecyclerViewAdapter?.SetChoiceIndex(focusedDataIndex);
             return true;
-        }
-
-        /// <summary>
-        /// 手动处理取消输入。
-        /// </summary>
-        /// <returns>当前实现始终返回 false，表示取消输入未被 RecyclerView 导航消耗。</returns>
-        public bool HandleCancel()
-        {
-            return false;
         }
 
         /// <summary>
@@ -538,7 +523,7 @@ namespace AlicizaX.UI
                 return MoveResult.Blocked;
             }
 
-            return TryFindNextFocusable(focusedDataIndex, delta, count, true, out nextDataIndex, out _)
+            return TryFindNextFocusable(focusedDataIndex, delta, count, ShouldWrapNavigation(), out nextDataIndex, out _)
                 ? MoveResult.Moved
                 : MoveResult.Blocked;
         }
@@ -547,9 +532,10 @@ namespace AlicizaX.UI
         {
             nextDataIndex = -1;
             int unit = Mathf.Max(1, recyclerView.LayoutManager.Unit);
+            bool vertical = recyclerView.Direction == Direction.Vertical;
             int delta;
 
-            if (recyclerView.Direction == Direction.Vertical)
+            if (vertical)
             {
                 switch (direction)
                 {
@@ -590,10 +576,13 @@ namespace AlicizaX.UI
                 }
             }
 
-            return TryFindNextGridFocusable(delta, count, unit, out nextDataIndex);
+            // 行内/跨行必须由"移动方向 + 布局方向"决定：用 |delta| 判断会在 unit == 1 时把
+            // 上/下误判成行内移动，导致单列网格的上/下导航直接失效。
+            bool stepInsideLine = (direction == MoveDirection.Left || direction == MoveDirection.Right) == vertical;
+            return TryFindNextGridFocusable(delta, count, unit, stepInsideLine, ShouldWrapNavigation(), out nextDataIndex);
         }
 
-        private MoveResult TryFindNextGridFocusable(int delta, int count, int unit, out int dataIndex)
+        private MoveResult TryFindNextGridFocusable(int delta, int count, int unit, bool stepInsideLine, bool allowWrap, out int dataIndex)
         {
             dataIndex = -1;
             if (count <= 0 || delta == 0)
@@ -601,21 +590,32 @@ namespace AlicizaX.UI
                 return MoveResult.Blocked;
             }
 
-            bool stepInsideLine = delta == 1 || delta == -1;
             int startMajor = focusedDataIndex / unit;
             int startMinor = focusedDataIndex % unit;
             int candidate = focusedDataIndex + delta;
             while (candidate >= 0 && candidate < count)
             {
-                if (stepInsideLine)
+                bool leftLine = stepInsideLine ? candidate / unit != startMajor : candidate % unit != startMinor;
+                if (leftLine)
                 {
-                    if (candidate / unit != startMajor)
+                    if (!allowWrap)
                     {
                         return MoveResult.Boundary;
                     }
-                }
-                else if (candidate % unit != startMinor)
-                {
+
+                    // 环绕：跨行时跳一整行，行内移动时跳一整列，回到同一行/列的对应位置。
+                    candidate = stepInsideLine ? candidate + (candidate < focusedDataIndex ? count : -count) : candidate + delta * (count - 1);
+                    if (candidate < 0 || candidate >= count)
+                    {
+                        return MoveResult.Boundary;
+                    }
+
+                    if (IsDataIndexFocusable(candidate, count))
+                    {
+                        dataIndex = candidate;
+                        return MoveResult.Moved;
+                    }
+
                     return MoveResult.Boundary;
                 }
 
@@ -921,6 +921,10 @@ namespace AlicizaX.UI
             return itemCount > 0 ? itemCount : 0;
         }
 
+        /// <summary>
+        /// 环绕语义的唯一来源：显式开关，或者"没有真实边界"的布局（虚拟地址空间的循环列表、环形布局）。
+        /// 线性/网格/环形三种策略都从这里取值，不再各自硬编码。
+        /// </summary>
         private bool ShouldWrapNavigation()
         {
             if (wrapNavigation)
@@ -928,15 +932,19 @@ namespace AlicizaX.UI
                 return true;
             }
 
-            IAdapter adapter = recyclerView != null ? recyclerView.RecyclerViewAdapter : null;
+            if (recyclerView.LayoutManager is CircleLayoutManager)
+            {
+                return true;
+            }
+
+            IAdapter adapter = recyclerView.RecyclerViewAdapter;
             if (adapter == null)
             {
                 return false;
             }
 
             int realCount = adapter.GetRealCount();
-            int itemCount = adapter.GetItemCount();
-            return realCount > 0 && itemCount != realCount;
+            return realCount > 0 && adapter.GetItemCount() != realCount;
         }
 
         private bool TrySelectExit(MoveDirection direction)

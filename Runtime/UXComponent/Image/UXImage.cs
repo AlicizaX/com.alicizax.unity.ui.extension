@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace UnityEngine.UI
 {
@@ -27,6 +28,10 @@ namespace UnityEngine.UI
             }
         };
 
+        /// <summary>
+        /// 渐变数据源。替换引用会自动重新缓存关键帧并刷新网格；如果就地修改同一个 Gradient 实例的
+        /// colorKeys/alphaKeys/mode，必须显式调用 <see cref="SetGradientDirty"/>，否则缓存不会更新。
+        /// </summary>
         public Gradient gradient
         {
             get { return m_GradientColor; }
@@ -39,6 +44,15 @@ namespace UnityEngine.UI
                 CacheGradientKeys();
                 SetVerticesDirty();
             }
+        }
+
+        /// <summary>
+        /// 就地修改 <see cref="gradient"/> 后调用：重新缓存颜色/透明度关键帧与 GradientMode，并刷新顶点。
+        /// </summary>
+        public void SetGradientDirty()
+        {
+            CacheGradientKeys();
+            SetVerticesDirty();
         }
 
         public enum GradientDirection
@@ -83,7 +97,7 @@ namespace UnityEngine.UI
                 m_EnableOutline = value;
                 EnsureEffectCanvasChannels();
                 SetVerticesDirty();
-                SetMaterialDirty();
+                SyncEffectMaterial(m_EffectMaterialSdfTexture);
             }
         }
 
@@ -98,7 +112,7 @@ namespace UnityEngine.UI
                 m_EnableShadow = value;
                 EnsureEffectCanvasChannels();
                 SetVerticesDirty();
-                SetMaterialDirty();
+                SyncEffectMaterial(m_EffectMaterialSdfTexture);
             }
         }
 
@@ -111,8 +125,8 @@ namespace UnityEngine.UI
                     return;
 
                 m_OutlineEffectColor = value;
-                SetVerticesDirty();
-                SetMaterialDirty();
+                // 颜色只存在于材质上，不参与顶点数据：独占材质时原地改，共享时才换材质，绝不重建网格。
+                SyncEffectMaterial(m_EffectMaterialSdfTexture);
             }
         }
 
@@ -152,8 +166,8 @@ namespace UnityEngine.UI
                     return;
 
                 m_ShadowEffectColor = value;
-                SetVerticesDirty();
-                SetMaterialDirty();
+                // 同 outlineEffectColor：只同步材质，不重建网格。
+                SyncEffectMaterial(m_EffectMaterialSdfTexture);
             }
         }
 
@@ -203,38 +217,91 @@ namespace UnityEngine.UI
         }
 
         /// <summary>
-        /// Releases the static runtime atlas/SDF caches used by the adaptive effect (RenderTextures, generator
-        /// material and cached sprite entries). Call it after the affected UI has been hidden or destroyed, e.g. on
-        /// content shutdown or scene transitions. Visible Graphics recreate their pages lazily on the next mesh
-        /// rebuild; until that rebuild their effect material falls back to the default UI material.
+        /// Releases every static cache used by the adaptive effect (atlas/SDF pages, cached sprite meshes and the
+        /// shared effect materials). Call it after the affected UI has been hidden or destroyed, e.g. on content
+        /// shutdown or scene transitions. All live Graphics are invalidated right away; their pages and materials are
+        /// recreated lazily on the next mesh rebuild, so no visible Graphic keeps stale atlas UVs or a destroyed
+        /// SDF texture.
         /// </summary>
         public static void ReleaseRuntimeEffectCaches()
         {
             UXImageRuntimeSDFCache.ReleaseAll();
             UXImageRuntimeAtlas.ReleaseAll();
+            UXImageSpriteMeshCache.Clear();
+
+            // 先让所有存活实例释放各自持有的材质引用，再销毁共享材质缓存，避免留下悬空引用。
+            ReleaseLiveInstances();
+
+            UXImageEffectSettings.ReleaseAll();
         }
 
-        // Adaptive effect state. All of it is prepared by ApplyAdaptiveEffectData (OnPopulateMesh path) and by
-        // EnsureEffectMaterial/ApplyEffectMaterialState; the mainTexture/defaultMaterial/materialForRendering
-        // getters only read these fields, so a property getter can never create atlas pages or touch GL state.
+        // 存活 Graphic 的弱引用注册表；只在访问时压缩，绝不强引用任何实例。
+        private static readonly List<WeakReference<UXImage>> s_LiveInstances = new List<WeakReference<UXImage>>(64);
+
+        private static void ReleaseLiveInstances()
+        {
+            for (int i = s_LiveInstances.Count - 1; i >= 0; i--)
+            {
+                if (!s_LiveInstances[i].TryGetTarget(out UXImage image) || image == null)
+                {
+                    s_LiveInstances.RemoveAt(i);
+                    continue;
+                }
+
+                image.ClearRuntimeAtlasEntry();
+                image.ClearEffectMaterialKey();
+                image.SetVerticesDirty();
+                image.SetMaterialDirty();
+            }
+        }
+
+        private void RegisterLiveInstance()
+        {
+            for (int i = s_LiveInstances.Count - 1; i >= 0; i--)
+            {
+                if (!s_LiveInstances[i].TryGetTarget(out UXImage image) || image == null)
+                {
+                    s_LiveInstances.RemoveAt(i);
+                    continue;
+                }
+
+                if (ReferenceEquals(image, this))
+                    return;
+            }
+
+            s_LiveInstances.Add(new WeakReference<UXImage>(this));
+        }
+
+        private void UnregisterLiveInstance()
+        {
+            for (int i = s_LiveInstances.Count - 1; i >= 0; i--)
+            {
+                if (!s_LiveInstances[i].TryGetTarget(out UXImage image) || image == null || ReferenceEquals(image, this))
+                    s_LiveInstances.RemoveAt(i);
+            }
+        }
+
+        // Adaptive effect state. 全部由 BuildMesh -> ApplyAdaptiveEffectData 以及 SyncEffectMaterial 维护；
+        // mainTexture/defaultMaterial 只读这些字段，属性 getter 永远不会创建图集页或触碰 GL 状态。
 
         private UXImageRuntimeAtlas.Entry m_RuntimeAtlasEntry;
         private Sprite m_RuntimeAtlasSprite;
         private int m_RuntimeAtlasVersion;
 
+        // 材质的缓存键：Material 引用 + (SDF 贴图, 描边颜色, 阴影颜色)。键一致就复用同一材质实例。
         private Material m_EffectMaterial;
         private Texture m_EffectMaterialSdfTexture;
         private Color m_EffectMaterialOutlineColor;
         private Color m_EffectMaterialShadowColor;
-        private int m_EffectMaterialSdfVersion;
 
         public override Texture mainTexture
         {
             get
             {
+                // m_RuntimeAtlasSprite != null 即“entry 已写入”的标记；页面被回收时 Version 会变化，同样回退。
                 if (HasAdaptiveEffect &&
-                    m_RuntimeAtlasVersion == UXImageRuntimeAtlas.Version &&
-                    m_RuntimeAtlasEntry.IsValid)
+                    m_RuntimeAtlasSprite != null &&
+                    m_RuntimeAtlasVersion == UXImageRuntimeAtlas.Version)
                 {
                     return m_RuntimeAtlasEntry.Texture;
                 }
@@ -250,42 +317,9 @@ namespace UnityEngine.UI
                 if (!HasAdaptiveEffect)
                     return base.defaultMaterial;
 
-                Material effectMaterial = PreparedEffectMaterial;
-                return effectMaterial != null ? effectMaterial : base.defaultMaterial;
+                // 共享材质让状态相同的 Graphic 保持同一个材质实例，从而保持 UGUI 合批。
+                return m_EffectMaterial != null ? m_EffectMaterial : base.defaultMaterial;
             }
-        }
-
-        //这个用于标记属于哪个镜像区域
-        public override Material materialForRendering
-        {
-            get
-            {
-                if (!HasAdaptiveEffect)
-                    return base.materialForRendering;
-
-                Material effectMaterial = PreparedEffectMaterial;
-                return effectMaterial != null ? GetModifiedMaterial(effectMaterial) : base.materialForRendering;
-            }
-        }
-
-        private Material PreparedEffectMaterial
-        {
-            get
-            {
-                Material material = m_EffectMaterial;
-                if (material == null || m_EffectMaterialSdfVersion != UXImageRuntimeSDFCache.Version)
-                    return null;
-
-                return material;
-            }
-        }
-
-        public enum FlipPart
-        {
-            Part1 = 0,
-            Part2 = 1,
-            Part3 = 2,
-            Part4 = 3,
         }
 
         public enum FlipDirection
@@ -340,8 +374,6 @@ namespace UnityEngine.UI
             LeftBottom
         }
 
-
-        public FlipMode m_OriginFlipMode = FlipMode.None;
 
         public FlipMode m_FlipMode = FlipMode.None;
 
@@ -483,11 +515,16 @@ namespace UnityEngine.UI
         private const string ProfilerGenerateSprite = "UXImage.GenerateSprite";
         private GradientColorKey[] m_CachedColorKeys;
         private GradientAlphaKey[] m_CachedAlphaKeys;
+        private GradientMode m_CachedGradientMode = GradientMode.Blend;
         private readonly Vector2[] m_VertScratch = new Vector2[4];
         private readonly Vector2[] m_UvScratch = new Vector2[4];
         private readonly Vector3[] m_Xy = new Vector3[4];
         private readonly Vector3[] m_Uv = new Vector3[4];
         private readonly Vector3[] m_Uv1 = new Vector3[4];
+
+        // 与 VertexHelper 同步的索引镜像：CopyImage 复制镜像网格时依赖它读取“真实的”三角形列表。
+        // 所有索引写入都经过 AddTriangle，Clear 时同步清空，因此重建过程中不会产生托管分配。
+        private readonly List<int> m_MeshIndices = new List<int>(96);
 
 
         /// Image's dimensions used for drawing. X = left, Y = bottom, Z = right, W = top.
@@ -522,88 +559,49 @@ namespace UnityEngine.UI
             return v;
         }
 
-        private void ResizeByFlip()
+        private void BuildMesh(VertexHelper toFill)
         {
-            if (flipMode == FlipMode.Horziontal && flipWithCopy)
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            UnityEngine.Profiling.Profiler.BeginSample(ProfilerPopulateMesh);
+#endif
+            switch (type)
             {
-                RectTransform trans = transform as RectTransform;
-                trans.sizeDelta = new Vector2(trans.sizeDelta.x * 2, trans.sizeDelta.y);
+                case Type.Simple:
+                    if (!useSpriteMesh)
+                    {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                        UnityEngine.Profiling.Profiler.BeginSample(ProfilerGenerateSimpleSprite);
+#endif
+                        GenerateSimpleSprite(toFill, preserveAspect);
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                        UnityEngine.Profiling.Profiler.EndSample();
+#endif
+                    }
+                    else
+                    {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                        UnityEngine.Profiling.Profiler.BeginSample(ProfilerGenerateSprite);
+#endif
+                        GenerateSprite(toFill, preserveAspect);
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                        UnityEngine.Profiling.Profiler.EndSample();
+#endif
+                    }
+
+                    break;
+                case Type.Sliced:
+                    GenerateSlicedSprite(toFill);
+                    break;
+                case Type.Tiled:
+                    GenerateTiledSprite(toFill);
+                    break;
+                case Type.Filled:
+                    GenerateFilledSprite(toFill, preserveAspect);
+                    break;
             }
-
-            if (flipMode == FlipMode.Vertical && flipWithCopy)
-            {
-                RectTransform trans = transform as RectTransform;
-                trans.sizeDelta = new Vector2(trans.sizeDelta.x, trans.sizeDelta.y * 2);
-            }
-
-            if (flipMode == FlipMode.FourCorner)
-            {
-                RectTransform trans = transform as RectTransform;
-                trans.sizeDelta = new Vector2(trans.sizeDelta.x * 2, trans.sizeDelta.y * 2);
-            }
-        }
-
-        protected void OnPopulateMesh1(VertexHelper toFill)
-        {
-            //ResizeByFlip();
-
-            //if (overrideSprite == null)
-            //{
-            //    //support pure color fill
-            //    switch (m_ColorFillType)
-            //    {
-            //        case ColorFillType.None:
-            //            GenerateEmpytSprite(toFill);
-            //            break;
-            //        case ColorFillType.Filled:
-            //            GenerateFilledSprite(toFill, preserveAspect);
-            //            break;
-            //    }
-            //}
-            //else
-            {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                UnityEngine.Profiling.Profiler.BeginSample(ProfilerPopulateMesh);
+            UnityEngine.Profiling.Profiler.EndSample();
 #endif
-                switch (type)
-                {
-                    case Type.Simple:
-                        if (!useSpriteMesh)
-                        {
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-                            UnityEngine.Profiling.Profiler.BeginSample(ProfilerGenerateSimpleSprite);
-#endif
-                            GenerateSimpleSprite(toFill, preserveAspect);
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-                            UnityEngine.Profiling.Profiler.EndSample();
-#endif
-                        }
-                        else
-                        {
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-                            UnityEngine.Profiling.Profiler.BeginSample(ProfilerGenerateSprite);
-#endif
-                            GenerateSprite(toFill, preserveAspect);
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-                            UnityEngine.Profiling.Profiler.EndSample();
-#endif
-                        }
-
-                        break;
-                    case Type.Sliced:
-                        GenerateSlicedSprite(toFill);
-                        break;
-                    case Type.Tiled:
-                        GenerateTiledSprite(toFill);
-                        break;
-                    case Type.Filled:
-                        GenerateFilledSprite(toFill, preserveAspect);
-                        break;
-                }
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-                UnityEngine.Profiling.Profiler.EndSample();
-#endif
-            }
 
             m_WorkRect = GetDrawPixelAdjustedRect();
 
@@ -614,7 +612,6 @@ namespace UnityEngine.UI
                     CopyImage(toFill);
                     Rect src = GetPixelRectByFlipDirection(FlipMode.Horziontal, flipWithCopy, flipEdge, flipFillCenter);
                     Rect target = GetCopyRectByFlipDirection(src, FlipMode.Horziontal, flipEdge);
-                    //Rect target = new Rect(src.position - new Vector2(src.width, 0), src.size);
                     RemapImage(toFill, FlipMode.Horziontal, toFill.currentVertCount / 2, toFill.currentVertCount, src.xMin, src.xMax, target.xMax, target.xMin);
                 }
                 else
@@ -634,103 +631,58 @@ namespace UnityEngine.UI
                 }
                 else
                 {
-                    RemapImage(toFill, FlipMode.Vertical, 0, toFill.currentVertCount, m_WorkRect.xMin, m_WorkRect.xMax, m_WorkRect.xMax, m_WorkRect.xMin);
+                    // 垂直方向重映射的是 y 轴：RemapVertex 在 FlipMode.Vertical 下写入 position.y。
+                    RemapImage(toFill, FlipMode.Vertical, 0, toFill.currentVertCount, m_WorkRect.yMin, m_WorkRect.yMax, m_WorkRect.yMax, m_WorkRect.yMin);
                 }
             }
 
             if (flipMode == FlipMode.FourCorner)
             {
-                //先水平拷�?
+                //先水平拷贝?
                 CopyImage(toFill);
                 Rect src = GetPixelRectByFlipDirection(FlipMode.FourCorner, true, flipEdge, flipFillCenter);
                 Rect target = GetCopyRectByFlipCenter(src, FlipMode.Horziontal, flipFillCenter);
                 //Rect target = new Rect(src.position + new Vector2(src.width, 0), src.size);
                 RemapImage(toFill, FlipMode.Horziontal, toFill.currentVertCount / 2, toFill.currentVertCount, src.xMin, src.xMax, target.xMax, target.xMin);
 
-                //再垂直拷�?
+                //再垂直拷贝?
                 CopyImage(toFill);
                 Rect src1 = GetPixelRectByFlipDirection(FlipMode.FourCorner, true, flipEdge, flipFillCenter);
                 Rect target1 = GetCopyRectByFlipCenter(src1, FlipMode.Vertical, flipFillCenter);
                 RemapImage(toFill, FlipMode.Vertical, toFill.currentVertCount / 2, toFill.currentVertCount, src1.yMin, src1.yMax, target1.yMax, target1.yMin);
             }
 
-            m_OriginFlipMode = m_FlipMode;
-            /*
-            if (flipDirection == FlipDirection.HorizontalNotCopy || flipDirection == FlipDirection.DiagonalNotCopy)
-            {
-                RemapImage(toFill, FlipDirection.Horziontal, 0, toFill.currentVertCount, rect.xMin, rect.xMax, rect.xMax, rect.xMin);
-            }
-
-            if (flipDirection == FlipDirection.VerticalNotCopy || flipDirection == FlipDirection.DiagonalNotCopy)
-            {
-                RemapImage(toFill, FlipDirection.Vertical, 0, toFill.currentVertCount, rect.yMin, rect.yMax, rect.yMax, rect.yMin);
-            }
-
-            if (flipDirection == FlipDirection.Horziontal || flipDirection == FlipDirection.FourCorner)
-            {
-                CopyImage(toFill);
-                Rect src = GetPixelRectByFlipDirection(FlipDirection.Horziontal);
-                Rect target = new Rect(src.position + new Vector2(src.width, 0), src.size);
-                RemapImage(toFill, FlipDirection.Horziontal, toFill.currentVertCount / 2, toFill.currentVertCount, src.xMin, src.xMax, target.xMax, target.xMin);
-            }
-            if (flipDirection == FlipDirection.Vertical || flipDirection == FlipDirection.FourCorner)
-            {
-                CopyImage(toFill);
-                Rect src = GetPixelRectByFlipDirection(FlipDirection.Vertical);
-                Rect target = new Rect(src.position - new Vector2(0, src.height), src.size);
-                RemapImage(toFill, FlipDirection.Vertical, toFill.currentVertCount / 2, toFill.currentVertCount, src.yMin, src.yMax, target.yMax, target.yMin);
-            }
-            */
         }
 
         #region Flip
 
-        private FlipPart GetFlipPart(int index, int vertCount)
-        {
-            switch (flipDirection)
-            {
-                case FlipDirection.None:
-                    return FlipPart.Part1;
-                case FlipDirection.Horziontal:
-                case FlipDirection.Vertical:
-                    return index < vertCount / 2 ? FlipPart.Part1 : FlipPart.Part2;
-                case FlipDirection.FourCorner:
-                    if (index < vertCount / 4)
-                    {
-                        return FlipPart.Part1;
-                    }
-                    else if (index < vertCount / 2)
-                    {
-                        return FlipPart.Part2;
-                    }
-                    else if (index < vertCount * 3 / 4)
-                    {
-                        return FlipPart.Part3;
-                    }
-                    else
-                    {
-                        return FlipPart.Part4;
-                    }
-            }
-
-            return FlipPart.Part1;
-        }
-
-        //TODO: 改变加点规则
+        /// <summary>
+        /// 复制当前网格：顶点整体追加一份，三角形按“原始索引 + 顶点数偏移”逐条复制。
+        /// 索引来自与 VertexHelper 同步的 m_MeshIndices，因此任意三角形列表（例如 useSpriteMesh 的自定义网格）
+        /// 都能被完整复制，不再假设网格一定是四边形。
+        /// </summary>
         private void CopyImage(VertexHelper toFill)
         {
             int count = toFill.currentVertCount;
+            if (count == 0)
+                return;
+
+            Debug.Assert(m_MeshIndices.Count == toFill.currentIndexCount,
+                "UXImage.CopyImage: m_MeshIndices is out of sync with the VertexHelper index buffer.");
 
             for (int i = 0; i < count; ++i)
             {
-                toFill.PopulateUIVertex(ref m_WorkVert, i % count);
+                toFill.PopulateUIVertex(ref m_WorkVert, i);
                 toFill.AddVert(m_WorkVert);
             }
 
-            for (int i = count; i < 2 * count - 2; i += 4)
+            int indexCount = m_MeshIndices.Count;
+            for (int i = 0; i < indexCount; i += 3)
             {
-                toFill.AddTriangle(i, i + 1, i + 2);
-                toFill.AddTriangle(i + 2, i + 3, i);
+                AddTriangle(toFill,
+                    m_MeshIndices[i] + count,
+                    m_MeshIndices[i + 1] + count,
+                    m_MeshIndices[i + 2] + count);
             }
         }
 
@@ -746,6 +698,10 @@ namespace UnityEngine.UI
 
         public void RemapVertex(ref UIVertex vertex, FlipMode flipMode, float Min1, float Max1, float Min2, float Max2)
         {
+            // 布局阶段尺寸为 0 的退化矩形会让 k 变成 Infinity/NaN；退化时不做重映射。
+            if (Mathf.Approximately(Min1, Max1))
+                return;
+
             Vector2 position = vertex.position;
             float k = (Min2 - Max2) / (Min1 - Max1);
             float b = Min2 - Min1 * k;
@@ -782,8 +738,8 @@ namespace UnityEngine.UI
 
         /// <summary>
         /// 修改原来的Rect
-        /// 如果 flipMode == Horziontal �?Vertical, 根据copy, flipEdge来修改原本的Rect
-        /// 如果 flipMode == FourCorner, 根据flipFillCenter 来修�?
+        /// 如果 flipMode == Horziontal 或 Vertical, 根据copy, flipEdge来修改原本的Rect
+        /// 如果 flipMode == FourCorner, 根据flipFillCenter 来修改?
         /// </summary>
         /// <param name="rect">Image原始Rect</param>
         private Rect ModifyRectByFlipDirection(Rect rect, FlipMode flipMode, bool copy, FlipEdge flipEdge, FlipFillCenter fillCenter)
@@ -847,9 +803,9 @@ namespace UnityEngine.UI
         }
 
         /// <summary>
-        /// 获取Copy出来的Rect
+        /// 获取Copy出来的Rect。
         /// 这里Src应该是Modify过的原Rect
-        /// 只处理flipMode == Horziontal �?Vertical的情�?
+        /// 只处理flipMode == Horziontal 或 Vertical的情况
         /// </summary>
         /// <param name="src"></param>
         /// <param name="flipMode"></param>
@@ -903,7 +859,7 @@ namespace UnityEngine.UI
         }
 
         /// <summary>
-        /// 获取Copy出来的Rect�?flipMode == FourCorner时专�?
+        /// 获取Copy出来的Rect，flipMode == FourCorner时专用
         /// flipMode == FourCorner时会转换成两次Copy
         /// 分别调用GetCopyRectByFlipDirection
         /// 这里Src应该是Modify过的原Rect
@@ -965,7 +921,7 @@ namespace UnityEngine.UI
         {
             Vector4 v = GetDrawingDimensions(lPreserveAspect);
             var uv = (overrideSprite != null) ? Sprites.DataUtility.GetOuterUV(overrideSprite) : Vector4.zero;
-            vh.Clear();
+            ClearVertexHelper(vh);
 
             AddQuad(vh, new Vector2(v.x, v.y), new Vector2(v.z, v.w), color, new Vector2(uv.x, uv.y), new Vector2(uv.z, uv.w), Vector2.zero, Vector2.one);
         }
@@ -974,7 +930,7 @@ namespace UnityEngine.UI
 
         protected override void OnPopulateMesh(VertexHelper toFill)
         {
-            OnPopulateMesh1(toFill);
+            BuildMesh(toFill);
 
             if (m_ColorType == ColorType.Gradient_Color)
             {
@@ -993,23 +949,27 @@ namespace UnityEngine.UI
             {
                 m_CachedColorKeys = null;
                 m_CachedAlphaKeys = null;
+                m_CachedGradientMode = GradientMode.Blend;
                 return;
             }
 
             m_CachedColorKeys = m_GradientColor.colorKeys;
             m_CachedAlphaKeys = m_GradientColor.alphaKeys;
+            m_CachedGradientMode = m_GradientColor.mode;
         }
 
         protected override void OnEnable()
         {
             base.OnEnable();
+            RegisterLiveInstance();
             CacheGradientKeys();
             EnsureEffectCanvasChannels();
         }
 
         protected override void OnDestroy()
         {
-            ReleaseEffectMaterial();
+            UnregisterLiveInstance();
+            ClearEffectMaterialKey();
             base.OnDestroy();
         }
 
@@ -1045,7 +1005,7 @@ namespace UnityEngine.UI
             if (m_CachedColorKeys == null || m_CachedAlphaKeys == null)
                 CacheGradientKeys();
 
-            Rect bounds = GetGradientBounds(toFill, count);
+            Rect bounds = GetVertexBounds(toFill, count);
             float inverseSize = m_Direction == GradientDirection.Horizontal ? bounds.width : bounds.height;
             if (Mathf.Approximately(inverseSize, 0f))
                 inverseSize = 1f;
@@ -1063,7 +1023,7 @@ namespace UnityEngine.UI
             }
         }
 
-        private Rect GetGradientBounds(VertexHelper toFill, int count)
+        private Rect GetVertexBounds(VertexHelper toFill, int count)
         {
             toFill.PopulateUIVertex(ref m_WorkVert, 0);
             float minX = m_WorkVert.position.x;
@@ -1104,38 +1064,43 @@ namespace UnityEngine.UI
             float outlineSoftness = Mathf.Max(m_OutlineSoftness, 0.001f);
             float shadowSoftness = Mathf.Max(m_ShadowSoftness, 0.001f);
             Vector2 shadowOffset = m_ShadowEffectDistance;
-            float useRuntimeSdf = 0f;
+            bool useRuntimeSdf = false;
             Vector4 sampleRect;
             Vector4 sdfRect = Vector4.zero;
             Texture sdfTexture = null;
 
-            EnsureEffectMaterial();
+            // 特效几何只能向四顶点四边形外扩，因此只有 Simple/Filled 且恰好 4 个顶点时才走带 padding 的
+            // 运行时图集；Sliced/Tiled 等网格继续走普通贴图路径，避免 UV 被映射进图集 padding 后又被裁掉。
+            // 容量契约（静默降级）：运行时图集最多 4 页、SDF 最多 2 页；达到上限时 TryGet/TryGetOrRequest
+            // 返回 false，这里回退到普通贴图与非 SDF 阴影，不抛异常也不超额分配。
+            bool supportsRuntimeAtlas = count == 4 && (type == Type.Simple || type == Type.Filled);
 
-            if (TryPrepareRuntimeAtlasEntry(sprite, out var atlasEntry))
+            if (supportsRuntimeAtlas && TryPrepareRuntimeAtlasEntry(sprite, out var atlasEntry))
             {
                 Vector2 atlasTexelSize = atlasEntry.TexelSize;
                 sampleRect = GetPaddedRuntimeAtlasRect(atlasEntry);
                 RemapVerticesToRuntimeAtlas(toFill, count, atlasEntry);
-                ExpandSimpleEffectGeometry(toFill, count, atlasTexelSize);
+                ExpandEffectGeometry(toFill, count, atlasTexelSize);
 
                 if (m_EnableShadow && UXImageRuntimeSDFCache.ShouldUse(shadowSoftness) &&
-                    UXImageRuntimeSDFCache.TryGetOrRequest(sprite, shadowSoftness, out var sdfEntry))
+                    UXImageRuntimeSDFCache.TryGetOrRequest(sprite, shadowSoftness, this, out var sdfEntry))
                 {
-                    useRuntimeSdf = 1f;
+                    useRuntimeSdf = true;
                     sdfRect = sdfEntry.UvRect;
                     sdfTexture = sdfEntry.Texture;
                 }
             }
             else
             {
+                ClearRuntimeAtlasEntry();
                 sampleRect = sprite != null
                     ? Sprites.DataUtility.GetOuterUV(sprite)
                     : new Vector4(0f, 0f, 1f, 1f);
             }
 
-            ApplyEffectMaterialState(sdfTexture);
+            SyncEffectMaterial(sdfTexture, true);
 
-            if (useRuntimeSdf > 0f)
+            if (useRuntimeSdf)
                 shadowEnabled = 2f;
 
             Vector4 uv2 = new Vector4(outlineEnabled, shadowEnabled, m_UseGraphicAlpha ? 1f : 0f, 0f);
@@ -1158,65 +1123,75 @@ namespace UnityEngine.UI
             }
         }
 
-        private void EnsureEffectMaterial()
+        /// <summary>
+        /// 让当前实例的材质与 (SDF 贴图, 描边颜色, 阴影颜色) 对齐，返回材质实例是否发生了变化。
+        /// - 没有特效：释放引用并清空键；
+        /// - 键未变化：什么都不做（不产生任何 dirty）；
+        /// - 当前材质引用计数为 1：就地修改 uniform 并更新键（材质实例不变，合批不受影响）；
+        /// - 否则：从共享缓存取新材质、释放旧材质，并把材质标记为 dirty。
+        /// <paramref name="createIfMissing"/> 为 false 时（属性 setter 调用）不会为尚未建过网格的实例创建材质，
+        /// 真正创建材质的唯一入口仍然是网格重建路径；这样渲染 getter 与属性 setter 都不会提前碰 GPU 资源。
+        /// </summary>
+        private bool SyncEffectMaterial(Texture sdfTexture, bool createIfMissing = false)
         {
-            if (m_EffectMaterial != null)
-                return;
-
-            m_EffectMaterial = UXImageEffectSettings.CreateEffectMaterial();
-            if (m_EffectMaterial == null)
-                return;
-
-            m_EffectMaterialSdfTexture = null;
-            m_EffectMaterialOutlineColor = m_OutlineEffectColor;
-            m_EffectMaterialShadowColor = m_ShadowEffectColor;
-            m_EffectMaterialSdfVersion = UXImageRuntimeSDFCache.Version;
-
-            m_EffectMaterial.SetTexture("_SDFTex", null);
-            m_EffectMaterial.SetColor("_OutlineColor", m_EffectMaterialOutlineColor);
-            m_EffectMaterial.SetColor("_ShadowColor", m_EffectMaterialShadowColor);
-        }
-
-        private void ApplyEffectMaterialState(Texture sdfTexture)
-        {
-            Material material = m_EffectMaterial;
-            if (material == null)
-                return;
-
-            if (!ReferenceEquals(m_EffectMaterialSdfTexture, sdfTexture))
+            if (!HasAdaptiveEffect)
             {
-                m_EffectMaterialSdfTexture = sdfTexture;
-                material.SetTexture("_SDFTex", sdfTexture);
+                bool hadMaterial = m_EffectMaterial != null;
+                ClearEffectMaterialKey();
+                if (hadMaterial)
+                    SetMaterialDirty();
+                return hadMaterial;
             }
 
             Color outlineColor = m_OutlineEffectColor;
-            if (m_EffectMaterialOutlineColor != outlineColor)
-            {
-                m_EffectMaterialOutlineColor = outlineColor;
-                material.SetColor("_OutlineColor", outlineColor);
-            }
-
             Color shadowColor = m_ShadowEffectColor;
-            if (m_EffectMaterialShadowColor != shadowColor)
+            Material current = m_EffectMaterial;
+
+            if (current == null && !createIfMissing)
+                return false;
+
+            if (current != null &&
+                ReferenceEquals(m_EffectMaterialSdfTexture, sdfTexture) &&
+                m_EffectMaterialOutlineColor == outlineColor &&
+                m_EffectMaterialShadowColor == shadowColor)
             {
-                m_EffectMaterialShadowColor = shadowColor;
-                material.SetColor("_ShadowColor", shadowColor);
+                return false;
             }
 
-            m_EffectMaterialSdfVersion = UXImageRuntimeSDFCache.Version;
+            if (current != null && UXImageEffectSettings.GetMaterialRefCount(current) == 1)
+            {
+                UXImageEffectSettings.ApplyMaterialState(current, sdfTexture, outlineColor, shadowColor);
+                m_EffectMaterialSdfTexture = sdfTexture;
+                m_EffectMaterialOutlineColor = outlineColor;
+                m_EffectMaterialShadowColor = shadowColor;
+                return false;
+            }
+
+            Material next = UXImageEffectSettings.AcquireEffectMaterial(sdfTexture, outlineColor, shadowColor);
+            if (current != null)
+                UXImageEffectSettings.ReleaseEffectMaterial(current);
+
+            m_EffectMaterial = next;
+            m_EffectMaterialSdfTexture = sdfTexture;
+            m_EffectMaterialOutlineColor = outlineColor;
+            m_EffectMaterialShadowColor = shadowColor;
+
+            if (next != null)
+                SetMaterialDirty();
+
+            return true;
         }
 
-        private void ReleaseEffectMaterial()
+        /// <summary>释放共享材质引用并清空本地缓存的键（不会销毁共享材质本身）。</summary>
+        private void ClearEffectMaterialKey()
         {
-            if (m_EffectMaterial == null)
-                return;
+            if (m_EffectMaterial != null)
+                UXImageEffectSettings.ReleaseEffectMaterial(m_EffectMaterial);
 
-            UXImageEffectSettings.DestroyRuntimeObject(m_EffectMaterial);
             m_EffectMaterial = null;
             m_EffectMaterialSdfTexture = null;
             m_EffectMaterialOutlineColor = default;
             m_EffectMaterialShadowColor = default;
-            m_EffectMaterialSdfVersion = 0;
         }
 
         private void EnsureEffectCanvasChannels()
@@ -1228,19 +1203,18 @@ namespace UnityEngine.UI
         /// <summary>
         /// Resolves (and caches per Graphic) the runtime atlas entry for the current sprite. This is the only place
         /// that may create atlas pages; it is called from the mesh update path, never from a rendering getter.
+        /// 是否启用特效由调用方唯一负责，这里只处理 sprite 与缓存有效性。
         /// </summary>
         private bool TryPrepareRuntimeAtlasEntry(Sprite sprite, out UXImageRuntimeAtlas.Entry entry)
         {
             entry = default;
-            if (!HasAdaptiveEffect || type == Type.Tiled || sprite == null)
+            if (sprite == null)
             {
                 ClearRuntimeAtlasEntry();
                 return false;
             }
 
-            if (m_RuntimeAtlasVersion == UXImageRuntimeAtlas.Version &&
-                m_RuntimeAtlasSprite == sprite &&
-                m_RuntimeAtlasEntry.IsValid)
+            if (m_RuntimeAtlasVersion == UXImageRuntimeAtlas.Version && ReferenceEquals(m_RuntimeAtlasSprite, sprite))
             {
                 entry = m_RuntimeAtlasEntry;
                 return true;
@@ -1297,9 +1271,8 @@ namespace UnityEngine.UI
 
         private void RemapVerticesToRuntimeAtlas(VertexHelper toFill, int count, UXImageRuntimeAtlas.Entry entry)
         {
-            Vector4 source = overrideSprite != null
-                ? Sprites.DataUtility.GetOuterUV(overrideSprite)
-                : new Vector4(0f, 0f, 1f, 1f);
+            // 走到这里说明 TryPrepareRuntimeAtlasEntry 已确认 overrideSprite 非空。
+            Vector4 source = Sprites.DataUtility.GetOuterUV(overrideSprite);
             Vector4 target = entry.SourceUvRect;
             float sourceWidth = source.z - source.x;
             float sourceHeight = source.w - source.y;
@@ -1320,16 +1293,14 @@ namespace UnityEngine.UI
             }
         }
 
-        private void ExpandSimpleEffectGeometry(VertexHelper toFill, int count, Vector2 spriteTexelSize)
+        /// <summary>
+        /// 把四顶点网格向外扩张 <see cref="GetEffectPadding"/> 个像素，并把 uv0 同步推进图集的 padding 环，
+        /// 这样描边/阴影不会被网格边界裁掉。调用方保证 count == 4 且类型可扩张（Simple/Filled）。
+        /// </summary>
+        private void ExpandEffectGeometry(VertexHelper toFill, int count, Vector2 spriteTexelSize)
         {
-            if (type != Type.Simple || count != 4)
-                return;
-
             float padding = GetEffectPadding();
-            if (padding <= 0f)
-                return;
-
-            Rect bounds = GetGradientBounds(toFill, count);
+            Rect bounds = GetVertexBounds(toFill, count);
             if (Mathf.Approximately(bounds.width, 0f) || Mathf.Approximately(bounds.height, 0f))
                 return;
 
@@ -1367,9 +1338,9 @@ namespace UnityEngine.UI
                 if (time <= next.time)
                 {
 #if UNITY_2022_2_OR_NEWER
-                    if (m_GradientColor.mode == GradientMode.Blend || m_GradientColor.mode == GradientMode.PerceptualBlend)
+                    if (m_CachedGradientMode == GradientMode.Blend || m_CachedGradientMode == GradientMode.PerceptualBlend)
 #else
-                    if (m_GradientColor.mode == GradientMode.Blend)
+                    if (m_CachedGradientMode == GradientMode.Blend)
 #endif
                     {
                         GradientColorKey previous = keys[i - 1];
@@ -1403,9 +1374,9 @@ namespace UnityEngine.UI
                 if (time <= next.time)
                 {
 #if UNITY_2022_2_OR_NEWER
-                    if (m_GradientColor.mode == GradientMode.Blend || m_GradientColor.mode == GradientMode.PerceptualBlend)
+                    if (m_CachedGradientMode == GradientMode.Blend || m_CachedGradientMode == GradientMode.PerceptualBlend)
 #else
-                    if (m_GradientColor.mode == GradientMode.Blend)
+                    if (m_CachedGradientMode == GradientMode.Blend)
 #endif
                     {
                         GradientAlphaKey previous = keys[i - 1];
@@ -1425,10 +1396,20 @@ namespace UnityEngine.UI
 
         private void GenerateSprite(VertexHelper vh, bool lPreserveAspect)
         {
-            var spriteSize = new Vector2(overrideSprite.rect.width, overrideSprite.rect.height);
+            ClearVertexHelper(vh);
+
+            Sprite sprite = overrideSprite;
+            if (sprite == null)
+                return;
+
+            // Sprite.vertices/uv/triangles 每次访问都会复制数组；这里走缓存，命中时重建过程零托管分配。
+            if (!UXImageSpriteMeshCache.TryGet(sprite, out Vector2[] vertices, out Vector2[] uvs, out ushort[] triangles, out int triangleCount))
+                return;
+
+            var spriteSize = new Vector2(sprite.rect.width, sprite.rect.height);
 
             // Covert sprite pivot into normalized space.
-            var spritePivot = overrideSprite.pivot / spriteSize;
+            var spritePivot = sprite.pivot / spriteSize;
             var rectPivot = rectTransform.pivot;
             Rect r = GetPixelAdjustedRect();
 
@@ -1438,25 +1419,22 @@ namespace UnityEngine.UI
             }
 
             var drawingSize = new Vector2(r.width, r.height);
-            var spriteBoundSize = overrideSprite.bounds.size;
+            var spriteBoundSize = sprite.bounds.size;
 
             // Calculate the drawing offset based on the difference between the two pivots.
             var drawOffset = (rectPivot - spritePivot) * drawingSize;
 
             var color32 = color;
-            vh.Clear();
 
-            Vector2[] vertices = overrideSprite.vertices;
-            Vector2[] uvs = overrideSprite.uv;
             for (int i = 0; i < vertices.Length; ++i)
             {
                 vh.AddVert(new Vector3((vertices[i].x / spriteBoundSize.x) * drawingSize.x - drawOffset.x, (vertices[i].y / spriteBoundSize.y) * drawingSize.y - drawOffset.y), color32, new Vector2(uvs[i].x, uvs[i].y));
             }
 
-            UInt16[] triangles = overrideSprite.triangles;
-            for (int i = 0; i < triangles.Length; i += 3)
+            for (int t = 0; t < triangleCount; t++)
             {
-                vh.AddTriangle(triangles[i + 0], triangles[i + 1], triangles[i + 2]);
+                int i = t * 3;
+                AddTriangle(vh, triangles[i + 0], triangles[i + 1], triangles[i + 2]);
             }
         }
 
@@ -1515,7 +1493,7 @@ namespace UnityEngine.UI
             m_UvScratch[2] = new Vector2(inner.z, inner.w);
             m_UvScratch[3] = new Vector2(outer.z, outer.w);
 
-            toFill.Clear();
+            ClearVertexHelper(toFill);
 
             for (int x = 0; x < 3; ++x)
             {
@@ -1577,7 +1555,7 @@ namespace UnityEngine.UI
             float yMin = border.y;
             float yMax = rect.height - border.w;
 
-            toFill.Clear();
+            ClearVertexHelper(toFill);
             var clipped = uvMax;
 
             // if either width is zero we cant tile so just assume it was the full width.
@@ -1812,18 +1790,18 @@ namespace UnityEngine.UI
             }
         }
 
-        static void AddQuad(VertexHelper vertexHelper, Vector3[] quadPositions, Color32 color, Vector3[] quadUVs, Vector3[] quadUV1s)
+        void AddQuad(VertexHelper vertexHelper, Vector3[] quadPositions, Color32 color, Vector3[] quadUVs, Vector3[] quadUV1s)
         {
             int startIndex = vertexHelper.currentVertCount;
 
             for (int i = 0; i < 4; ++i)
                 vertexHelper.AddVert(quadPositions[i], color, quadUVs[i], quadUV1s[i], s_DefaultNormal, s_DefaultTangent);
 
-            vertexHelper.AddTriangle(startIndex, startIndex + 1, startIndex + 2);
-            vertexHelper.AddTriangle(startIndex + 2, startIndex + 3, startIndex);
+            AddTriangle(vertexHelper, startIndex, startIndex + 1, startIndex + 2);
+            AddTriangle(vertexHelper, startIndex + 2, startIndex + 3, startIndex);
         }
 
-        static void AddQuad(VertexHelper vertexHelper, Vector2 posMin, Vector2 posMax, Color32 color, Vector2 uvMin, Vector2 uvMax, Vector2 uv1Min, Vector2 uv1Max)
+        void AddQuad(VertexHelper vertexHelper, Vector2 posMin, Vector2 posMax, Color32 color, Vector2 uvMin, Vector2 uvMax, Vector2 uv1Min, Vector2 uv1Max)
         {
             int startIndex = vertexHelper.currentVertCount;
 
@@ -1832,8 +1810,8 @@ namespace UnityEngine.UI
             vertexHelper.AddVert(new Vector3(posMax.x, posMax.y, 0), color, new Vector2(uvMax.x, uvMax.y), new Vector2(uv1Max.x, uv1Max.y), s_DefaultNormal, s_DefaultTangent);
             vertexHelper.AddVert(new Vector3(posMax.x, posMin.y, 0), color, new Vector2(uvMax.x, uvMin.y), new Vector2(uv1Max.x, uv1Min.y), s_DefaultNormal, s_DefaultTangent);
 
-            vertexHelper.AddTriangle(startIndex, startIndex + 1, startIndex + 2);
-            vertexHelper.AddTriangle(startIndex + 2, startIndex + 3, startIndex);
+            AddTriangle(vertexHelper, startIndex, startIndex + 1, startIndex + 2);
+            AddTriangle(vertexHelper, startIndex + 2, startIndex + 3, startIndex);
         }
 
         Vector4 GetAdjustedBorders(Vector4 border, Rect adjustedRect)
@@ -1872,7 +1850,7 @@ namespace UnityEngine.UI
 
         void GenerateFilledSprite(VertexHelper toFill, bool preserveAspect)
         {
-            toFill.Clear();
+            ClearVertexHelper(toFill);
 
             if (fillAmount < 0.001f)
                 return;
@@ -2180,18 +2158,18 @@ namespace UnityEngine.UI
         }
 
 
-        static void AddQuad(VertexHelper vertexHelper, Vector3[] quadPositions, Color32 color, Vector3[] quadUVs)
+        void AddQuad(VertexHelper vertexHelper, Vector3[] quadPositions, Color32 color, Vector3[] quadUVs)
         {
             int startIndex = vertexHelper.currentVertCount;
 
             for (int i = 0; i < 4; ++i)
                 vertexHelper.AddVert(quadPositions[i], color, quadUVs[i]);
 
-            vertexHelper.AddTriangle(startIndex, startIndex + 1, startIndex + 2);
-            vertexHelper.AddTriangle(startIndex + 2, startIndex + 3, startIndex);
+            AddTriangle(vertexHelper, startIndex, startIndex + 1, startIndex + 2);
+            AddTriangle(vertexHelper, startIndex + 2, startIndex + 3, startIndex);
         }
 
-        static void AddQuad(VertexHelper vertexHelper, Vector2 posMin, Vector2 posMax, Color32 color, Vector2 uvMin, Vector2 uvMax)
+        void AddQuad(VertexHelper vertexHelper, Vector2 posMin, Vector2 posMax, Color32 color, Vector2 uvMin, Vector2 uvMax)
         {
             int startIndex = vertexHelper.currentVertCount;
 
@@ -2200,8 +2178,29 @@ namespace UnityEngine.UI
             vertexHelper.AddVert(new Vector3(posMax.x, posMax.y, 0), color, new Vector2(uvMax.x, uvMax.y));
             vertexHelper.AddVert(new Vector3(posMax.x, posMin.y, 0), color, new Vector2(uvMax.x, uvMin.y));
 
-            vertexHelper.AddTriangle(startIndex, startIndex + 1, startIndex + 2);
-            vertexHelper.AddTriangle(startIndex + 2, startIndex + 3, startIndex);
+            AddTriangle(vertexHelper, startIndex, startIndex + 1, startIndex + 2);
+            AddTriangle(vertexHelper, startIndex + 2, startIndex + 3, startIndex);
+        }
+
+        /// <summary>
+        /// 清空 VertexHelper，同时清空索引镜像，保证两者始终一一对应。
+        /// </summary>
+        private void ClearVertexHelper(VertexHelper vertexHelper)
+        {
+            vertexHelper.Clear();
+            m_MeshIndices.Clear();
+        }
+
+        /// <summary>
+        /// 唯一的索引写入入口：写入 VertexHelper 的同时记录到 m_MeshIndices。
+        /// CopyImage 依赖这份镜像复制任意三角形列表，且整个过程零托管分配。
+        /// </summary>
+        private void AddTriangle(VertexHelper vertexHelper, int index0, int index1, int index2)
+        {
+            vertexHelper.AddTriangle(index0, index1, index2);
+            m_MeshIndices.Add(index0);
+            m_MeshIndices.Add(index1);
+            m_MeshIndices.Add(index2);
         }
     }
 }

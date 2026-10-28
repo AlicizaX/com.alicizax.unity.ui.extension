@@ -49,11 +49,6 @@ namespace AlicizaX.UI
             return Vector2.zero;
         }
 
-        public override Vector2 CalculateViewportOffset()
-        {
-            return Vector2.zero;
-        }
-
         public override void Layout(ViewHolder viewHolder, int index)
         {
             viewHolder.RectTransform.anchoredPosition3D = CalculatePosition(index);
@@ -81,20 +76,6 @@ namespace AlicizaX.UI
         {
             GetVisibleWindow(out _, out int end);
             return end;
-        }
-
-        public override bool IsFullVisibleStart(int index) => index > GetStartIndex();
-
-        public override bool IsFullInvisibleStart(int index) => index < GetStartIndex();
-
-        public override bool IsFullVisibleEnd(int index) => index < GetEndIndex();
-
-        public override bool IsFullInvisibleEnd(int index) => index > GetEndIndex();
-
-        public override bool IsVisible(int index)
-        {
-            GetVisibleWindow(out int start, out int end);
-            return index >= start && index <= end;
         }
 
         public override float IndexToPosition(int index)
@@ -190,20 +171,10 @@ namespace AlicizaX.UI
                 return;
             }
 
-            int visibleCount = GetVisibleItemCount(itemCount);
+            int visibleCount = Mathf.Min(itemCount, Mathf.Max(1, maxVisibleItemCount));
             int centerIndex = PositionToIndex(ScrollPosition);
             start = centerIndex - visibleCount / 2;
             end = start + visibleCount - 1;
-        }
-
-        private int GetVisibleItemCount(int itemCount)
-        {
-            if (itemCount <= 0)
-            {
-                return 0;
-            }
-
-            return Mathf.Min(itemCount, Mathf.Max(1, maxVisibleItemCount));
         }
     }
 
