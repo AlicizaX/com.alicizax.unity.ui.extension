@@ -12,8 +12,9 @@ namespace UnityEngine.UI
     ///   (<see cref="AtlasSize"/>^2 ARGB32 = 16 MiB per page, 64 MiB maximum). Once the cap is reached
     ///   <see cref="TryGet"/> returns false and the caller must fall back to the sprite texture; nothing is
     ///   over-allocated silently.
-    /// - Entries are keyed by sprite instanceId and only reference the sprite through a weak reference. A destroyed
-    ///   sprite (or an instanceId reused by another sprite) is treated as a miss and the stale entry is dropped.
+    /// - Entries are keyed by <see cref="UnityObjectId"/> and only reference the sprite through a weak reference. A
+    ///   destroyed sprite (or an object id reused by another sprite) is treated as a miss and the stale entry is
+    ///   dropped.
     /// - Every page tracks its live entries. A page without live entries is released immediately and bumps
     ///   <see cref="Version"/> so cached Graphic state is invalidated.
     /// - <see cref="Sweep"/> drops dead entries and reclaims empty pages. It is hooked to
@@ -51,9 +52,9 @@ namespace UnityEngine.UI
         private const int AtlasSize = 2048;
         private const int MaxPages = 4;
 
-        private static readonly Dictionary<int, SpriteEntry> s_Entries = new Dictionary<int, SpriteEntry>(64);
+        private static readonly Dictionary<ulong, SpriteEntry> s_Entries = new Dictionary<ulong, SpriteEntry>(64);
         private static readonly List<Page> s_Pages = new List<Page>(MaxPages);
-        private static readonly List<int> s_DeadKeys = new List<int>(16);
+        private static readonly List<ulong> s_DeadKeys = new List<ulong>(16);
 
         private static int s_Version;
         private static bool s_SceneUnloadHooked;
@@ -79,8 +80,8 @@ namespace UnityEngine.UI
 
             EnsureSceneUnloadHook();
 
-            int instanceId = sprite.GetInstanceID();
-            if (s_Entries.TryGetValue(instanceId, out SpriteEntry cached))
+            ulong objectId = UnityObjectId.Get(sprite);
+            if (s_Entries.TryGetValue(objectId, out SpriteEntry cached))
             {
                 if (cached.Matches(sprite))
                 {
@@ -88,7 +89,7 @@ namespace UnityEngine.UI
                     return true;
                 }
 
-                // Sprite 已销毁，或 instanceId 被另一个 Sprite 复用。
+                // Sprite 已销毁，或对象 id 被另一个 Sprite 复用。
                 RemoveEntry(cached);
             }
 
@@ -119,12 +120,12 @@ namespace UnityEngine.UI
                 MaxPadding);
 
             page.AddLiveEntry();
-            s_Entries.Add(instanceId, new SpriteEntry(instanceId, sprite, entry, page));
+            s_Entries.Add(objectId, new SpriteEntry(objectId, sprite, entry, page));
             return true;
         }
 
         /// <summary>
-        /// Drops entries whose sprite is gone (or whose instanceId was reused) and reclaims pages without live
+        /// Drops entries whose sprite is gone (or whose object id was reused) and reclaims pages without live
         /// entries. Safe to call at any time; a released page bumps <see cref="Version"/>.
         /// </summary>
         internal static void Sweep()
@@ -132,7 +133,7 @@ namespace UnityEngine.UI
             if (s_Entries.Count > 0)
             {
                 s_DeadKeys.Clear();
-                foreach (KeyValuePair<int, SpriteEntry> pair in s_Entries)
+                foreach (KeyValuePair<ulong, SpriteEntry> pair in s_Entries)
                 {
                     if (!pair.Value.IsAlive())
                         s_DeadKeys.Add(pair.Key);
@@ -189,7 +190,7 @@ namespace UnityEngine.UI
 
         private static void RemoveEntry(SpriteEntry entry)
         {
-            s_Entries.Remove(entry.InstanceId);
+            s_Entries.Remove(entry.ObjectId);
 
             Page page = entry.Page;
             if (page == null)
@@ -289,14 +290,14 @@ namespace UnityEngine.UI
 
         private sealed class SpriteEntry
         {
-            public readonly int InstanceId;
+            public readonly ulong ObjectId;
             public readonly WeakReference<Sprite> Sprite;
             public readonly Entry Entry;
             public readonly Page Page;
 
-            public SpriteEntry(int instanceId, Sprite sprite, Entry entry, Page page)
+            public SpriteEntry(ulong objectId, Sprite sprite, Entry entry, Page page)
             {
-                InstanceId = instanceId;
+                ObjectId = objectId;
                 Sprite = new WeakReference<Sprite>(sprite);
                 Entry = entry;
                 Page = page;

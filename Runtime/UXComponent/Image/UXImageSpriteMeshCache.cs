@@ -9,8 +9,8 @@ namespace UnityEngine.UI
     /// <see cref="Sprite.triangles"/>.
     ///
     /// 这三个 getter 每次访问都会复制一份托管数组；UXImage 的自适应网格在每次重建时都会用到它们，因此这里按
-    /// sprite instanceId 缓存数组，命中时零托管分配。缓存项只弱引用 Sprite：Sprite 被销毁或 instanceId 被复用时
-    /// 视为未命中并移除旧项。缓存上限 <see cref="MaxEntries"/>，超出后按 LRU 淘汰；
+    /// sprite 的 <see cref="UnityObjectId"/> 缓存数组，命中时零托管分配。缓存项只弱引用 Sprite：Sprite 被销毁或
+    /// 对象 id 被复用时视为未命中并移除旧项。缓存上限 <see cref="MaxEntries"/>，超出后按 LRU 淘汰；
     /// <see cref="Clear"/> 由 UXImage.ReleaseRuntimeEffectCaches() 调用，<see cref="Sweep"/> 由场景卸载触发。
     /// 主线程专用（UGUI）。
     /// </summary>
@@ -18,8 +18,8 @@ namespace UnityEngine.UI
     {
         private const int MaxEntries = 32;
 
-        private static readonly Dictionary<int, CachedMesh> s_Entries = new Dictionary<int, CachedMesh>(MaxEntries);
-        private static readonly List<int> s_DeadKeys = new List<int>(8);
+        private static readonly Dictionary<ulong, CachedMesh> s_Entries = new Dictionary<ulong, CachedMesh>(MaxEntries);
+        private static readonly List<ulong> s_DeadKeys = new List<ulong>(8);
 
         private static long s_AccessCounter;
         private static bool s_SceneUnloadHooked;
@@ -50,8 +50,8 @@ namespace UnityEngine.UI
 
             EnsureSceneUnloadHook();
 
-            int instanceId = sprite.GetInstanceID();
-            if (s_Entries.TryGetValue(instanceId, out CachedMesh cached))
+            ulong objectId = UnityObjectId.Get(sprite);
+            if (s_Entries.TryGetValue(objectId, out CachedMesh cached))
             {
                 if (cached.Matches(sprite))
                 {
@@ -63,7 +63,7 @@ namespace UnityEngine.UI
                     return true;
                 }
 
-                s_Entries.Remove(instanceId);
+                s_Entries.Remove(objectId);
             }
 
             ushort[] sourceTriangles = sprite.triangles;
@@ -75,7 +75,7 @@ namespace UnityEngine.UI
                 return false;
 
             cached = new CachedMesh(sprite, sourceVertices, sourceUvs, sourceTriangles);
-            s_Entries.Add(instanceId, cached);
+            s_Entries.Add(objectId, cached);
             EvictIfNeeded();
 
             vertices = cached.Vertices;
@@ -85,14 +85,14 @@ namespace UnityEngine.UI
             return true;
         }
 
-        /// <summary>Drops entries whose sprite is gone or whose instanceId was reused.</summary>
+        /// <summary>Drops entries whose sprite is gone or whose object id was reused.</summary>
         internal static void Sweep()
         {
             if (s_Entries.Count == 0)
                 return;
 
             s_DeadKeys.Clear();
-            foreach (KeyValuePair<int, CachedMesh> pair in s_Entries)
+            foreach (KeyValuePair<ulong, CachedMesh> pair in s_Entries)
             {
                 if (!pair.Value.IsAlive())
                     s_DeadKeys.Add(pair.Key);
@@ -115,10 +115,10 @@ namespace UnityEngine.UI
         {
             while (s_Entries.Count > MaxEntries)
             {
-                int oldestKey = 0;
+                ulong oldestKey = 0;
                 long oldestUse = long.MaxValue;
                 bool found = false;
-                foreach (KeyValuePair<int, CachedMesh> pair in s_Entries)
+                foreach (KeyValuePair<ulong, CachedMesh> pair in s_Entries)
                 {
                     if (pair.Value.LastUse >= oldestUse)
                         continue;

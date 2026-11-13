@@ -281,8 +281,8 @@ namespace UnityEngine.UI
             {
                 unchecked
                 {
-                    int hash = m_Shader != null ? m_Shader.GetInstanceID() : 0;
-                    hash = (hash * 397) ^ (m_SdfTexture != null ? m_SdfTexture.GetInstanceID() : 0);
+                    int hash = UnityObjectId.Get(m_Shader).GetHashCode();
+                    hash = (hash * 397) ^ UnityObjectId.Get(m_SdfTexture).GetHashCode();
                     hash = (hash * 397) ^ m_OutlineColor.GetHashCode();
                     hash = (hash * 397) ^ m_ShadowColor.GetHashCode();
                     return hash;

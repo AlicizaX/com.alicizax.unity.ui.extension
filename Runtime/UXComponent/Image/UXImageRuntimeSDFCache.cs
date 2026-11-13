@@ -21,9 +21,9 @@ namespace UnityEngine.UI
     ///   generator shader/format). The negative cache is weak per sprite and is cleared by <see cref="ReleaseAll"/>.
     /// - A bake uses temporary seed/result work textures that are destroyed as soon as the result has been copied
     ///   into the page, so no MiB-sized work texture stays resident between bakes.
-    /// - Entries are keyed by sprite instanceId + spread bucket and reference the sprite only weakly; dead entries
-    ///   are dropped by <see cref="Sweep"/> (hooked to sceneUnloaded and called by <see cref="ReleaseAll"/>), and
-    ///   pages without live entries are released immediately (which bumps <see cref="Version"/>).
+    /// - Entries are keyed by sprite <see cref="UnityObjectId"/> + spread bucket and reference the sprite only weakly;
+    ///   dead entries are dropped by <see cref="Sweep"/> (hooked to sceneUnloaded and called by <see cref="ReleaseAll"/>),
+    ///   and pages without live entries are released immediately (which bumps <see cref="Version"/>).
     /// - <see cref="ReleaseAll"/> destroys all pages, the generator material, clears the request queue/negative
     ///   cache/waiter lists and runs on play mode start (SubsystemRegistration).
     /// - The atlas padding intentionally equals <see cref="UXImageRuntimeAtlas.MaxPadding"/>: the effect shader maps
@@ -261,7 +261,7 @@ namespace UnityEngine.UI
                 return false;
 
             spreadBucket = QuantizeSpread(spreadPixels);
-            key = new BakeKey(sprite.GetInstanceID(), spreadBucket);
+            key = new BakeKey(UnityObjectId.Get(sprite), spreadBucket);
             return true;
         }
 
@@ -286,7 +286,7 @@ namespace UnityEngine.UI
             if (IsAlive(failedFor, sprite))
                 return true;
 
-            // instanceId 被复用或原 Sprite 已销毁：负缓存记录不再可信。
+            // 对象 id 被复用或原 Sprite 已销毁：负缓存记录不再可信。
             s_Failed.Remove(key);
             return false;
         }
@@ -743,10 +743,10 @@ namespace UnityEngine.UI
 
         private readonly struct BakeKey : IEquatable<BakeKey>
         {
-            private readonly int m_SpriteId;
+            private readonly ulong m_SpriteId;
             private readonly int m_SpreadBucket;
 
-            public BakeKey(int spriteId, int spreadBucket)
+            public BakeKey(ulong spriteId, int spreadBucket)
             {
                 m_SpriteId = spriteId;
                 m_SpreadBucket = spreadBucket;
@@ -766,7 +766,7 @@ namespace UnityEngine.UI
             {
                 unchecked
                 {
-                    return (m_SpriteId * 397) ^ m_SpreadBucket;
+                    return (m_SpriteId.GetHashCode() * 397) ^ m_SpreadBucket;
                 }
             }
         }
