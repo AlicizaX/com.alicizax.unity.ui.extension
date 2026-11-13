@@ -1,7 +1,5 @@
 using System;
 using System.Collections.Generic;
-using AlicizaX.UI.UXFeedback;
-using UnityEngine.EventSystems;
 
 namespace UnityEngine.UI
 {
@@ -180,23 +178,6 @@ namespace UnityEngine.UI
                 UXSelectionState.Disabled => SelectionState.Disabled,
                 _ => SelectionState.Normal,
             };
-        }
-
-        public override void OnPointerEnter(PointerEventData eventData)
-        {
-            base.OnPointerEnter(eventData);
-            UXUiFeedback.Raise(this, UXUiCue.PointerEnter);
-        }
-
-        public override void OnSelect(BaseEventData eventData)
-        {
-            base.OnSelect(eventData);
-            if (eventData is PointerEventData)
-            {
-                return;
-            }
-
-            UXUiFeedback.Raise(this, UXUiCue.FocusEnter);
         }
 
         void CancelPendingPulse()

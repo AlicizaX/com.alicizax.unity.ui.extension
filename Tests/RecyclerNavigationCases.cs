@@ -15,7 +15,6 @@ namespace AlicizaX.UI.NavigationTests
         private EventSystem eventSystem;
         private RecyclerView list;
         private RecyclerViewNavigationController navigation;
-        private NavigationItem template;
         private TestAdapter adapter;
 
         private sealed class TestAdapter : IAdapter
@@ -48,7 +47,7 @@ namespace AlicizaX.UI.NavigationTests
             content.transform.SetParent(root.transform, false);
             var item = new GameObject("template", typeof(RectTransform));
             item.transform.SetParent(content.transform, false);
-            template = item.AddComponent<NavigationItem>();
+            NavigationItem template = item.AddComponent<NavigationItem>();
             Set(list, "templates", new ViewHolder[] { template });
             Set(list, "content", content.GetComponent<RectTransform>());
             Set(list, "direction", Direction.Vertical);
@@ -74,6 +73,16 @@ namespace AlicizaX.UI.NavigationTests
         private void DataChanged() => typeof(RecyclerViewNavigationController)
             .GetMethod("NotifyDataSetChanged", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(navigation, null);
         private bool Move(MoveDirection direction) => navigation.HandleMove(new AxisEventData(eventSystem) { moveDir = direction });
+        private void OnMove(MoveDirection direction) => navigation.OnMove(new AxisEventData(eventSystem) { moveDir = direction });
+
+        /// <summary>边界出口统一由 Selectable.navigation 配置（Explicit + Select On Down）。</summary>
+        private GameObject ConfigureExitDown()
+        {
+            var exit = new GameObject("exit", typeof(RectTransform), typeof(Button));
+            exit.transform.SetParent(eventRoot.transform, false);
+            navigation.navigation = new Navigation { mode = Navigation.Mode.Explicit, selectOnDown = exit.GetComponent<Button>() };
+            return exit;
+        }
 
         [TestCase(-1)] [TestCase(99)]
         public void InvalidIndexClearsFocus(int index)
@@ -87,7 +96,7 @@ namespace AlicizaX.UI.NavigationTests
         [Test]
         public void UnavailableIndexSelectsNearestFocusableData()
         {
-            template.ExcludedIndex = 1;
+            navigation.SetFocusFilter(i => i != 1);
             navigation.SetFocus(1, false);
             Assert.That(navigation.FocusedDataIndex, Is.EqualTo(2));
         }
@@ -95,7 +104,7 @@ namespace AlicizaX.UI.NavigationTests
         [Test]
         public void MoveSkipsUnavailableData()
         {
-            template.ExcludedIndex = 1;
+            navigation.SetFocusFilter(i => i != 1);
             navigation.SetFocus(0, false);
             Assert.That(Move(MoveDirection.Down), Is.True);
             Assert.That(navigation.FocusedDataIndex, Is.EqualTo(2));
@@ -107,12 +116,11 @@ namespace AlicizaX.UI.NavigationTests
         {
             adapter.Count = count;
             if (grid) Set(list, "layoutManager", new GridLayoutManager());
-            var exit = new GameObject("exit", typeof(RectTransform), typeof(Button));
-            exit.transform.SetParent(eventRoot.transform, false);
-            Set(navigation, "exitDown", exit.GetComponent<Button>());
+            var exit = ConfigureExitDown();
             navigation.SetFocus(count - 1, false);
             eventSystem.SetSelectedGameObject(root);
-            Assert.That(Move(MoveDirection.Down), Is.True);
+            Assert.That(Move(MoveDirection.Down), Is.False, "边界不消费输入，交给 base.OnMove");
+            OnMove(MoveDirection.Down);
             Assert.That(eventSystem.currentSelectedGameObject, Is.SameAs(exit));
             Assert.That(navigation.FocusedDataIndex, Is.EqualTo(count - 1));
         }
@@ -121,13 +129,12 @@ namespace AlicizaX.UI.NavigationTests
         public void NonWrappingUnavailableTailSelectsConfiguredExit()
         {
             adapter.Count = 2;
-            template.ExcludedIndex = 1;
-            var exit = new GameObject("exit", typeof(RectTransform), typeof(Button));
-            exit.transform.SetParent(eventRoot.transform, false);
-            Set(navigation, "exitDown", exit.GetComponent<Button>());
+            navigation.SetFocusFilter(i => i != 1);
+            var exit = ConfigureExitDown();
             navigation.SetFocus(0, false);
             eventSystem.SetSelectedGameObject(root);
-            Assert.That(Move(MoveDirection.Down), Is.True);
+            Assert.That(Move(MoveDirection.Down), Is.False);
+            OnMove(MoveDirection.Down);
             Assert.That(eventSystem.currentSelectedGameObject, Is.SameAs(exit));
             Assert.That(navigation.FocusedDataIndex, Is.Zero);
         }
@@ -138,12 +145,11 @@ namespace AlicizaX.UI.NavigationTests
             adapter.Count = 1;
             if (circle) Set(list, "layoutManager", new CircleLayoutManager());
             Set(navigation, "wrapNavigation", true);
-            var exit = new GameObject("exit", typeof(RectTransform), typeof(Button));
-            exit.transform.SetParent(eventRoot.transform, false);
-            Set(navigation, "exitDown", exit.GetComponent<Button>());
+            ConfigureExitDown();
             navigation.SetFocus(0, false);
             eventSystem.SetSelectedGameObject(root);
-            Assert.That(Move(MoveDirection.Down), Is.True);
+            Assert.That(Move(MoveDirection.Down), Is.True, "循环列表没有边界，不能离开");
+            OnMove(MoveDirection.Down);
             Assert.That(eventSystem.currentSelectedGameObject, Is.SameAs(root));
             Assert.That(navigation.FocusedDataIndex, Is.Zero);
         }
@@ -188,11 +194,51 @@ namespace AlicizaX.UI.NavigationTests
         [Test]
         public void NoFocusableDataCannotBeSubmitted()
         {
-            template.ExcludeAll = true;
+            navigation.SetFocusFilter(_ => false);
             navigation.SetFocus(1, false);
             navigation.HandleSubmit();
             Assert.That(navigation.HasFocus, Is.False);
             Assert.That(adapter.Choice, Is.EqualTo(-1));
+        }
+
+        [Test]
+        public void OffscreenUnfocusableItemIsSkipped()
+        {
+            // 可聚焦判断只看模板 + 过滤器，与 holder 是否在屏内无关。
+            adapter.Count = 40;
+            navigation.SetFocusFilter(i => i != 30);
+            navigation.SetFocus(29, false);
+            Assert.That(Move(MoveDirection.Down), Is.True);
+            Assert.That(navigation.FocusedDataIndex, Is.EqualTo(31), "屏外不可聚焦项必须同样被跳过");
+        }
+
+        [Test]
+        public void ChangingFocusFilterRetargetsCurrentFocus()
+        {
+            navigation.SetFocus(1, false);
+            navigation.SetFocusFilter(i => i != 1);
+            Assert.That(navigation.FocusedDataIndex, Is.EqualTo(2), "过滤条件变化后当前焦点必须改投最近的可聚焦项");
+            navigation.SetFocusFilter(null);
+            Assert.That(navigation.FocusedDataIndex, Is.EqualTo(2), "放宽过滤不移动已有焦点");
+        }
+
+        [Test]
+        public void PointerUpOutsideDataRangeIsIgnored()
+        {
+            navigation.SetFocus(1, false);
+            navigation.HandleItemPointerUp(-1);             // 绑定失败的项 DataIndex 为 -1
+            navigation.HandleItemPointerUp(adapter.Count);  // 数据已缩减、holder 尚未刷新
+            Assert.That(navigation.FocusedDataIndex, Is.EqualTo(1));
+            Assert.That(eventSystem.currentSelectedGameObject, Is.Null, "越界点击不抢选中");
+        }
+
+        [Test]
+        public void PointerUpOnFocusableItemSelectsListAndMovesFocus()
+        {
+            navigation.SetFocus(0, false);
+            navigation.HandleItemPointerUp(2);
+            Assert.That(navigation.FocusedDataIndex, Is.EqualTo(2));
+            Assert.That(eventSystem.currentSelectedGameObject, Is.SameAs(root));
         }
 
         [Test]

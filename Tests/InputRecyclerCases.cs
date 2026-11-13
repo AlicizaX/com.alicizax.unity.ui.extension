@@ -2,8 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using AlicizaX.Input.Tests;
 using AlicizaX.UI.Runtime;
-using AlicizaX.UI.UXNavigation;
+using AlicizaX.Input;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -25,7 +26,7 @@ namespace AlicizaX.UI.NavigationTests
         protected InputSystemUIInputModule inputModule;
         protected Keyboard keyboard;
         protected Gamepad gamepad;
-        protected UXNavigationScope scope;
+        protected NavigationScope scope;
         protected RecyclerView recycler;
         protected Scroller scroller;
         protected RecyclerViewNavigationController navigation;
@@ -33,9 +34,7 @@ namespace AlicizaX.UI.NavigationTests
         private IntegrationNavigationItem template;
         private InputActionAsset actions;
         private readonly List<InputActionReference> actionReferences = new();
-        private bool oldKeyboardPolicy;
-        private bool oldGamepadPolicy;
-        private object oldInputContext;
+        private readonly List<GameObject> popups = new();
 
         protected static T Read<T>(Type type, object target, string field) =>
             (T)type.GetField(field, BindingFlags.Static | BindingFlags.Instance | BindingFlags.NonPublic).GetValue(target);
@@ -46,12 +45,8 @@ namespace AlicizaX.UI.NavigationTests
 
         public override void Setup()
         {
-            Assert.That(Read<bool>(typeof(UXNavigationSystem), null, "_initialized"), Is.False);
-            Assert.That(Read<int>(typeof(UXNavigationSystem), null, "_scopeCount"), Is.Zero);
-            Assert.That(Read<bool>(typeof(UXInput.Watch), null, "_initialized"), Is.False);
-            oldInputContext = typeof(UXInput.Watch).GetProperty("Current").GetValue(null);
-            oldKeyboardPolicy = UXNavigationSystem.KeyboardRequireSelection;
-            oldGamepadPolicy = UXNavigationSystem.GamepadRequireSelection;
+            Assert.That(UXInput.Navigation, Is.Null);
+            Assert.That(UXInput.IsInitialized, Is.False);
             previousEventSystem = EventSystem.current;
             base.Setup();
             keyboard = InputSystem.AddDevice<Keyboard>();
@@ -86,9 +81,8 @@ namespace AlicizaX.UI.NavigationTests
                 Call(typeof(InputSystemUIInputModule), inputModule, "OnEnable");
             }
             EventSystem.current = eventSystem;
-            UXNavigationSystem.SetRequireSelection(true, true);
-            Call(typeof(UXInput.Watch), null, "Initialize");
-            Call(typeof(UXNavigationSystem), null, "Initialize");
+            UXInput.Initialize(actions, null);
+            UXInput.Navigation.SetRequireSelection(true, true);
             CreateList();
             navigation.RestoreFocus(0);
             Assert.That(Visible().Length, Is.InRange(2, 10));
@@ -108,7 +102,8 @@ namespace AlicizaX.UI.NavigationTests
             canvasRoot.SetActive(false);
             canvasRoot.layer = UIComponent.UIShowLayer;
             canvasRoot.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
-            scope = canvasRoot.AddComponent<UXNavigationScope>();
+            scope = canvasRoot.AddComponent<NavigationScope>();
+            Set(scope, "_holder", InputTestViews.Bind(canvasRoot).GetHolder());
             listRoot = new GameObject("input-integration-list", typeof(RectTransform));
             listRoot.transform.SetParent(canvasRoot.transform, false);
             listRoot.GetComponent<RectTransform>().sizeDelta = new Vector2(200, 96);
@@ -132,8 +127,7 @@ namespace AlicizaX.UI.NavigationTests
             canvasRoot.SetActive(true);
             if (!Application.isPlaying)
             {
-                Call(typeof(UXNavigationScope), scope, "Awake");
-                Call(typeof(UXNavigationScope), scope, "OnEnable");
+                Call(typeof(NavigationScope), scope, "OnEnable");
                 Call(typeof(RecyclerView), recycler, "Awake");
             }
             list = new UGList<IntegrationData>(recycler);
@@ -141,15 +135,16 @@ namespace AlicizaX.UI.NavigationTests
             if (!Application.isPlaying) Call(typeof(RecyclerViewNavigationController), navigation, "OnEnable");
             scope.DefaultSelectable = navigation;
             scope.NotifySelectableStateChanged();
-            Call(typeof(UXNavigationSystem), null, "RequestRefresh", true);
         }
 
         public override void TearDown()
         {
             try
             {
-                Call(typeof(UXNavigationSystem), null, "Shutdown");
-                Call(typeof(UXInput.Watch), null, "Shutdown", false);
+                UXInput.Shutdown();
+                InputTestViews.UnbindAll();
+                foreach (var popup in popups) Object.DestroyImmediate(popup);
+                popups.Clear();
                 if (canvasRoot != null)
                 {
                     if (!Application.isPlaying)
@@ -157,7 +152,7 @@ namespace AlicizaX.UI.NavigationTests
                         list.SetData(new List<IntegrationData>());
                         Assert.That(PoolActiveCount(0), Is.Zero);
                         Call(typeof(RecyclerViewNavigationController), navigation, "OnDisable");
-                        Call(typeof(UXNavigationScope), scope, "OnDestroy");
+                        Call(typeof(NavigationScope), scope, "OnDisable");
                         recycler.LayoutManager.Release();
                     }
                     Object.DestroyImmediate(canvasRoot);
@@ -171,11 +166,9 @@ namespace AlicizaX.UI.NavigationTests
                 foreach (var reference in actionReferences) Object.DestroyImmediate(reference);
                 actionReferences.Clear();
                 if (actions != null) Object.DestroyImmediate(actions);
-                UXNavigationSystem.SetRequireSelection(oldGamepadPolicy, oldKeyboardPolicy);
-                typeof(UXInput.Watch).GetProperty("Current").SetValue(null, oldInputContext);
                 if (previousEventSystem != null) EventSystem.current = previousEventSystem;
-                Assert.That(Read<int>(typeof(UXNavigationSystem), null, "_scopeCount"), Is.Zero);
-                Assert.That(Read<bool>(typeof(UXInput.Watch), null, "_initialized"), Is.False);
+                Assert.That(UXInput.Navigation, Is.Null);
+                Assert.That(UXInput.IsInitialized, Is.False);
             }
             finally { base.TearDown(); }
         }
@@ -210,14 +203,123 @@ namespace AlicizaX.UI.NavigationTests
         protected IntegrationNavigationItem[] Visible() => listRoot.GetComponentsInChildren<IntegrationNavigationItem>()
             .Where(item => item != template && item.BoundIndex >= 0).ToArray();
         protected IntegrationNavigationItem Focused() => Visible().Single(item => item.BoundIndex == navigation.FocusedDataIndex);
-        protected void CheckFocus(int index)
+        protected IntegrationNavigationItem VisibleAt(int index) => Visible().Single(item => item.BoundIndex == index);
+
+        /// <summary>焦点位置与 EventSystem 选中（不含光标视觉）。</summary>
+        protected void CheckSelection(int index)
         {
             Assert.That(navigation.FocusedDataIndex, Is.EqualTo(index));
             Assert.That(eventSystem.currentSelectedGameObject, Is.SameAs(listRoot));
+            Assert.That(PoolActiveCount(0), Is.EqualTo(Visible().Length));
+        }
+
+        /// <summary>焦点位置、EventSystem 选中，且光标恰好显示在该项上。</summary>
+        protected void CheckFocus(int index)
+        {
+            CheckSelection(index);
             var visible = Visible();
-            Assert.That(PoolActiveCount(0), Is.EqualTo(visible.Length));
             Assert.That(visible.Count(item => item.Focused), Is.EqualTo(1));
             Assert.That(visible.Single(item => item.Focused).BoundIndex, Is.EqualTo(index));
+        }
+
+        protected void CheckNoCursor() =>
+            Assert.That(Visible().Count(item => item.Focused), Is.Zero, "非导航输入下不显示导航光标");
+
+        /// <summary>
+        /// 模拟一次指针点击（Down 认领 pointerPress，Up 转交控制器）。
+        /// dragging：拖拽开始时输入模块先派发 pointerUp、再清 eligibleForClick，此刻两者同时为 true。
+        /// </summary>
+        protected void Click(IntegrationNavigationItem item,
+            PointerEventData.InputButton button = PointerEventData.InputButton.Left,
+            bool eligibleForClick = true,
+            bool dragging = false)
+        {
+            var eventData = new PointerEventData(eventSystem)
+            {
+                button = button,
+                eligibleForClick = eligibleForClick,
+                dragging = dragging
+            };
+            item.OnPointerDown(eventData);
+            item.OnPointerUp(eventData);
+        }
+
+
+        protected Button AddScopeButton(string name)
+        {
+            var buttonObject = new GameObject(name, typeof(RectTransform), typeof(Button));
+            buttonObject.transform.SetParent(canvasRoot.transform, false);
+            var button = buttonObject.GetComponent<Button>();
+            scope.RegisterSelectable(button, true);
+            return button;
+        }
+
+        /// <summary>打开一个无可选控件的阻塞弹窗；不等待帧，scope 的压制事件同步到达。</summary>
+        protected GameObject OpenBlockingPopup()
+        {
+            var popup = new GameObject("recycler-popup", typeof(RectTransform), typeof(Canvas));
+            popups.Add(popup);
+            popup.SetActive(false);
+            popup.layer = UIComponent.UIShowLayer;
+            popup.GetComponent<Canvas>().sortingOrder = 10;
+            var popupScope = popup.AddComponent<NavigationScope>();
+            Set(popupScope, "_holder", InputTestViews.Bind(popup).GetHolder());
+            popup.SetActive(true);
+            if (!Application.isPlaying) Call(typeof(NavigationScope), popupScope, "OnEnable");
+            return popup;
+        }
+
+        protected static void ClosePopup(GameObject popup)
+        {
+            popup.SetActive(false);
+            if (!Application.isPlaying) Call(typeof(NavigationScope), popup.GetComponent<NavigationScope>(), "OnDisable");
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void AutomaticListRecoveryPreservesScopeSelectionPolicy(bool remember)
+        {
+            var buttonObject = new GameObject("default-button", typeof(RectTransform), typeof(Button));
+            buttonObject.transform.SetParent(canvasRoot.transform, false);
+            var button = buttonObject.GetComponent<Button>();
+            scope.RegisterSelectable(button, true);
+            scope.DefaultSelectable = button;
+            Set(scope, "_rememberLastSelection", remember);
+            navigation.RestoreFocus(12);
+            scope.NotifySelectableStateChanged();
+
+            var popup = new GameObject("recycler-popup", typeof(RectTransform), typeof(Canvas));
+            popup.SetActive(false);
+            popup.layer = UIComponent.UIShowLayer;
+            popup.GetComponent<Canvas>().sortingOrder = 10;
+            var popupScope = popup.AddComponent<NavigationScope>();
+            var popupHolder = InputTestViews.Bind(popup).GetHolder();
+            Set(popupScope, "_holder", popupHolder);
+            try
+            {
+                popup.SetActive(true);
+                if (!Application.isPlaying) Call(typeof(NavigationScope), popupScope, "OnEnable");
+                Assert.That(scope.NavigationSuppressed, Is.True);
+                Assert.That(navigation.IsSuppressed, Is.True, "压制由 scope 事件同步，不等下一帧");
+                Assert.That(eventSystem.currentSelectedGameObject, Is.Null);
+
+                popup.SetActive(false);
+                if (!Application.isPlaying) Call(typeof(NavigationScope), popupScope, "OnDisable");
+                Assert.That(navigation.IsSuppressed, Is.False);
+                Assert.That(eventSystem.currentSelectedGameObject, Is.SameAs(remember ? listRoot : buttonObject));
+                Assert.That(navigation.FocusedDataIndex, Is.EqualTo(12));
+
+                navigation.RestoreFocus(200);
+                Assert.That(eventSystem.currentSelectedGameObject, Is.SameAs(listRoot),
+                    "explicit restoration still selects the list");
+                Assert.That(navigation.FocusedDataIndex, Is.EqualTo(99));
+            }
+            finally
+            {
+                if (!Application.isPlaying) Call(typeof(NavigationScope), popupScope, "OnDisable");
+                InputTestViews.Unbind(popupHolder);
+                Object.DestroyImmediate(popup);
+            }
         }
 
         [Test]
@@ -268,16 +370,147 @@ namespace AlicizaX.UI.NavigationTests
         }
 
         [Test]
-        public void NavigationFocusSnapshotsStayBoundedByVisibleHolders()
+        public void FarJumpReusesHoldersInPlaceWithoutStaleFocusVisual()
         {
-            var snapshots = Read<System.Collections.IDictionary>(
-                typeof(RecyclerViewNavigationController), navigation, "navigationFocusSnapshots");
-            Assert.That(snapshots.Count, Is.GreaterThan(0));
-
+            var initial = Visible();
+            var holder = Focused();
             navigation.SetFocus(60);
-            Assert.That(navigation.FocusedDataIndex, Is.EqualTo(60));
-            Assert.That(snapshots.Count, Is.LessThanOrEqualTo(Visible().Length),
-                "回收的 Holder 必须从焦点去重表中移除。");
+            CheckFocus(60);
+            Assert.That(Visible().Intersect(initial).Any(), Is.True, "远跳走 TryReuseVisibleRange 原地换绑");
+            Assert.That(holder.BoundIndex, Is.Not.Zero);
+            // NotifiedFocused 只由框架回调写入（不在 OnBind/OnClear 重置），代表 InteractiveViewHolder 的 UXSelectable 这类视觉。
+            Assert.That(Visible().Count(item => item.NotifiedFocused), Is.EqualTo(1), "原地换绑后旧数据的高亮必须被清掉");
+            Assert.That(Visible().Single(item => item.NotifiedFocused).BoundIndex, Is.EqualTo(60));
+        }
+
+        [Test]
+        public void HiddenCursorScrollDoesNotNotifyHolders()
+        {
+            int TotalFocusCalls() => listRoot.GetComponentsInChildren<IntegrationNavigationItem>(true).Sum(item => item.FocusCalls);
+            Click(VisibleAt(1));
+            CheckNoCursor();
+            int calls = TotalFocusCalls();
+
+            scroller.ScrollTo(scroller.Position + 64f);
+            scroller.ScrollTo(scroller.Position + 400f);   // 一次跨过整屏：原地换绑
+
+            Assert.That(TotalFocusCalls(), Is.EqualTo(calls), "光标不可见时滚动不遍历、不通知任何 holder");
+            CheckNoCursor();
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void SuppressionFollowsKeepFocusAndReleaseRestoresCursor(bool keepFocus)
+        {
+            Set(navigation, "keepFocusVisibleWhenSuppressed", keepFocus);
+            var popup = OpenBlockingPopup();
+            Assert.That(navigation.IsSuppressed, Is.True);
+            Assert.That(eventSystem.currentSelectedGameObject, Is.Not.SameAs(listRoot));
+            Assert.That(navigation.FocusedDataIndex, Is.Zero, "压制期间焦点位置不变");
+            Assert.That(VisibleAt(0).Focused, Is.EqualTo(keepFocus), "压制期间是否高亮只由 Keep Focus 决定");
+
+            ClosePopup(popup);
+            Assert.That(navigation.IsSuppressed, Is.False);
+            CheckFocus(0);
+        }
+
+        [Test]
+        public void DisabledControllerNeverShowsCursor()
+        {
+            navigation.enabled = false;
+            CheckNoCursor();
+            navigation.SetFocus(2, false);
+            Assert.That(navigation.FocusedDataIndex, Is.EqualTo(2), "禁用期间仍可写焦点位置");
+            CheckNoCursor();
+
+            navigation.enabled = true;
+            CheckFocus(2);
+        }
+
+        [Test]
+        public void ClickWithOtherButtonOrIneligibleDoesNotMoveFocus()
+        {
+            Click(VisibleAt(2), button: PointerEventData.InputButton.Right);
+            Click(VisibleAt(2), eligibleForClick: false);
+            CheckFocus(0);
+        }
+
+        private sealed class RecordingFeedbackObserver : InputFeedbackObserver
+        {
+            public readonly List<InputFeedbackCue> Cues = new List<InputFeedbackCue>();
+
+            public override void Play(InputFeedbackCue cue) => Cues.Add(cue);
+        }
+
+        [Test]
+        public void ListEmitsFocusCueOnlyForUserMovesThatChangeFocus()
+        {
+            var feedback = listRoot.AddComponent<RecordingFeedbackObserver>();
+            AxisEventData Axis(MoveDirection direction) => new AxisEventData(eventSystem) { moveDir = direction };
+
+            navigation.SetFocus(5, false);
+            Click(VisibleAt(2));
+            Assert.That(feedback.Cues, Is.Empty, "程序化焦点与点击转焦点不发焦点提示");
+
+            Assert.That(navigation.HandleMove(Axis(MoveDirection.Down)), Is.True);
+            Assert.That(navigation.FocusedDataIndex, Is.EqualTo(3));
+            Assert.That(feedback.Cues, Is.EqualTo(new[] { InputFeedbackCue.FocusEnter }));
+
+            Focused().ConsumeMove = true;
+            Assert.That(navigation.HandleMove(Axis(MoveDirection.Down)), Is.True);
+            Focused().ConsumeMove = false;
+            Assert.That(navigation.HandleMove(Axis(MoveDirection.Left)), Is.False, "垂直列表的 Left 是边界");
+            Assert.That(feedback.Cues, Has.Count.EqualTo(1), "被列表项消费、到达边界都不算列表内移动");
+        }
+
+        [Test]
+        public void ClickMovesFocusAndSelectsListWithoutCursor()
+        {
+            eventSystem.SetSelectedGameObject(null);
+            Click(VisibleAt(2));
+            CheckSelection(2);
+            CheckNoCursor();
+            Assert.That(list.Adapter.ChoiceIndex, Is.EqualTo(-1), "点击转焦点不产生业务选中");
+        }
+
+        [Test]
+        public void ClickOnUnfocusableItemKeepsFocusAndSelection()
+        {
+            navigation.SetFocusFilter(i => i != 2);     // 第 2 项视为表头
+            navigation.SetFocus(1, false);
+            var selectedBefore = eventSystem.currentSelectedGameObject;
+
+            Click(VisibleAt(2));
+
+            Assert.That(navigation.FocusedDataIndex, Is.EqualTo(1), "点不可聚焦项不得改投焦点");
+            Assert.That(eventSystem.currentSelectedGameObject, Is.SameAs(selectedBefore));
+            Assert.That(VisibleAt(1).Focused, Is.True, "点不可聚焦项不得改变光标");
+        }
+
+        [Test]
+        public void ClickIgnoredInSameFrameAsSuppression()
+        {
+            OpenBlockingPopup();                           // 不等帧：验证同帧
+            Click(VisibleAt(2));
+            Assert.That(navigation.FocusedDataIndex, Is.Zero, "被压制时不改焦点");
+            Assert.That(eventSystem.currentSelectedGameObject, Is.Not.SameAs(listRoot), "被压制时不抢选中");
+        }
+
+        [Test]
+        public void DragStartPointerUpDoesNotMoveFocus()
+        {
+            Click(VisibleAt(2), dragging: true);           // eligibleForClick 仍为 true，只能靠 dragging 拦住
+            CheckFocus(0);
+        }
+
+        [Test]
+        public void CurrentIndexFollowsShiftAfterInsertAbove()
+        {
+            var holder = VisibleAt(1);
+            int binds = holder.BindCalls;
+            list.Adapter.Insert(0, new IntegrationData { Id = 5000 });   // 线性列表：ShiftIndexesFrom 平移，不重绑
+            Assert.That(holder.BindCalls, Is.EqualTo(binds));
+            Assert.That(holder.CurrentIndexForTest, Is.EqualTo(2), "CurrentIndex 必须跟随 DataIndex");
         }
 
         [Test]

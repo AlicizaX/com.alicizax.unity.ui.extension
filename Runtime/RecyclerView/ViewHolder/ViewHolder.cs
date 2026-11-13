@@ -1,7 +1,6 @@
 using System;
 using Cysharp.Text;
 using UnityEngine;
-using UnityEngine.EventSystems;
 
 namespace AlicizaX.UI
 {
@@ -9,7 +8,7 @@ namespace AlicizaX.UI
     /// RecyclerView 列表项视图持有者基类，负责承载单个可复用列表项的视图逻辑。
     /// </summary>
     [RequireComponent(typeof(RectTransform))]
-    public abstract class ViewHolder : MonoBehaviour, IPointerDownHandler, IPointerUpHandler
+    public abstract class ViewHolder : MonoBehaviour
     {
         private RectTransform rectTransform;
         private bool isBound;
@@ -70,10 +69,9 @@ namespace AlicizaX.UI
             RecyclerView?.MeasureBoundHolder(this);
         }
 
-        internal uint AdvanceBindingVersion()
+        internal void AdvanceBindingVersion()
         {
             BindingVersion = BindingVersion == uint.MaxValue ? 1u : BindingVersion + 1u;
-            return BindingVersion;
         }
 
         internal void Bind(ISimpleViewData data, int index)
@@ -89,9 +87,9 @@ namespace AlicizaX.UI
             isBound = true;
         }
 
-        internal void ApplySelection(bool selected, bool force = false)
+        internal void ApplySelection(bool selected)
         {
-            if (!force && isSelected == selected)
+            if (isSelected == selected)
             {
                 return;
             }
@@ -108,13 +106,6 @@ namespace AlicizaX.UI
             }
         }
 
-        internal void ResetPooledTransform()
-        {
-            RectTransform.anchoredPosition3D = Vector3.zero;
-            RectTransform.localRotation = Quaternion.identity;
-            RectTransform.localScale = Vector3.one;
-        }
-
         internal void Clear()
         {
             ReleaseBinding();
@@ -123,9 +114,6 @@ namespace AlicizaX.UI
 
         internal void OnRecycled()
         {
-#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
-            RecyclerView?.NotifyHolderRecycled(this);
-#endif
             ReleaseBinding();
             AdvanceBindingVersion();
             TemplateId = -1;
@@ -161,39 +149,6 @@ namespace AlicizaX.UI
             RecyclerView.RecyclerViewAdapter.SetChoiceIndex(DataIndex);
         }
 
-        public virtual void OnPointerDown(PointerEventData eventData)
-        {
-            // 导航模块的双击保护：按下由本类吞掉，抬起时统一转发。
-        }
-
-        public virtual void OnPointerUp(PointerEventData eventData)
-        {
-#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
-            if (eventData.button != PointerEventData.InputButton.Left ||
-                eventData.dragging ||
-                !eventData.eligibleForClick ||
-                !(this is IRecyclerViewNavigationViewHolder) ||
-                RecyclerView == null ||
-                DataIndex < 0)
-            {
-                return;
-            }
-
-            RecyclerViewNavigationController navigationController = RecyclerView.NavigationController;
-            if (navigationController == null)
-            {
-                return;
-            }
-
-            navigationController.SetFocus(DataIndex, false);
-            EventSystem eventSystem = EventSystem.current;
-            if (eventSystem != null)
-            {
-                eventSystem.SetSelectedGameObject(navigationController.gameObject);
-            }
-#endif
-        }
-
         /// <summary>
         /// 当当前列表项的业务选中状态发生变化时调用，可在子类中刷新选中态表现。
         /// </summary>
@@ -226,14 +181,14 @@ namespace AlicizaX.UI
         protected TData CurrentData { get; private set; }
 
         /// <summary>
-        /// 当前绑定数据在业务数据列表中的索引。
+        /// 当前绑定数据在业务数据列表中的索引。结构增量只平移 DataIndex、不重绑，因此不另存一份。
         /// </summary>
-        protected int CurrentIndex { get; private set; } = -1;
+        protected int CurrentIndex => DataIndex;
 
         /// <summary>
         /// 当前绑定版本号，可用于判断异步回调是否仍对应当前绑定数据。
         /// </summary>
-        protected uint CurrentBindingVersion { get; private set; }
+        protected uint CurrentBindingVersion => BindingVersion;
 
         private protected sealed override bool OnBind(ISimpleViewData data, int index)
         {
@@ -246,8 +201,6 @@ namespace AlicizaX.UI
             }
 
             CurrentData = typedData;
-            CurrentIndex = index;
-            CurrentBindingVersion = BindingVersion;
             OnBind(typedData, index);
             return true;
         }
@@ -259,21 +212,9 @@ namespace AlicizaX.UI
         /// <param name="index">数据在业务数据列表中的索引。</param>
         protected abstract void OnBind(TData data, int index);
 
-        /// <summary>
-        /// 判断传入的绑定版本号是否仍然对应当前列表项，常用于异步加载完成后的有效性校验。
-        /// </summary>
-        /// <param name="bindingVersion">需要校验的绑定版本号。</param>
-        /// <returns>如果版本号仍对应当前绑定数据，则返回 true；否则返回 false。</returns>
-        protected bool IsBindingCurrent(uint bindingVersion)
-        {
-            return CurrentBindingVersion == bindingVersion && BindingVersion == bindingVersion;
-        }
-
         private protected override void ResetBindingState()
         {
             CurrentData = default;
-            CurrentIndex = -1;
-            CurrentBindingVersion = 0;
         }
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD

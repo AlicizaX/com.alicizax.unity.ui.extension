@@ -170,10 +170,6 @@ namespace AlicizaX.UI
         private RectTransform cachedRectTransform;
         private Vector2 lastViewportSize;
         private bool hasLastViewportSize;
-#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
-        private RecyclerViewNavigationController cachedNavigationController;
-        private bool navigationControllerResolved;
-#endif
 
         /// <summary>
         /// 当前可见区间的起始布局索引。
@@ -487,10 +483,7 @@ namespace AlicizaX.UI
         public event Action<bool> OnScrollDraggingChanged;
 
         public event Action<int, float> OnItemResized;
-#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
-        internal event Action OnNavigationDataChanged;
-        internal event Action<ViewHolder> OnHolderRecycled;
-#endif
+        internal event Action OnLayoutChanged;
 
         #endregion
 
@@ -1989,12 +1982,11 @@ namespace AlicizaX.UI
             }
 
             measuredItemLengths.Clear();
-#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
             if (applied)
             {
-                NotifyNavigationDataChanged();
+                NotifyLayoutChanged();
             }
-#endif
+
             return applied;
         }
 
@@ -2044,9 +2036,7 @@ namespace AlicizaX.UI
                 UpdateScrollbarValue(scroller.Position);
             }
             OnItemResized?.Invoke(layoutManager.GetDataIndex(layoutIndex), length);
-#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
-            NotifyNavigationDataChanged();
-#endif
+            NotifyLayoutChanged();
         }
 
         internal int RebindVisibleDataIndex(int dataIndex)
@@ -2078,13 +2068,6 @@ namespace AlicizaX.UI
         internal int ApplyVisibleSelection(int dataIndex, bool selected)
         {
             return viewProvider != null ? viewProvider.ApplyVisibleSelection(dataIndex, selected) : 0;
-        }
-
-        internal void NotifyHolderRecycled(ViewHolder viewHolder)
-        {
-#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
-            OnHolderRecycled?.Invoke(viewHolder);
-#endif
         }
 
         internal void ApplyItemsInserted(int index, int count)
@@ -2345,7 +2328,7 @@ namespace AlicizaX.UI
             }
         }
 
-        private bool IsLoopingAdapter()
+        internal bool IsLoopingAdapter()
         {
             if (RecyclerViewAdapter == null)
             {
@@ -2357,27 +2340,10 @@ namespace AlicizaX.UI
             return realCount > 0 && itemCount != realCount;
         }
 
-#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
-        internal void NotifyNavigationDataChanged()
+        internal void NotifyLayoutChanged()
         {
-            OnNavigationDataChanged?.Invoke();
+            OnLayoutChanged?.Invoke();
         }
-
-        internal RecyclerViewNavigationController NavigationController
-        {
-            get
-            {
-                if (!navigationControllerResolved)
-                {
-                    cachedNavigationController = GetComponent<RecyclerViewNavigationController>();
-                    navigationControllerResolved = true;
-                }
-
-                return cachedNavigationController;
-            }
-        }
-
-#endif
 
         #endregion
     }

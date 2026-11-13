@@ -1,11 +1,14 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using AlicizaX.Input.Tests;
 using AlicizaX.UI.Runtime;
-using AlicizaX.UI.UXNavigation;
+using AlicizaX.Input;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.LowLevel;
 using UnityEngine.TestTools;
 using UnityEngine.UI;
 using Object = UnityEngine.Object;
@@ -38,6 +41,34 @@ namespace AlicizaX.UI.NavigationTests
             yield return null;
         }
 
+        private IEnumerator Dpad(GamepadButton button)
+        {
+            InputSystem.QueueStateEvent(gamepad, new GamepadState().WithButton(button));
+            yield return null;
+            InputSystem.QueueStateEvent(gamepad, new GamepadState());
+            yield return null;
+        }
+
+        /// <summary>按一下不参与 UI 动作的手柄键：只切换输入类型。</summary>
+        private IEnumerator PressGamepad()
+        {
+            InputSystem.QueueStateEvent(gamepad, new GamepadState().WithButton(GamepadButton.North));
+            yield return null;
+            InputSystem.QueueStateEvent(gamepad, new GamepadState());
+            yield return null;
+            Assert.That(UXInput.Watch.CurrentInputType, Is.EqualTo(InputWatch.InputType.Gamepad));
+        }
+
+        /// <summary>按一下不参与 UI 动作的键盘键：只切换到键鼠类型（代替鼠标点击前的设备切换）。</summary>
+        private IEnumerator PressKey()
+        {
+            InputSystem.QueueStateEvent(keyboard, new KeyboardState(Key.A));
+            yield return null;
+            InputSystem.QueueStateEvent(keyboard, new KeyboardState());
+            yield return null;
+            Assert.That(UXInput.Watch.CurrentInputType, Is.EqualTo(InputWatch.InputType.KeyboardMouse));
+        }
+
         [UnityTest]
         public IEnumerator PlayerLoopKeyboardMovesScrollsRecyclesAndSubmits() => DeviceChain(0);
 
@@ -63,7 +94,7 @@ namespace AlicizaX.UI.NavigationTests
             Assert.That(focused.SubmitCalls, Is.EqualTo(1));
             Assert.That(list.Adapter.ChoiceIndex, Is.EqualTo(18));
             Assert.That(UXInput.Watch.CurrentInputType, Is.EqualTo(device == 0
-                ? UXInput.Watch.InputType.KeyboardMouse : UXInput.Watch.InputType.Gamepad));
+                ? InputWatch.InputType.KeyboardMouse : InputWatch.InputType.Gamepad));
             for (int i = 0; i < 18; i++) yield return MoveOnce(device, true);
             CheckFocus(0);
             Assert.That(scroller.Position, Is.Zero);
@@ -138,7 +169,129 @@ namespace AlicizaX.UI.NavigationTests
             Assert.That(cancellations, Is.EqualTo(1));
             Assert.That(Focused().SubmitCalls, Is.Zero);
             Assert.That(list.Adapter.ChoiceIndex, Is.EqualTo(-1));
-            CheckFocus(0);
+            if (pad)
+            {
+                CheckFocus(0);
+            }
+            else
+            {
+                // Esc 把输入类型切到键鼠：位置与选中保留，光标等到方向键/提交再出现。
+                CheckSelection(0);
+                CheckNoCursor();
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ClickThenGamepadContinuesFromClickedItem()
+        {
+            yield return Ready();
+            Click(VisibleAt(2));
+            CheckSelection(2);
+
+            yield return MoveOnce(1);
+            CheckFocus(3);
+
+            yield return MoveOnce(0);
+            yield return MoveOnce(1);
+            CheckFocus(5);
+        }
+
+        [UnityTest]
+        public IEnumerator MouseClickHidesCursorAndGamepadRevealsItAtClickedItem()
+        {
+            yield return Ready();
+            yield return PressKey();
+            CheckNoCursor();
+
+            Click(VisibleAt(2));
+            CheckSelection(2);
+            CheckNoCursor();
+
+            yield return PressGamepad();
+            CheckFocus(2);
+
+            yield return MoveOnce(1);
+            CheckFocus(3);
+        }
+
+        [UnityTest]
+        public IEnumerator KeyboardArrowShowsCursorInKeyboardMouseMode()
+        {
+            yield return Ready();
+            yield return PressKey();
+            Click(VisibleAt(2));
+            CheckNoCursor();
+
+            yield return MoveOnce(0);
+            Assert.That(UXInput.Watch.CurrentInputType, Is.EqualTo(InputWatch.InputType.KeyboardMouse));
+            CheckFocus(3);
+        }
+
+        [UnityTest]
+        public IEnumerator ClosingBlockingPopupReturnsSelectionToListAtClickedItem()
+        {
+            yield return Ready();
+            var closeButton = AddScopeButton("close-button");
+            scope.DefaultSelectable = closeButton;
+            Set(scope, "_rememberLastSelection", true);
+
+            Click(VisibleAt(2));
+            yield return null;                              // 让 InputNavigation 记录选中
+
+            var popup = OpenBlockingPopup();
+            yield return null;
+            Assert.That(navigation.IsSuppressed, Is.True);
+            Assert.That(navigation.FocusedDataIndex, Is.EqualTo(2), "弹窗期间焦点不丢");
+            Assert.That(VisibleAt(2).Focused, Is.True, "Keep Focus：被压制期间保持高亮");
+
+            ClosePopup(popup);
+            yield return MoveOnce(1);
+            Assert.That(eventSystem.currentSelectedGameObject, Is.SameAs(listRoot), "关窗后必须选回列表，而不是默认的关闭按钮");
+            CheckFocus(3);
+        }
+
+        [UnityTest]
+        public IEnumerator LeavingListHidesFocusAndReturningResumesFromSameItem()
+        {
+            yield return Ready();
+            var closeButton = AddScopeButton("close-button");
+            navigation.navigation = new Navigation { mode = Navigation.Mode.Explicit, selectOnRight = closeButton };
+            closeButton.navigation = new Navigation { mode = Navigation.Mode.Explicit, selectOnLeft = navigation };
+            navigation.RestoreFocus(9);
+            yield return null;
+            CheckFocus(9);
+
+            yield return Dpad(GamepadButton.DpadRight);    // 垂直列表的 Right 是边界 → navigation.selectOnRight
+            Assert.That(eventSystem.currentSelectedGameObject, Is.SameAs(closeButton.gameObject));
+            Assert.That(Visible().All(item => !item.Focused), Is.True, "离开列表后不得保留焦点高亮");
+            Assert.That(navigation.FocusedDataIndex, Is.EqualTo(9), "焦点位置保留");
+            Assert.That(list.Adapter.ChoiceIndex, Is.EqualTo(-1), "导航不产生业务选中");
+
+            yield return Dpad(GamepadButton.DpadLeft);     // closeButton.selectOnLeft → 列表
+            CheckFocus(9);
+            yield return MoveOnce(1, true);
+            CheckFocus(8);
+        }
+
+        [UnityTest]
+        public IEnumerator ClosingPopupDoesNotRealignClickedItem()
+        {
+            yield return Ready();
+            Set(navigation, "focusAlignment", ScrollAlignment.End);
+            scroller.ScrollTo(200f);
+            yield return null;
+            float position = scroller.Position;
+            Assert.That(position, Is.GreaterThan(0));
+
+            Click(Visible().OrderBy(item => item.BoundIndex).Skip(1).First());
+            var popup = OpenBlockingPopup();
+            yield return null;
+            ClosePopup(popup);
+            yield return null;
+            yield return null;
+
+            Assert.That(navigation.IsSuppressed, Is.False);
+            Assert.That(scroller.Position, Is.EqualTo(position), "解除压制不得滚动列表");
         }
 
         [UnityTest]
@@ -148,7 +301,7 @@ namespace AlicizaX.UI.NavigationTests
             Assert.That(keyboard.anyKey.synthetic, Is.True);
             // UXInput.Watch 的初始设备探测帧字段已随输入包重构移除，不再断言该实现细节。
             int activity = 0;
-            System.Action<UXInput.Watch.InputContext> listener = context =>
+            System.Action<InputWatch.InputContext> listener = context =>
             {
                 Assert.That(context.DeviceId, Is.EqualTo(keyboard.deviceId));
                 activity++;
@@ -158,7 +311,7 @@ namespace AlicizaX.UI.NavigationTests
             {
                 yield return MoveOnce(0);
                 Assert.That(activity, Is.EqualTo(1));
-                Assert.That(UXInput.Watch.CurrentInputType, Is.EqualTo(UXInput.Watch.InputType.KeyboardMouse));
+                Assert.That(UXInput.Watch.CurrentInputType, Is.EqualTo(InputWatch.InputType.KeyboardMouse));
                 yield return null;
                 Assert.That(activity, Is.EqualTo(1));
             }
@@ -171,13 +324,13 @@ namespace AlicizaX.UI.NavigationTests
             yield return Ready();
             yield return MoveOnce(1);
             CheckFocus(1);
-            Assert.That(UXInput.Watch.CurrentInputType, Is.EqualTo(UXInput.Watch.InputType.Gamepad));
+            Assert.That(UXInput.Watch.CurrentInputType, Is.EqualTo(InputWatch.InputType.Gamepad));
             yield return MoveOnce(0);
             CheckFocus(2);
-            Assert.That(UXInput.Watch.CurrentInputType, Is.EqualTo(UXInput.Watch.InputType.KeyboardMouse));
+            Assert.That(UXInput.Watch.CurrentInputType, Is.EqualTo(InputWatch.InputType.KeyboardMouse));
             yield return SubmitOnce(true);
             CheckFocus(2);
-            Assert.That(UXInput.Watch.CurrentInputType, Is.EqualTo(UXInput.Watch.InputType.Gamepad));
+            Assert.That(UXInput.Watch.CurrentInputType, Is.EqualTo(InputWatch.InputType.Gamepad));
             Assert.That(Focused().LastSubmittedId, Is.EqualTo(1002));
             Assert.That(Focused().SubmitCalls, Is.EqualTo(1));
         }
@@ -189,12 +342,14 @@ namespace AlicizaX.UI.NavigationTests
             for (int i = 0; i < 8; i++) yield return MoveOnce(0);
             CheckFocus(8);
             var popup = new GameObject("input-integration-popup", typeof(RectTransform), typeof(Canvas));
+            var popupHolder = InputTestViews.Bind(popup).GetHolder();
             try
             {
                 popup.SetActive(false);
                 popup.layer = UIComponent.UIShowLayer;
                 popup.GetComponent<Canvas>().sortingOrder = 100;
-                var popupScope = popup.AddComponent<UXNavigationScope>();
+                var popupScope = popup.AddComponent<NavigationScope>();
+                Set(popupScope, "_holder", popupHolder);
                 var buttonRoot = new GameObject("popup-button", typeof(RectTransform), typeof(Button));
                 buttonRoot.transform.SetParent(popup.transform, false);
                 var button = buttonRoot.GetComponent<Button>();
@@ -224,7 +379,11 @@ namespace AlicizaX.UI.NavigationTests
                 yield return SubmitOnce(false);
                 Assert.That(Focused().LastSubmittedId, Is.EqualTo(1009));
             }
-            finally { Object.DestroyImmediate(popup); }
+            finally
+            {
+                InputTestViews.Unbind(popupHolder);
+                Object.DestroyImmediate(popup);
+            }
         }
 
         [UnityTest]
@@ -259,13 +418,15 @@ namespace AlicizaX.UI.NavigationTests
             navigation.SetFocus(25);
             CheckFocus(25);
             var holders = listRoot.GetComponentsInChildren<IntegrationNavigationItem>(true);
+            // 逻辑视图是测试假件、不属于任何 UIService，节点销毁前先解绑。
+            InputTestViews.UnbindAll();
             Object.Destroy(canvasRoot);
             yield return null;
             yield return null;
             Assert.That(holders.All(item => item == null), Is.True);
             // 名称即契约：销毁后对象池必须把活跃实例清零（原断言在销毁前取快照，等于没验证这一步）。
             Assert.That(PoolActiveCount(0), Is.Zero);
-            Assert.That(Read<int>(typeof(UXNavigationSystem), null, "_scopeCount"), Is.Zero);
+            Assert.That(UXInput.Navigation.ScopeCount, Is.Zero);
             Assert.That(eventSystem.currentSelectedGameObject, Is.Null);
             yield return MoveOnce(0);
             yield return SubmitOnce(true);

@@ -127,7 +127,7 @@ namespace AlicizaX.UI
             Revise();
             SetChoiceIndex(choiceIndex);
             recyclerView.OnDataSetChanged();
-            NotifyNavigationDataChanged();
+            NotifyLayoutChanged();
         }
 
         /// <summary>
@@ -176,7 +176,7 @@ namespace AlicizaX.UI
                 recyclerView.RebindVisibleDataIndex(index);
             }
 
-            NotifyNavigationDataChanged();
+            NotifyLayoutChanged();
         }
 
         /// <summary>
@@ -203,7 +203,7 @@ namespace AlicizaX.UI
                 recyclerView.RebindVisibleDataRange(index, count);
             }
 
-            NotifyNavigationDataChanged();
+            NotifyLayoutChanged();
         }
 
         /// <summary>
@@ -228,7 +228,7 @@ namespace AlicizaX.UI
             }
 
             recyclerView.ApplyItemsInserted(index, count);
-            NotifyNavigationDataChanged();
+            NotifyLayoutChanged();
         }
 
         public virtual void NotifyItemRemoved(int index)
@@ -259,7 +259,7 @@ namespace AlicizaX.UI
             }
 
             recyclerView.ApplyItemsMoved(fromIndex, toIndex);
-            NotifyNavigationDataChanged();
+            NotifyLayoutChanged();
         }
 
         /// <summary>
@@ -283,7 +283,7 @@ namespace AlicizaX.UI
             }
 
             recyclerView.ApplyItemsRemoved(index, count);
-            NotifyNavigationDataChanged();
+            NotifyLayoutChanged();
         }
 
         /// <summary>
@@ -577,15 +577,9 @@ namespace AlicizaX.UI
             }
         }
 
-#if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
-        private void NotifyNavigationDataChanged()
+        private void NotifyLayoutChanged()
         {
-            recyclerView?.NotifyNavigationDataChanged();
+            recyclerView?.NotifyLayoutChanged();
         }
-#else
-        private void NotifyNavigationDataChanged()
-        {
-        }
-#endif
     }
 }

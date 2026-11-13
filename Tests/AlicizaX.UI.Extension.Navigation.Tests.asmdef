@@ -1,6 +1,6 @@
 {
     "name": "AlicizaX.UI.Extension.Navigation.Tests",
-    "references": ["AlicizaX.UI.Extension", "AlicizaX.Input", "AlicizaX.Framework.Runtime", "Unity.ugui", "Unity.InputSystem", "Unity.InputSystem.TestFramework"],
+    "references": ["AlicizaX.UI.Extension", "AlicizaX.Input", "AlicizaX.Input.Tests", "AlicizaX.Framework.Runtime", "Unity.ugui", "Unity.InputSystem", "Unity.InputSystem.TestFramework"],
     "optionalUnityReferences": ["TestAssemblies"],
     "autoReferenced": false,
     "defineConstraints": ["INPUTSYSTEM_SUPPORT", "UXNAVIGATION_SUPPORT"],

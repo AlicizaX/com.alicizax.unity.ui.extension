@@ -1,4 +1,3 @@
-using AlicizaX.UI.UXFeedback;
 using UnityEngine.EventSystems;
 
 namespace UnityEngine.UI
@@ -15,11 +14,10 @@ namespace UnityEngine.UI
             if (eventData.button != PointerEventData.InputButton.Left)
                 return;
 
-            // 外部状态驱动时，点击业务由上层处理，避免重复 onClick/音效。
+            // 外部状态驱动时，点击业务由上层处理，避免重复 onClick。
             if (HasExternalState || !IsActive() || !IsInteractable())
                 return;
 
-            UXUiFeedback.Raise(this, UXUiCue.Press);
             Press();
         }
 
@@ -28,25 +26,18 @@ namespace UnityEngine.UI
             if (!IsActive() || !IsInteractable())
                 return;
 
-            PlayClickFeedbackCore();
+            PlayClickPulse();
             Press();
         }
 
         /// <summary>
-        /// 播放点击音效，并短暂切换到 Pressed 视觉。
+        /// 只播放按下视觉脉冲；音效由独立反馈组件负责。
         /// 若当前存在外部状态，结束后恢复到外部状态；否则恢复 Selectable 推导状态。
         /// </summary>
-        public virtual void PlayClickFeedback()
+        public virtual void PlayClickPulse()
         {
             if (!IsActive() || !IsInteractable())
                 return;
-
-            PlayClickFeedbackCore();
-        }
-
-        private void PlayClickFeedbackCore()
-        {
-            UXUiFeedback.Raise(this, UXUiCue.Press);
 
             if (HasExternalState)
             {

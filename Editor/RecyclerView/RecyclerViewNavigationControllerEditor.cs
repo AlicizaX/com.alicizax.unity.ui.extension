@@ -1,7 +1,7 @@
 #if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
 using AlicizaX.Editor.UIToolkit;
 using AlicizaX.UI;
-using AlicizaX.UI.UXNavigation;
+using AlicizaX.Input;
 using UnityEditor;
 using UnityEditor.UIElements;
 using UnityEngine;
@@ -20,10 +20,6 @@ namespace AlicizaX.UI.Editor
         private SerializedProperty _smoothScroll;
         private SerializedProperty _smoothScrollDuration;
         private SerializedProperty _focusAlignment;
-        private SerializedProperty _exitLeft;
-        private SerializedProperty _exitRight;
-        private SerializedProperty _exitUp;
-        private SerializedProperty _exitDown;
         private SerializedProperty _navigationMode;
         private SerializedProperty _navigationWrapAround;
         private SerializedProperty _navigationSelectOnUp;
@@ -51,23 +47,14 @@ namespace AlicizaX.UI.Editor
             AlicizaEditorUI.AddPropertyRow(
                 body, "RecyclerView", _recyclerView, true, typeof(RecyclerView), false);
             AlicizaEditorUI.AddPropertyRow(
-                body, "Scope", _navigationScope, true, typeof(UXNavigationScope), true);
+                body, "Scope", _navigationScope, true, typeof(NavigationScope), true);
 
             AddToggleRow(body, "Wrap", _wrapNavigation);
             AddToggleRow(body, "Keep Focus", _keepFocusVisibleWhenSuppressed);
             AddSmoothScrollRow(body);
             AlicizaEditorUI.AddPropertyRow(body, "Alignment", _focusAlignment);
 
-            AlicizaEditorUI.AddPropertyRow(
-                body, "Exit Left", _exitLeft, true, typeof(Selectable), true);
-            AlicizaEditorUI.AddPropertyRow(
-                body, "Exit Right", _exitRight, true, typeof(Selectable), true);
-            AlicizaEditorUI.AddPropertyRow(
-                body, "Exit Up", _exitUp, true, typeof(Selectable), true);
-            AlicizaEditorUI.AddPropertyRow(
-                body, "Exit Down", _exitDown, true, typeof(Selectable), true);
-
-            Label hint = AlicizaEditorUI.CreateHint("边界方向无可导航项时跳转到指定 Selectable。");
+            Label hint = AlicizaEditorUI.CreateHint("到达边界时按下方 Navigation 离开列表（推荐 Explicit 并配置 Select On 各方向）。");
             body.Add(hint);
 
             AlicizaSection navigation = AlicizaEditorUI.CreateStaticSection("Navigation");
@@ -94,10 +81,6 @@ namespace AlicizaX.UI.Editor
             _smoothScroll = serializedObject.FindProperty("smoothScroll");
             _smoothScrollDuration = serializedObject.FindProperty("smoothScrollDuration");
             _focusAlignment = serializedObject.FindProperty("focusAlignment");
-            _exitLeft = serializedObject.FindProperty("exitLeft");
-            _exitRight = serializedObject.FindProperty("exitRight");
-            _exitUp = serializedObject.FindProperty("exitUp");
-            _exitDown = serializedObject.FindProperty("exitDown");
             SerializedProperty selectableNavigation = serializedObject.FindProperty("m_Navigation");
             if (selectableNavigation == null)
             {

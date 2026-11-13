@@ -1,6 +1,5 @@
 using System;
 using AlicizaX;
-using AlicizaX.UI.UXFeedback;
 using UnityEngine.Events;
 using UnityEngine.EventSystems;
 
@@ -260,7 +259,6 @@ namespace UnityEngine.UI
                 return;
 
             InternalToggle();
-            UXUiFeedback.Raise(this, UXUiCue.Press);
         }
 
         public virtual void OnSubmit(BaseEventData eventData)
@@ -269,7 +267,6 @@ namespace UnityEngine.UI
                 return;
 
             InternalToggle();
-            UXUiFeedback.Raise(this, UXUiCue.Press);
         }
     }
 }

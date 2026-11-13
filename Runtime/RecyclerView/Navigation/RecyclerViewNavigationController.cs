@@ -1,6 +1,6 @@
 #if INPUTSYSTEM_SUPPORT && UXNAVIGATION_SUPPORT
-using System.Collections.Generic;
-using AlicizaX.UI.UXNavigation;
+using System;
+using AlicizaX.Input;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -8,7 +8,7 @@ using UnityEngine.UI;
 namespace AlicizaX.UI
 {
     /// <summary>
-    /// RecyclerView 手柄/键盘导航控制器。使用数据索引维护虚拟焦点，不绑定可回收的 ViewHolder。
+    /// RecyclerView 手柄/键盘导航控制器。用数据索引维护虚拟焦点，是列表在 EventSystem 中唯一的选中对象。
     /// </summary>
     [AddComponentMenu("UI/RecyclerView Navigation Controller")]
     [DisallowMultipleComponent]
@@ -16,106 +16,131 @@ namespace AlicizaX.UI
     public sealed class RecyclerViewNavigationController : Selectable, ISubmitHandler
     {
         [SerializeField] private RecyclerView recyclerView;
-        [SerializeField] private UXNavigationScope navigationScope;
+        [SerializeField] private NavigationScope navigationScope;
 
         [SerializeField] private bool wrapNavigation;
         [SerializeField] private bool keepFocusVisibleWhenSuppressed = true;
         [SerializeField] private bool smoothScroll = true;
         [SerializeField] private float smoothScrollDuration = 0.18f;
         [SerializeField] private ScrollAlignment focusAlignment = ScrollAlignment.Center;
-
-        [SerializeField] private Selectable exitLeft;
-        [SerializeField] private Selectable exitRight;
-        [SerializeField] private Selectable exitUp;
-        [SerializeField] private Selectable exitDown;
+        // 边界出口不单独配置：使用基类 Selectable.navigation（推荐 Explicit + Select On 各方向）。
 
         private int focusedDataIndex = -1;
-        private int rememberedDataIndex = -1;
-        private bool hasFocus;
         private bool suppressed;
-        private bool lastScopeSuppressed;
-        private bool registeredInScope;
-        private readonly Dictionary<ViewHolder, NavigationFocusSnapshot> navigationFocusSnapshots =
-            new Dictionary<ViewHolder, NavigationFocusSnapshot>();
+        private bool isSelected;                         // 是否为 EventSystem 当前选中对象（基类 hasSelection 为 private）
+        private bool cursorMode;                         // 光标模式：手柄，或键鼠类型下的键盘导航
+        private Predicate<int> focusFilter;
 
         /// <summary>
-        /// 当前导航焦点所在的数据索引；没有有效导航焦点时返回 -1。
+        /// 当前导航焦点所在的数据索引；没有焦点时为 -1。离开列表、被压制时保留。
         /// </summary>
-        public int FocusedDataIndex => hasFocus ? focusedDataIndex : -1;
+        public int FocusedDataIndex => focusedDataIndex;
 
         /// <summary>
         /// 当前 RecyclerView 是否持有有效的导航焦点。
         /// </summary>
-        public bool HasFocus => hasFocus;
+        public bool HasFocus => focusedDataIndex >= 0;
 
         /// <summary>
-        /// 当前导航是否被所属 UXNavigationScope 抑制。
+        /// 当前导航是否被所属 NavigationScope 抑制。
         /// </summary>
         public bool IsSuppressed => suppressed;
+
+        #region 生命周期
 
         protected override void Awake()
         {
             base.Awake();
-            ResolveRequiredReferences();
+            if (recyclerView == null)
+            {
+                recyclerView = GetComponent<RecyclerView>();
+            }
         }
 
         protected override void OnEnable()
         {
             base.OnEnable();
-            ResolveRequiredReferences();
-            RegisterToNavigationScope();
+            recyclerView.OnScrollValueChanged += OnScrollValueChanged;
+            recyclerView.OnScrollStopped += OnScrollStopped;
+            recyclerView.OnLayoutChanged += NotifyDataSetChanged;
 
-            if (recyclerView != null)
+            // 输入系统未初始化（编辑器、EditMode 测试）是合法状态。
+            InputWatch watch = UXInput.Watch;
+            cursorMode = watch != null && watch.IsNavigationInput;
+            if (watch != null)
             {
-                recyclerView.OnScrollValueChanged += OnScrollValueChanged;
-                recyclerView.OnScrollStopped += OnScrollStopped;
-                recyclerView.OnNavigationDataChanged += NotifyDataSetChanged;
-                recyclerView.OnHolderRecycled += ForgetHolder;
+                watch.OnInputTypeChanged += OnInputTypeChanged;
             }
 
-            SyncSuppressionState(true);
-            RefreshVisibleNavigationFocus();
-        }
+            if (navigationScope != null)
+            {
+                navigationScope.NavigationSuppressionChanged += SetNavigationSuppressed;
+                suppressed = navigationScope.NavigationSuppressed;   // 禁用期间错过的事件在这里对齐
+                // 注册会同步触发 InputNavigation.Refresh（可能回调 OnSelect / 压制事件），状态必须先就绪。
+                navigationScope.RegisterSelectable(this, true);
+            }
 
-        private void LateUpdate()
-        {
-            SyncSuppressionState(false);
+            // 与基类 Selectable.OnEnable 恢复 hasSelection 的口径一致：仍被选中时不会再收到 OnSelect。
+            EventSystem eventSystem = EventSystem.current;
+            isSelected = eventSystem != null && eventSystem.currentSelectedGameObject == gameObject;
+            RefreshVisibleNavigationFocus();
         }
 
         protected override void OnDisable()
         {
-            if (recyclerView != null)
+            recyclerView.OnScrollValueChanged -= OnScrollValueChanged;
+            recyclerView.OnScrollStopped -= OnScrollStopped;
+            recyclerView.OnLayoutChanged -= NotifyDataSetChanged;
+
+            if (navigationScope != null)
             {
-                recyclerView.OnScrollValueChanged -= OnScrollValueChanged;
-                recyclerView.OnScrollStopped -= OnScrollStopped;
-                recyclerView.OnNavigationDataChanged -= NotifyDataSetChanged;
-                recyclerView.OnHolderRecycled -= ForgetHolder;
+                navigationScope.NavigationSuppressionChanged -= SetNavigationSuppressed;
+                navigationScope.UnregisterSelectable(this);
             }
 
-            UnregisterFromNavigationScope();
-            ApplyVisibleNavigationFocus(false);
-            navigationFocusSnapshots.Clear();
+            // 输入系统重建后实例会变：对新实例 -= 为空操作，旧实例的订阅随 Shutdown 一起清空。
+            InputWatch watch = UXInput.Watch;
+            if (watch != null)
+            {
+                watch.OnInputTypeChanged -= OnInputTypeChanged;
+            }
+
+            // 禁用后收不到 OnDeselect 与 scope 事件，两者会过期：清掉，禁用期间任何焦点写入都不显示光标；OnEnable 重新取值。
+            isSelected = false;
+            suppressed = false;
+            NotifyVisibleHolders(-1);
             base.OnDisable();
         }
 
-        protected override void OnDestroy()
+#if UNITY_EDITOR
+        protected override void OnValidate()
         {
-            navigationFocusSnapshots.Clear();
-            base.OnDestroy();
+            base.OnValidate();
+            recyclerView = GetComponent<RecyclerView>();
+            navigationScope = FindNearestParentNavigationScope();
         }
 
-        private void ForgetHolder(ViewHolder holder)
+        private NavigationScope FindNearestParentNavigationScope()
         {
-            if (holder != null)
+            for (Transform current = transform.parent; current != null; current = current.parent)
             {
-                navigationFocusSnapshots.Remove(holder);
+                if (current.TryGetComponent(out NavigationScope scope))
+                {
+                    return scope;
+                }
             }
+
+            return null;
         }
+#endif
+
+        #endregion
+
+        #region EventSystem 入口
 
         /// <summary>
-        /// 处理 Unity UI 的方向移动事件，并尝试在 RecyclerView 内移动导航焦点。
+        /// 处理 Unity UI 的方向移动事件：列表内能移动则消费，否则交给基类按 navigation 离开列表。
         /// </summary>
-        /// <param name="eventData">方向移动事件数据。</param>
         public override void OnMove(AxisEventData eventData)
         {
             if (HandleMove(eventData))
@@ -128,9 +153,8 @@ namespace AlicizaX.UI
         }
 
         /// <summary>
-        /// 处理 Unity UI 的提交事件，优先转发给当前焦点 ViewHolder，否则回退为业务选中。
+        /// 处理 Unity UI 的提交事件，优先转发给当前焦点项，否则回退为业务选中。
         /// </summary>
-        /// <param name="eventData">提交事件数据。</param>
         public void OnSubmit(BaseEventData eventData)
         {
             if (HandleSubmit())
@@ -139,456 +163,357 @@ namespace AlicizaX.UI
             }
         }
 
-        /// <summary>
-        /// 处理 Unity UI 的取消事件。
-        /// </summary>
-        /// <param name="eventData">取消事件数据。</param>
+        public override void OnSelect(BaseEventData eventData)
+        {
+            base.OnSelect(eventData);
+            isSelected = true;
+            RefreshVisibleNavigationFocus();
+        }
+
+        public override void OnDeselect(BaseEventData eventData)
+        {
+            base.OnDeselect(eventData);
+            isSelected = false;
+            RefreshVisibleNavigationFocus();               // 焦点位置保留，只隐藏视觉
+        }
+
         /// <summary>
         /// 手动处理一次方向移动输入。
         /// </summary>
-        /// <param name="eventData">方向移动事件数据。</param>
-        /// <returns>返回 true 表示输入已被 RecyclerView 导航消耗。</returns>
+        /// <returns>true 表示输入已被列表消费；false 时应交给 <see cref="Selectable.OnMove"/> 离开列表。</returns>
         public bool HandleMove(AxisEventData eventData)
         {
-            if (suppressed || recyclerView == null || eventData.moveDir == MoveDirection.None)
+            if (suppressed)
             {
                 return false;
             }
 
+            EnterCursorMode();
             int count = GetNavigationCount();
-            if (count <= 0)
-            {
-                ClearFocus();
-                return true;
-            }
-
-            if (!hasFocus || !IsValidDataIndex(focusedDataIndex))
-            {
-                InitializeFocus();
-                return true;
-            }
-
-            if (TryCurrentHolderConsumeMove(eventData))
+            if (InitializeFocusIfInvalid(count))
             {
                 return true;
             }
 
-            MoveResult result = TryCalculateNextDataIndex(eventData.moveDir, count, out int nextDataIndex);
-            if (result == MoveResult.Moved)
+            if (recyclerView.ViewProvider.FindByDataIndex(focusedDataIndex) is IRecyclerViewNavigationViewHolder holder &&
+                holder.HandleNavigationMove(eventData))
             {
-                SetFocus(nextDataIndex, true);
                 return true;
             }
 
-            if (result == MoveResult.Boundary)
+            switch (CalculateMove(eventData.moveDir, count, out int next))
             {
-                // 只有真正把焦点交给了外部控件，才算消费了这次输入；
-                // 否则必须放行给 base.OnMove，让 EventSystem 能离开列表。
-                return TrySelectExit(eventData.moveDir);
-            }
+                case MoveResult.Moved:
+                    ApplyFocus(next, true);
+                    // 列表内移动没有 EventSystem 选中切换，焦点提示在这里补发（列表根挂了 InputFeedbackObserver 时）。
+                    if (TryGetComponent(out InputFeedbackObserver feedback))
+                    {
+                        feedback.Play(InputFeedbackCue.FocusEnter);
+                    }
 
-            return true;
+                    return true;
+                case MoveResult.Boundary:
+                    return false;                          // 放行给 base.OnMove 按 navigation 离开列表
+                default:
+                    return true;
+            }
         }
 
         /// <summary>
-        /// 手动提交当前导航焦点。优先转发给焦点项的 <see cref="IRecyclerViewNavigationViewHolder.HandleNavigationSubmit"/>；
-        /// 若未处理则回退为同步 Adapter 业务选中索引。
+        /// 手动提交当前导航焦点。优先转发给焦点项；未处理时回退为同步 Adapter 业务选中索引。
         /// </summary>
-        /// <returns>返回 true 表示提交已被 RecyclerView 导航处理。</returns>
+        /// <returns>true 表示提交已被列表处理。</returns>
         public bool HandleSubmit()
         {
-            if (suppressed || recyclerView == null)
+            if (suppressed)
             {
                 return false;
             }
 
-            if (!hasFocus || !IsValidDataIndex(focusedDataIndex))
-            {
-                InitializeFocus();
-                return true;
-            }
-
-            ViewHolder holder = GetFocusedViewHolder();
-            if (holder is IRecyclerViewNavigationViewHolder navigationHolder &&
-                navigationHolder.HandleNavigationSubmit())
+            EnterCursorMode();
+            int count = GetNavigationCount();
+            if (InitializeFocusIfInvalid(count))
             {
                 return true;
             }
 
-            recyclerView.RecyclerViewAdapter?.SetChoiceIndex(focusedDataIndex);
+            if (recyclerView.ViewProvider.FindByDataIndex(focusedDataIndex) is not IRecyclerViewNavigationViewHolder holder ||
+                !holder.HandleNavigationSubmit())
+            {
+                recyclerView.RecyclerViewAdapter.SetChoiceIndex(focusedDataIndex);
+            }
+
             return true;
         }
 
-        /// <summary>
-        /// 设置导航焦点到指定数据索引，并按当前焦点对齐配置滚动到目标项。
-        /// </summary>
-        /// <param name="dataIndex">目标数据索引。</param>
-        public void SetFocus(int dataIndex)
-        {
-            SetFocus(dataIndex, true);
-        }
+        #endregion
+
+        #region 指针入口（仅 NavigationViewHolder 调用）
 
         /// <summary>
-        /// 恢复导航焦点到指定数据索引，并将当前 EventSystem 选中对象切回本控制器。
+        /// 鼠标/触摸点击列表项：焦点位置记为该项并选中列表，但不显示光标。
         /// </summary>
-        /// <param name="dataIndex">目标数据索引；无效或不可聚焦时会尝试选择最近的可聚焦项。</param>
-        public void RestoreFocus(int dataIndex)
+        internal void HandleItemPointerUp(int dataIndex)
         {
-            if (!IsValidDataIndex(dataIndex))
+            // 先做无副作用判断：被压制、越界（绑定失败的项为 -1）、不可聚焦时不改投焦点、不抢选中。
+            if (suppressed ||
+                (uint)dataIndex >= (uint)GetNavigationCount() ||
+                !IsDataIndexFocusable(dataIndex))
             {
-                dataIndex = FindNearestFocusable(Mathf.Max(0, dataIndex));
+                return;
             }
 
-            if (dataIndex < 0)
+            cursorMode = false;
+            ApplyFocus(dataIndex, false);
+            SelectSelf();
+        }
+
+        #endregion
+
+        #region 焦点 API
+
+        /// <summary>
+        /// 设置导航焦点；目标不可聚焦时改投最近的可聚焦项，越界时清空。
+        /// </summary>
+        /// <param name="dataIndex">目标数据索引。</param>
+        /// <param name="scroll">是否滚动列表以显示并对齐目标项。</param>
+        public void SetFocus(int dataIndex, bool scroll = true)
+        {
+            int count = GetNavigationCount();
+            if ((uint)dataIndex >= (uint)count)
             {
                 ClearFocus();
                 return;
             }
 
-            SetFocus(dataIndex, true);
-            SelectSelf();
+            FocusNearest(dataIndex, count, scroll);
         }
 
         /// <summary>
-        /// 清除 RecyclerView 内部导航焦点，并通知可见项取消导航高亮。
+        /// 恢复导航焦点（越界也取最近项），并把 EventSystem 选中切回列表。
         /// </summary>
-        public void ClearFocus()
+        public void RestoreFocus(int dataIndex)
         {
-            focusedDataIndex = -1;
-            hasFocus = false;
-            ApplyVisibleNavigationFocus(false);
+            FocusNearest(dataIndex, GetNavigationCount(), true);
+            if (HasFocus)
+            {
+                SelectSelf();
+            }
+        }
+
+        /// <summary>
+        /// 设置可聚焦过滤器（数据索引 → 是否可聚焦）；null 表示所有实现导航接口的模板项都可聚焦。
+        /// 过滤条件依赖的数据变化走 Adapter 通知即可；仅过滤条件本身变化时需要重新调用。
+        /// </summary>
+        public void SetFocusFilter(Predicate<int> filter)
+        {
+            focusFilter = filter;
+            if (HasFocus)
+            {
+                FocusNearest(focusedDataIndex, GetNavigationCount(), false);
+            }
         }
 
         internal void NotifyDataSetChanged()
         {
-            int count = GetNavigationCount();
-            if (count <= 0)
+            FocusNearest(HasFocus ? focusedDataIndex : GetInitialFocusOrigin(), GetNavigationCount(), false);
+        }
+
+        /// <summary>
+        /// 由 NavigationScope 事件驱动；scope 只在状态变化时触发，这里不再去重。
+        /// 解除时不滚动：ScrollToAligned 不判断可见性，会把刚点击的项重新对齐。
+        /// </summary>
+        internal void SetNavigationSuppressed(bool value)
+        {
+            suppressed = value;
+            RefreshVisibleNavigationFocus();
+        }
+
+        #endregion
+
+        #region 焦点写入（SetFocus → FocusNearest → ApplyFocus）
+
+        private void ClearFocus()
+        {
+            focusedDataIndex = -1;
+            NotifyVisibleHolders(-1);
+        }
+
+        /// <summary>焦点无效时初始化并返回 true：本次输入只用于建立焦点。</summary>
+        private bool InitializeFocusIfInvalid(int count)
+        {
+            if ((uint)focusedDataIndex < (uint)count)
             {
-                ClearFocus();
-                return;
+                return false;
             }
 
-            int target = hasFocus ? Mathf.Clamp(focusedDataIndex, 0, count - 1) : GetInitialFocusOrigin();
-            if (!IsDataIndexFocusable(target))
-            {
-                target = FindNearestFocusable(target);
-            }
+            FocusNearest(GetInitialFocusOrigin(), count, true);
+            return true;
+        }
 
+        private void FocusNearest(int origin, int count, bool scroll)
+        {
+            int target = FindNearestFocusable(origin, count);
             if (target < 0)
             {
                 ClearFocus();
                 return;
             }
 
-            SetFocus(target, false);
+            ApplyFocus(target, scroll);
         }
 
-        private void ResolveRequiredReferences()
+        /// <summary>不做校验的写入口；调用方保证 dataIndex 有效且可聚焦。</summary>
+        private void ApplyFocus(int dataIndex, bool scroll)
         {
-            if (recyclerView == null)
+            focusedDataIndex = dataIndex;
+            if (scroll)
             {
-                recyclerView = GetComponent<RecyclerView>();
-            }
-        }
-
-#if UNITY_EDITOR
-        protected override void OnValidate()
-        {
-            base.OnValidate();
-            recyclerView = GetComponent<RecyclerView>();
-            navigationScope = FindNearestParentNavigationScope();
-        }
-
-        private UXNavigationScope FindNearestParentNavigationScope()
-        {
-            Transform current = transform.parent;
-            while (current != null)
-            {
-                if (current.TryGetComponent(out UXNavigationScope scope))
+                if (focusAlignment == ScrollAlignment.Start)
                 {
-                    return scope;
-                }
-
-                current = current.parent;
-            }
-
-            return null;
-        }
-#endif
-
-        private void RegisterToNavigationScope()
-        {
-            if (registeredInScope || navigationScope == null)
-            {
-                return;
-            }
-
-            registeredInScope = navigationScope.RegisterSelectable(this, true);
-            lastScopeSuppressed = navigationScope.NavigationSuppressed;
-            suppressed = lastScopeSuppressed;
-        }
-
-        private void UnregisterFromNavigationScope()
-        {
-            if (!registeredInScope || navigationScope == null)
-            {
-                registeredInScope = false;
-                return;
-            }
-
-            navigationScope.UnregisterSelectable(this);
-            registeredInScope = false;
-        }
-
-        private void SyncSuppressionState(bool force)
-        {
-            bool currentSuppressed = navigationScope != null && navigationScope.NavigationSuppressed;
-            if (!force && currentSuppressed == lastScopeSuppressed)
-            {
-                return;
-            }
-
-            lastScopeSuppressed = currentSuppressed;
-            SetNavigationSuppressed(currentSuppressed);
-        }
-
-        /// <summary>
-        /// 设置导航抑制状态。抑制时会隐藏可见项导航焦点，解除抑制时会尝试恢复原焦点。
-        /// </summary>
-        /// <param name="value">是否抑制 RecyclerView 导航。</param>
-        public void SetNavigationSuppressed(bool value)
-        {
-            if (suppressed == value)
-            {
-                return;
-            }
-
-            suppressed = value;
-            if (suppressed)
-            {
-                rememberedDataIndex = hasFocus ? focusedDataIndex : -1;
-                if (keepFocusVisibleWhenSuppressed)
-                {
-                    RefreshVisibleNavigationFocus();
+                    recyclerView.ScrollToIndex(dataIndex, smoothScroll);
                 }
                 else
                 {
-                    ApplyVisibleNavigationFocus(false);
+                    recyclerView.ScrollToAligned(dataIndex, focusAlignment, 0f, smoothScroll, smoothScrollDuration);
                 }
-
-                return;
-            }
-
-            if (rememberedDataIndex >= 0)
-            {
-                RestoreFocus(rememberedDataIndex);
-            }
-            else
-            {
-                RefreshVisibleNavigationFocus();
-            }
-        }
-
-        private void InitializeFocus()
-        {
-            int target = FindNearestFocusable(GetInitialFocusOrigin());
-            if (target < 0)
-            {
-                ClearFocus();
-                return;
-            }
-
-            SetFocus(target, true);
-        }
-
-        private int GetInitialFocusOrigin()
-        {
-            if (recyclerView == null || recyclerView.LayoutManager == null)
-            {
-                return 0;
-            }
-
-            int current = recyclerView.ScrollDataIndex;
-            if (current >= 0)
-            {
-                return current;
-            }
-
-            int layoutIndex = recyclerView.LayoutManager.GetStartIndex();
-            return recyclerView.LayoutManager.GetDataIndex(layoutIndex);
-        }
-
-        /// <summary>
-        /// 设置导航焦点到指定数据索引。
-        /// </summary>
-        /// <param name="dataIndex">目标数据索引。</param>
-        /// <param name="scroll">是否滚动列表以显示并对齐目标项。</param>
-        public void SetFocus(int dataIndex, bool scroll)
-        {
-            if (!IsValidDataIndex(dataIndex))
-            {
-                ClearFocus();
-                return;
-            }
-
-            if (!IsDataIndexFocusable(dataIndex))
-            {
-                int nearest = FindNearestFocusable(dataIndex);
-                if (nearest < 0)
-                {
-                    ClearFocus();
-                    return;
-                }
-
-                dataIndex = nearest;
-            }
-
-            focusedDataIndex = dataIndex;
-            hasFocus = true;
-
-            if (scroll)
-            {
-                ScrollToFocusedDataIndex();
             }
 
             RefreshVisibleNavigationFocus();
         }
 
-        private void ScrollToFocusedDataIndex()
+        private int GetInitialFocusOrigin()
         {
-            if (recyclerView == null || !hasFocus)
+            int scrollIndex = recyclerView.ScrollDataIndex;
+            if (scrollIndex >= 0)
             {
-                return;
+                return scrollIndex;
             }
 
-            if (focusAlignment == ScrollAlignment.Start)
-            {
-                recyclerView.ScrollToIndex(focusedDataIndex, smoothScroll);
-                return;
-            }
-
-            recyclerView.ScrollToAligned(focusedDataIndex, focusAlignment, 0f, smoothScroll, smoothScrollDuration);
+            // layoutManager 是序列化引用，Adapter 设置前即存在（SetAdapter 无条件解引用它），无需判空。
+            LayoutManager layoutManager = recyclerView.LayoutManager;
+            return layoutManager.GetDataIndex(layoutManager.GetStartIndex());
         }
 
-        private MoveResult TryCalculateNextDataIndex(MoveDirection direction, int count, out int nextDataIndex)
+        #endregion
+
+        #region 可聚焦判断（模板门槛 + 过滤器）
+
+        /// <summary>调用方保证 0 &lt;= dataIndex &lt; count。</summary>
+        private bool IsDataIndexFocusable(int dataIndex)
         {
-            nextDataIndex = -1;
-            LayoutManager layoutManager = recyclerView.LayoutManager;
-            if (layoutManager == null)
+            IAdapter adapter = recyclerView.RecyclerViewAdapter;
+            return recyclerView.ViewProvider.GetTemplate(adapter.GetTemplateId(dataIndex)) is IRecyclerViewNavigationViewHolder &&
+                   (focusFilter == null || focusFilter(dataIndex));
+        }
+
+        private int FindNearestFocusable(int origin, int count)
+        {
+            if (count <= 0)
             {
-                return MoveResult.Blocked;
+                return -1;
             }
 
+            origin = Mathf.Clamp(origin, 0, count - 1);
+            if (IsDataIndexFocusable(origin))
+            {
+                return origin;
+            }
+
+            int maxOffset = Mathf.Max(origin, count - 1 - origin);
+            for (int offset = 1; offset <= maxOffset; offset++)
+            {
+                int forward = origin + offset;
+                if (forward < count && IsDataIndexFocusable(forward))
+                {
+                    return forward;
+                }
+
+                int backward = origin - offset;
+                if (backward >= 0 && IsDataIndexFocusable(backward))
+                {
+                    return backward;
+                }
+            }
+
+            return -1;
+        }
+
+        private int GetNavigationCount()
+        {
+            IAdapter adapter = recyclerView.RecyclerViewAdapter;
+            if (adapter == null)
+            {
+                return 0;
+            }
+
+            int realCount = adapter.GetRealCount();
+            return realCount > 0 ? realCount : adapter.GetItemCount();
+        }
+
+        #endregion
+
+        #region 移动算法
+
+        private MoveResult CalculateMove(MoveDirection direction, int count, out int next)
+        {
+            LayoutManager layoutManager = recyclerView.LayoutManager;
+            bool circle = layoutManager is CircleLayoutManager;
+            bool wrap = wrapNavigation || circle || recyclerView.IsLoopingAdapter();
             if (layoutManager is GridLayoutManager)
             {
-                return TryCalculateGridMove(direction, count, out nextDataIndex);
+                return CalculateGridMove(direction, count, layoutManager.Unit, wrap, out next);
             }
 
-            if (layoutManager is CircleLayoutManager)
+            // 环形布局两个轴都映射到 ±1；线性布局只响应主轴，垂直于主轴的方向交给 navigation。
+            bool alongAxis = circle ||
+                             (direction is MoveDirection.Up or MoveDirection.Down) == (recyclerView.Direction == Direction.Vertical);
+            if (!alongAxis)
             {
-                return TryCalculateRingMove(direction, count, out nextDataIndex);
-            }
-
-            return TryCalculateLinearMove(direction, count, out nextDataIndex);
-        }
-
-        private MoveResult TryCalculateLinearMove(MoveDirection direction, int count, out int nextDataIndex)
-        {
-            nextDataIndex = -1;
-            int delta = GetLinearDelta(direction);
-            if (delta == 0)
-            {
+                next = -1;
                 return MoveResult.Boundary;
             }
 
-            bool allowWrap = ShouldWrapNavigation();
-            return TryFindNextFocusable(focusedDataIndex, delta, count, allowWrap, out nextDataIndex, out bool hitBoundary)
-                ? MoveResult.Moved
-                : hitBoundary
-                    ? MoveResult.Boundary
-                    : MoveResult.Blocked;
+            return FindNextFocusable(direction is MoveDirection.Left or MoveDirection.Up ? -1 : 1, count, wrap, out next);
         }
 
-        private MoveResult TryCalculateRingMove(MoveDirection direction, int count, out int nextDataIndex)
+        private MoveResult FindNextFocusable(int delta, int count, bool wrap, out int next)
         {
-            nextDataIndex = -1;
-            int delta = direction == MoveDirection.Left || direction == MoveDirection.Up
-                ? -1
-                : direction == MoveDirection.Right || direction == MoveDirection.Down
-                    ? 1
-                    : 0;
-
-            if (delta == 0)
+            for (int step = 1; step < count; step++)
             {
-                return MoveResult.Blocked;
+                int candidate = focusedDataIndex + delta * step;
+                if ((uint)candidate >= (uint)count)
+                {
+                    if (!wrap)
+                    {
+                        next = -1;
+                        return MoveResult.Boundary;
+                    }
+
+                    candidate = (candidate % count + count) % count;
+                }
+
+                if (IsDataIndexFocusable(candidate))
+                {
+                    next = candidate;
+                    return MoveResult.Moved;
+                }
             }
 
-            return TryFindNextFocusable(focusedDataIndex, delta, count, ShouldWrapNavigation(), out nextDataIndex, out _)
-                ? MoveResult.Moved
-                : MoveResult.Blocked;
+            next = -1;
+            return wrap ? MoveResult.Blocked : MoveResult.Boundary;
         }
 
-        private MoveResult TryCalculateGridMove(MoveDirection direction, int count, out int nextDataIndex)
+        private MoveResult CalculateGridMove(MoveDirection direction, int count, int layoutUnit, bool wrap, out int next)
         {
-            nextDataIndex = -1;
-            int unit = Mathf.Max(1, recyclerView.LayoutManager.Unit);
+            next = -1;
+            int unit = Mathf.Max(1, layoutUnit);
             bool vertical = recyclerView.Direction == Direction.Vertical;
-            int delta;
 
-            if (vertical)
-            {
-                switch (direction)
-                {
-                    case MoveDirection.Left:
-                        delta = -1;
-                        break;
-                    case MoveDirection.Right:
-                        delta = 1;
-                        break;
-                    case MoveDirection.Up:
-                        delta = -unit;
-                        break;
-                    case MoveDirection.Down:
-                        delta = unit;
-                        break;
-                    default:
-                        return MoveResult.Blocked;
-                }
-            }
-            else
-            {
-                switch (direction)
-                {
-                    case MoveDirection.Up:
-                        delta = -1;
-                        break;
-                    case MoveDirection.Down:
-                        delta = 1;
-                        break;
-                    case MoveDirection.Left:
-                        delta = -unit;
-                        break;
-                    case MoveDirection.Right:
-                        delta = unit;
-                        break;
-                    default:
-                        return MoveResult.Blocked;
-                }
-            }
-
-            // 行内/跨行必须由"移动方向 + 布局方向"决定：用 |delta| 判断会在 unit == 1 时把
-            // 上/下误判成行内移动，导致单列网格的上/下导航直接失效。
-            bool stepInsideLine = (direction == MoveDirection.Left || direction == MoveDirection.Right) == vertical;
-            return TryFindNextGridFocusable(delta, count, unit, stepInsideLine, ShouldWrapNavigation(), out nextDataIndex);
-        }
-
-        private MoveResult TryFindNextGridFocusable(int delta, int count, int unit, bool stepInsideLine, bool allowWrap, out int dataIndex)
-        {
-            dataIndex = -1;
-            if (count <= 0 || delta == 0)
-            {
-                return MoveResult.Blocked;
-            }
+            // 行内/跨行由“移动方向 + 布局方向”决定；不能用 |delta| 判断（unit == 1 时会把上/下误判成行内移动）。
+            bool stepInsideLine = (direction is MoveDirection.Left or MoveDirection.Right) == vertical;
+            int sign = direction is MoveDirection.Left or MoveDirection.Up ? -1 : 1;
+            int delta = stepInsideLine ? sign : sign * unit;
 
             int startMajor = focusedDataIndex / unit;
             int startMinor = focusedDataIndex % unit;
@@ -598,30 +523,27 @@ namespace AlicizaX.UI
                 bool leftLine = stepInsideLine ? candidate / unit != startMajor : candidate % unit != startMinor;
                 if (leftLine)
                 {
-                    if (!allowWrap)
+                    if (!wrap)
                     {
                         return MoveResult.Boundary;
                     }
 
                     // 环绕：跨行时跳一整行，行内移动时跳一整列，回到同一行/列的对应位置。
-                    candidate = stepInsideLine ? candidate + (candidate < focusedDataIndex ? count : -count) : candidate + delta * (count - 1);
-                    if (candidate < 0 || candidate >= count)
+                    candidate = stepInsideLine
+                        ? candidate + (candidate < focusedDataIndex ? count : -count)
+                        : candidate + delta * (count - 1);
+                    if (candidate < 0 || candidate >= count || !IsDataIndexFocusable(candidate))
                     {
                         return MoveResult.Boundary;
                     }
 
-                    if (IsDataIndexFocusable(candidate, count))
-                    {
-                        dataIndex = candidate;
-                        return MoveResult.Moved;
-                    }
-
-                    return MoveResult.Boundary;
+                    next = candidate;
+                    return MoveResult.Moved;
                 }
 
-                if (IsDataIndexFocusable(candidate, count))
+                if (IsDataIndexFocusable(candidate))
                 {
-                    dataIndex = candidate;
+                    next = candidate;
                     return MoveResult.Moved;
                 }
 
@@ -631,374 +553,94 @@ namespace AlicizaX.UI
             return MoveResult.Boundary;
         }
 
-        private int GetLinearDelta(MoveDirection direction)
-        {
-            if (recyclerView.Direction == Direction.Vertical)
-            {
-                return direction == MoveDirection.Up ? -1 : direction == MoveDirection.Down ? 1 : 0;
-            }
+        #endregion
 
-            if (recyclerView.Direction == Direction.Horizontal)
-            {
-                return direction == MoveDirection.Left ? -1 : direction == MoveDirection.Right ? 1 : 0;
-            }
+        #region 焦点视觉
 
-            return 0;
-        }
-
-        private bool TryFindNextFocusable(int start, int delta, int count, bool allowWrap, out int dataIndex, out bool hitBoundary)
-        {
-            dataIndex = -1;
-            hitBoundary = false;
-            if (count <= 0 || delta == 0)
-            {
-                return false;
-            }
-
-            int candidate = start + delta;
-            int attempts = count - 1;
-            for (int i = 0; i < attempts; i++)
-            {
-                if (candidate < 0 || candidate >= count)
-                {
-                    if (!allowWrap)
-                    {
-                        hitBoundary = true;
-                        return false;
-                    }
-
-                    candidate = candidate < 0 ? count - 1 : 0;
-                }
-
-                if (candidate != start && IsDataIndexFocusable(candidate, count))
-                {
-                    dataIndex = candidate;
-                    return true;
-                }
-
-                candidate += delta;
-            }
-
-            hitBoundary = !allowWrap && (candidate < 0 || candidate >= count);
-            return false;
-        }
-
-        private int FindNearestFocusable(int origin)
-        {
-            int count = GetNavigationCount();
-            if (count <= 0)
-            {
-                return -1;
-            }
-
-            origin = Mathf.Clamp(origin, 0, count - 1);
-            if (IsDataIndexFocusable(origin, count))
-            {
-                return origin;
-            }
-
-            for (int offset = 1; offset < count; offset++)
-            {
-                int forward = origin + offset;
-                if (forward < count && IsDataIndexFocusable(forward, count))
-                {
-                    return forward;
-                }
-
-                int backward = origin - offset;
-                if (backward >= 0 && IsDataIndexFocusable(backward, count))
-                {
-                    return backward;
-                }
-            }
-
-            return -1;
-        }
-
-        private bool TryCurrentHolderConsumeMove(AxisEventData eventData)
-        {
-            ViewHolder holder = GetFocusedViewHolder();
-            return holder is IRecyclerViewNavigationViewHolder navigationHolder &&
-                   navigationHolder.HandleNavigationMove(eventData);
-        }
-
-        private ViewHolder GetFocusedViewHolder()
-        {
-            if (recyclerView == null || recyclerView.RecyclerViewAdapter == null || recyclerView.LayoutManager == null || !hasFocus)
-            {
-                return null;
-            }
-
-            int layoutIndex = recyclerView.LayoutManager.GetLayoutIndex(focusedDataIndex);
-            ViewHolder holder = recyclerView.ViewProvider.GetViewHolder(layoutIndex);
-            if (holder != null && holder.DataIndex == focusedDataIndex)
-            {
-                return holder;
-            }
-
-            int visibleCount = recyclerView.ViewProvider.VisibleCount;
-            for (int i = 0; i < visibleCount; i++)
-            {
-                holder = recyclerView.ViewProvider.GetVisibleViewHolder(i);
-                if (holder != null && holder.DataIndex == focusedDataIndex)
-                {
-                    return holder;
-                }
-            }
-
-            return null;
-        }
+        /// <summary>焦点可见性的唯一规则；不可见时为 -1。</summary>
+        private int VisibleFocusIndex =>
+            (suppressed ? keepFocusVisibleWhenSuppressed : isSelected && cursorMode) ? focusedDataIndex : -1;
 
         private void RefreshVisibleNavigationFocus()
         {
-            if (recyclerView != null && recyclerView.RecyclerViewAdapter != null)
-            {
-                int visibleCount = recyclerView.ViewProvider.VisibleCount;
-                for (int i = 0; i < visibleCount; i++)
-                {
-                    ViewHolder holder = recyclerView.ViewProvider.GetVisibleViewHolder(i);
-                    if (holder == null)
-                    {
-                        continue;
-                    }
+            NotifyVisibleHolders(VisibleFocusIndex);
+        }
 
-                    bool focused = hasFocus &&
-                                   (!suppressed || keepFocusVisibleWhenSuppressed) &&
-                                   holder.DataIndex == focusedDataIndex;
-                    NotifyNavigationFocusChanged(holder, focused);
+        // 只在状态翻转时刷新；每次按键都刷新没有意义。
+        private void EnterCursorMode()
+        {
+            if (cursorMode)
+            {
+                return;
+            }
+
+            cursorMode = true;
+            RefreshVisibleNavigationFocus();
+        }
+
+        private void OnInputTypeChanged(InputWatch.InputType _)
+        {
+            cursorMode = UXInput.Watch.IsNavigationInput;  // 事件由 Watch 自身发出，此处必然非 null
+            RefreshVisibleNavigationFocus();
+        }
+
+        /// <summary>focusIndex 为 -1 时全部取消。去重在 holder 内完成。</summary>
+        private void NotifyVisibleHolders(int focusIndex)
+        {
+            ViewProvider provider = recyclerView.ViewProvider;
+            if (provider == null)
+            {
+                return;                                    // Adapter 尚未设置
+            }
+
+            for (int i = 0; i < provider.VisibleCount; i++)
+            {
+                ViewHolder holder = provider.GetVisibleViewHolder(i);
+                if (holder is IRecyclerViewNavigationViewHolder navigationHolder)
+                {
+                    // 必须带 focusIndex >= 0：绑定失败的项 DataIndex 也是 -1。
+                    navigationHolder.SetNavigationFocused(focusIndex >= 0 && holder.DataIndex == focusIndex);
                 }
             }
         }
 
-        private void ApplyVisibleNavigationFocus(bool focused)
-        {
-            if (recyclerView == null || recyclerView.RecyclerViewAdapter == null)
-            {
-                return;
-            }
-
-            int visibleCount = recyclerView.ViewProvider.VisibleCount;
-            for (int i = 0; i < visibleCount; i++)
-            {
-                ViewHolder holder = recyclerView.ViewProvider.GetVisibleViewHolder(i);
-                NotifyNavigationFocusChanged(holder, focused && holder.DataIndex == focusedDataIndex);
-            }
-        }
-
-        private void NotifyNavigationFocusChanged(ViewHolder holder, bool focused)
-        {
-            IRecyclerViewNavigationViewHolder navigationHolder = holder as IRecyclerViewNavigationViewHolder;
-            if (navigationHolder == null)
-            {
-                return;
-            }
-
-            bool hasSnapshot = navigationFocusSnapshots.TryGetValue(holder, out NavigationFocusSnapshot previous);
-            if (hasSnapshot &&
-                previous.DataIndex == holder.DataIndex &&
-                previous.BindingVersion == holder.BindingVersion &&
-                previous.Focused == focused)
-            {
-                return;
-            }
-
-            // 无论聚焦与否都记录最后一次通知值，未聚焦项才能在滚动帧内被去重。
-            navigationFocusSnapshots[holder] = new NavigationFocusSnapshot
-            {
-                DataIndex = holder.DataIndex,
-                BindingVersion = holder.BindingVersion,
-                Focused = focused
-            };
-
-            navigationHolder.HandleNavigationFocused(focused);
-        }
-
+        // 焦点不可见时所有项已是 false，新绑定项因版本号变化也读作 false，无需遍历。
         private void OnScrollValueChanged(float _)
         {
-            if (hasFocus)
-            {
-                RefreshVisibleNavigationFocus();
-            }
+            RefreshVisibleFocusOnScroll();
         }
 
-        private void OnScrollStopped(ScrollStopReason reason)
+        // HandleScrollSettled 里的 FlushDeferredWork 可能产生绑定而不伴随滚动值变化。
+        private void OnScrollStopped(ScrollStopReason _)
         {
-            if (hasFocus)
-            {
-                RefreshVisibleNavigationFocus();
-            }
+            RefreshVisibleFocusOnScroll();
         }
 
-        private bool IsValidDataIndex(int dataIndex)
+        private void RefreshVisibleFocusOnScroll()
         {
-            return dataIndex >= 0 && dataIndex < GetNavigationCount();
-        }
-
-        private bool IsDataIndexFocusable(int dataIndex)
-        {
-            IAdapter adapter = recyclerView != null ? recyclerView.RecyclerViewAdapter : null;
-            return adapter != null && IsDataIndexFocusable(dataIndex, GetNavigationCount(), adapter);
-        }
-
-        private bool IsDataIndexFocusable(int dataIndex, int count)
-        {
-            IAdapter adapter = recyclerView != null ? recyclerView.RecyclerViewAdapter : null;
-            return adapter != null && IsDataIndexFocusable(dataIndex, count, adapter);
-        }
-
-        private bool IsDataIndexFocusable(int dataIndex, int count, IAdapter adapter)
-        {
-            if (adapter == null || dataIndex < 0 || dataIndex >= count)
+            int index = VisibleFocusIndex;
+            if (index >= 0)
             {
-                return false;
+                NotifyVisibleHolders(index);
             }
-
-            int templateId = adapter.GetTemplateId(dataIndex);
-            ViewHolder template = recyclerView.ViewProvider.GetTemplate(templateId);
-            if (template is not IRecyclerViewNavigationViewHolder)
-            {
-                return false;
-            }
-
-            IRecyclerViewNavigationViewHolder navigationHolder = GetNavigationHolderForDataIndex(dataIndex);
-            if (navigationHolder == null)
-            {
-                navigationHolder = (IRecyclerViewNavigationViewHolder)template;
-            }
-
-            return navigationHolder.IsNavigationFocusable(dataIndex);
-        }
-
-        private IRecyclerViewNavigationViewHolder GetNavigationHolderForDataIndex(int dataIndex)
-        {
-            if (recyclerView == null || recyclerView.RecyclerViewAdapter == null || dataIndex < 0)
-            {
-                return null;
-            }
-
-            if (recyclerView.LayoutManager != null)
-            {
-                int layoutIndex = recyclerView.LayoutManager.GetLayoutIndex(dataIndex);
-                ViewHolder holder = recyclerView.ViewProvider.GetViewHolder(layoutIndex);
-                if (holder != null &&
-                    holder.DataIndex == dataIndex &&
-                    holder is IRecyclerViewNavigationViewHolder navigationHolder)
-                {
-                    return navigationHolder;
-                }
-            }
-
-            int visibleCount = recyclerView.ViewProvider.VisibleCount;
-            for (int i = 0; i < visibleCount; i++)
-            {
-                ViewHolder holder = recyclerView.ViewProvider.GetVisibleViewHolder(i);
-                if (holder != null &&
-                    holder.DataIndex == dataIndex &&
-                    holder is IRecyclerViewNavigationViewHolder navigationHolder)
-                {
-                    return navigationHolder;
-                }
-            }
-
-            return null;
-        }
-
-        private int GetNavigationCount()
-        {
-            IAdapter adapter = recyclerView != null ? recyclerView.RecyclerViewAdapter : null;
-            if (adapter == null)
-            {
-                return 0;
-            }
-
-            int realCount = adapter.GetRealCount();
-            if (realCount > 0)
-            {
-                return realCount;
-            }
-
-            int itemCount = adapter.GetItemCount();
-            return itemCount > 0 ? itemCount : 0;
-        }
-
-        /// <summary>
-        /// 环绕语义的唯一来源：显式开关，或者"没有真实边界"的布局（虚拟地址空间的循环列表、环形布局）。
-        /// 线性/网格/环形三种策略都从这里取值，不再各自硬编码。
-        /// </summary>
-        private bool ShouldWrapNavigation()
-        {
-            if (wrapNavigation)
-            {
-                return true;
-            }
-
-            if (recyclerView.LayoutManager is CircleLayoutManager)
-            {
-                return true;
-            }
-
-            IAdapter adapter = recyclerView.RecyclerViewAdapter;
-            if (adapter == null)
-            {
-                return false;
-            }
-
-            int realCount = adapter.GetRealCount();
-            return realCount > 0 && adapter.GetItemCount() != realCount;
-        }
-
-        private bool TrySelectExit(MoveDirection direction)
-        {
-            Selectable selectable = direction switch
-            {
-                MoveDirection.Left => exitLeft,
-                MoveDirection.Right => exitRight,
-                MoveDirection.Up => exitUp,
-                MoveDirection.Down => exitDown,
-                _ => null
-            };
-
-            if (selectable == null || !selectable.IsActive() || !selectable.IsInteractable())
-            {
-                return false;
-            }
-
-            EventSystem eventSystem = EventSystem.current;
-            if (eventSystem == null)
-            {
-                return false;
-            }
-
-            eventSystem.SetSelectedGameObject(selectable.gameObject);
-            return true;
         }
 
         private void SelectSelf()
         {
-            if (!IsActive() || !IsInteractable())
+            // 控制器被禁用或不可交互时，子项点击仍可能转到这里。
+            if (IsActive() && IsInteractable())
             {
-                return;
-            }
-
-            EventSystem eventSystem = EventSystem.current;
-            if (eventSystem != null)
-            {
-                eventSystem.SetSelectedGameObject(gameObject);
+                Select();
             }
         }
+
+        #endregion
 
         private enum MoveResult
         {
             Moved,
             Blocked,
             Boundary
-        }
-
-        private struct NavigationFocusSnapshot
-        {
-            public int DataIndex;
-            public uint BindingVersion;
-            public bool Focused;
         }
     }
 }
