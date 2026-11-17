@@ -96,10 +96,10 @@ namespace AlicizaX.UI.Editor
         private VisualElement _contentControl;
         private AlicizaEnumField _scrollModeField;
         private AlicizaEnumField _scrollbarVisibilityField;
-        private Label _layoutBadge;
-        private Label _scrollerBadge;
-        private Label _templateBadge;
-        private Label _runtimeBadge;
+        private AlicizaBadge _layoutBadge;
+        private AlicizaBadge _scrollerBadge;
+        private AlicizaBadge _templateBadge;
+        private AlicizaBadge _runtimeBadge;
         private SerializedObject _scrollerSerializedObject;
         private string _repairSignature;
         private bool _hasEditModeState;
@@ -1841,7 +1841,7 @@ namespace AlicizaX.UI.Editor
             row.style.paddingLeft = 2f;
             row.style.paddingRight = 2f;
 
-            Label marker = AlicizaEditorUI.CreateBadge(
+            AlicizaBadge marker = AlicizaEditorUI.CreateBadge(
                 tone == AlicizaValueTone.Danger || tone == AlicizaValueTone.Warning ? "!" : "i",
                 tone);
             marker.style.marginLeft = 0f;
@@ -1869,7 +1869,7 @@ namespace AlicizaX.UI.Editor
         }
 
         private static void SetBadge(
-            Label badge,
+            AlicizaBadge badge,
             string text,
             AlicizaValueTone tone,
             string tooltip)
