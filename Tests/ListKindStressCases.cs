@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.EventSystems;
 
 namespace AlicizaX.UI.NavigationTests
 {
@@ -22,6 +24,9 @@ namespace AlicizaX.UI.NavigationTests
         private RecyclerViewFixture fixture;
         private Scroller scroller;
 
+        private static readonly MethodInfo TickMotion =
+            typeof(Scroller).GetMethod("TickMotion", BindingFlags.Instance | BindingFlags.NonPublic);
+
         [TearDown]
         public void TearDown()
         {
@@ -41,11 +46,73 @@ namespace AlicizaX.UI.NavigationTests
             return fixture;
         }
 
-        private Scroller AttachScroller(RecyclerViewFixture target)
+        private void AttachScroller<T>(RecyclerViewFixture target) where T : Scroller
         {
-            scroller = target.AddScroller();
+            scroller = target.AddScroller<T>();
             RecyclerViewFixture.CallPrivate(target.View, "ConfigureScroller");
-            return scroller;
+        }
+
+        /// <summary>真实布局 + 滚动器上的导航列表；关掉平滑滚动，让焦点滚动在调用内完成。</summary>
+        private RecyclerViewNavigationController CreateNavigationList<TScroller>(
+            LayoutManager layoutManager, Func<RecyclerView, Adapter<NavigationData>> createAdapter, int count)
+            where TScroller : Scroller
+        {
+            fixture = new RecyclerViewFixture(new Vector2(ViewportWidth, ViewportHeight), layoutManager);
+            fixture.CreateTemplate<NavigationItem>(new Vector2(80f, 80f));
+            AttachScroller<TScroller>(fixture);
+            var data = new List<NavigationData>(count);
+            for (int i = 0; i < count; i++)
+            {
+                data.Add(new NavigationData());
+            }
+
+            fixture.Bind(createAdapter(fixture.View)).SetList(data);
+            var navigation = fixture.Root.AddComponent<RecyclerViewNavigationController>();
+            RecyclerViewFixture.SetField(navigation, "smoothScroll", false);
+            return navigation;
+        }
+
+        /// <summary>
+        /// 执行一次滚动输入或一帧运动，返回可见位移（按 period 取最短方向）。
+        /// period 是内容的重复周期：Loop 一圈数据的长度、环形的 360°；重锚或换副本不算位移。
+        /// </summary>
+        private float VisibleStep(Action move, float period)
+        {
+            float before = scroller.Position;
+            move();
+            return Mathf.Repeat(scroller.Position - before + period * 0.5f, period) - period * 0.5f;
+        }
+
+        /// <summary>按 60fps 推进到静止，返回累计可见位移；任一帧被拉回或跳变都会超出 maxStep。</summary>
+        private float TickUntilIdle(float period, float maxStep, string context)
+        {
+            float total = 0f;
+            for (int frame = 0; scroller.IsMoving; frame++)
+            {
+                Assert.That(frame, Is.LessThan(600), $"{context}: 运动没有结束。");
+                float step = VisibleStep(() => TickMotion.Invoke(scroller, new object[] { 1f / 60f }), period);
+                Assert.That(Mathf.Abs(step), Is.LessThanOrEqualTo(maxStep), $"{context} 帧#{frame}: 可见位移 {step}。");
+                total += step;
+            }
+
+            return total;
+        }
+
+        /// <summary>快速向下滚轮 notches 格：每次输入与之后每帧都不超过一格，累计可见位移正好是 notches 格。</summary>
+        private void WheelDownContinuously(int notches, float period, string context)
+        {
+            float notch = scroller.WheelSpeed;
+            var wheel = new PointerEventData(null) { scrollDelta = new Vector2(0f, -1f) };
+            float total = 0f;
+            for (int i = 0; i < notches; i++)
+            {
+                float step = VisibleStep(() => scroller.OnScroll(wheel), period);
+                Assert.That(Mathf.Abs(step), Is.LessThanOrEqualTo(notch + 0.5f), $"{context} 滚轮#{i}: 可见位移 {step}。");
+                total += step;
+            }
+
+            total += TickUntilIdle(period, notch + 0.5f, context);
+            Assert.That(total, Is.EqualTo(notches * notch).Within(0.5f), $"{context}: 累计可见位移必须等于滚轮距离。");
         }
 
         private static List<ScrollProbeData> BuildData(int count, float length)
@@ -96,7 +163,7 @@ namespace AlicizaX.UI.NavigationTests
             const float spacing = 10f;
             var layoutManager = new LinearLayoutManager();
             RecyclerViewFixture target = CreateFixture(layoutManager, new Vector2(ViewportWidth - PaddingX * 2f, itemHeight));
-            AttachScroller(target);
+            AttachScroller<Scroller>(target);
             RecyclerView view = target.View;
             view.Padding = new Vector2(PaddingX, PaddingY);
             view.Spacing = new Vector2(12f, spacing);
@@ -149,7 +216,7 @@ namespace AlicizaX.UI.NavigationTests
             RecyclerViewFixture.SetField(layoutManager, "cellCount", 2);
             RecyclerViewFixture target = CreateFixture(layoutManager,
                 new Vector2((ViewportWidth - PaddingX * 2f - 90f) * 0.5f, cellHeight));
-            AttachScroller(target);
+            AttachScroller<Scroller>(target);
             RecyclerView view = target.View;
             view.Padding = new Vector2(PaddingX, PaddingY);
             view.Spacing = new Vector2(90f, spacing);
@@ -198,7 +265,7 @@ namespace AlicizaX.UI.NavigationTests
             const float spacing = 10f;
             var layoutManager = new LinearLayoutManager();
             RecyclerViewFixture target = CreateFixture(layoutManager, new Vector2(ViewportWidth - PaddingX * 2f, itemHeight));
-            AttachScroller(target);
+            AttachScroller<Scroller>(target);
             RecyclerView view = target.View;
             view.Padding = new Vector2(PaddingX, PaddingY);
             view.Spacing = new Vector2(12f, spacing);
@@ -242,6 +309,93 @@ namespace AlicizaX.UI.NavigationTests
             }
         }
 
+        [TestCase(ListScrollPolicy.KeepAnchor)]
+        [TestCase(ListScrollPolicy.ResetScroll)]
+        public void LoopSetListAnchorsAwayFromTheVirtualEdge(ListScrollPolicy policy)
+        {
+            var layoutManager = new LinearLayoutManager();
+            RecyclerViewFixture target = CreateFixture(layoutManager, new Vector2(ViewportWidth, 80f));
+            AttachScroller<Scroller>(target);
+            var adapter = fixture.Bind(new LoopAdapter<ScrollProbeData>(target.View));
+
+            adapter.SetList(BuildData(12, 0f), policy);
+
+            int layoutIndex = layoutManager.PositionToIndex(scroller.Position);
+            Assert.That(LoopVirtualRange.ShouldReanchor(layoutIndex, 12, adapter.GetItemCount()), Is.False,
+                "设置数据后位置仍在虚拟区间首圈，向前环绕会找不到副本。");
+            Assert.That(layoutManager.GetDataIndex(layoutIndex), Is.Zero, "锚定不能改变视口首项。");
+        }
+
+        [Test]
+        public void LoopWheelScrollAcrossTheReanchorKeepsMovingForward()
+        {
+            const float itemHeight = 80f;
+            const int realCount = 12;
+            var layoutManager = new LinearLayoutManager();
+            RecyclerViewFixture target = CreateFixture(layoutManager, new Vector2(ViewportWidth, itemHeight));
+            AttachScroller<Scroller>(target);
+            target.View.Padding = Vector2.zero;
+            target.View.Spacing = Vector2.zero;
+            var adapter = fixture.Bind(new LoopAdapter<ScrollProbeData>(target.View));
+            adapter.SetList(BuildData(realCount, 0f));
+
+            // 视口顶停在末圈之前一项：几格滚轮就会越过末圈边界，触发重锚。
+            scroller.ScrollTo(layoutManager.GetItemStartPosition(adapter.GetItemCount() - realCount - 1));
+
+            WheelDownContinuously(6, realCount * itemHeight, "Loop");
+        }
+
+        [Test]
+        public void LoopFocusHeldDownScrollsForwardWithoutPullBack()
+        {
+            // 与示例窗口 ScrollView@Loop 同几何：视口 682、项高 70、间距 10、内边距 8，一圈 12 项（960）。
+            const int realCount = 12;
+            const float period = realCount * 80f;
+            fixture = new RecyclerViewFixture(new Vector2(ViewportWidth, 682f), new LinearLayoutManager());
+            fixture.CreateTemplate<NavigationItem>(new Vector2(ViewportWidth, 70f));
+            AttachScroller<Scroller>(fixture);
+            fixture.View.Padding = new Vector2(0f, 8f);
+            fixture.View.Spacing = new Vector2(0f, 10f);
+            var data = new List<NavigationData>(realCount);
+            for (int i = 0; i < realCount; i++)
+            {
+                data.Add(new NavigationData());
+            }
+
+            fixture.Bind(new LoopAdapter<NavigationData>(fixture.View)).SetList(data);
+            var navigation = fixture.Root.AddComponent<RecyclerViewNavigationController>();
+            navigation.SetFocus(0);
+            TickUntilIdle(period, period, "Loop 初始焦点");
+
+            // 按住下键：输入模块每 0.1s 重复一次 Move，每次都打断上一段 0.18s 的平滑滚动，视口落后焦点约两项。
+            // 从虚拟区间中段走 150 项，途中越过末圈重锚。
+            var down = new AxisEventData(null) { moveDir = MoveDirection.Down };
+            for (int press = 0; press < 150; press++)
+            {
+                Assert.That(navigation.HandleMove(down), Is.True);
+                for (int frame = 0; frame < 6; frame++)
+                {
+                    float step = VisibleStep(() => TickMotion.Invoke(scroller, new object[] { 1f / 60f }), period);
+                    Assert.That(step, Is.GreaterThanOrEqualTo(-0.01f), $"第 {press} 次重复后被拉回：可见位移 {step}。");
+                }
+            }
+        }
+
+        [Test]
+        public void LoopNavigationWrapsToTheCopyAboveTheFirstItem()
+        {
+            RecyclerViewNavigationController navigation = CreateNavigationList<Scroller>(
+                new LinearLayoutManager(), view => new LoopAdapter<NavigationData>(view), 12);
+            navigation.SetFocus(0, scroll: false);
+            float firstItemPosition = scroller.Position;
+
+            Assert.That(navigation.HandleMove(new AxisEventData(null) { moveDir = MoveDirection.Up }), Is.True);
+
+            Assert.That(navigation.FocusedDataIndex, Is.EqualTo(11));
+            Assert.That(fixture.View.TryGetViewHolder(11, out _), Is.True, "环绕到末项后，末项必须滚入视口。");
+            Assert.That(scroller.Position, Is.LessThan(firstItemPosition), "应滚到首项上方相邻的副本。");
+        }
+
         // -----------------------------------------------------------------------------------------
         // Page：横向翻页（窗口 A=下一项，B=上一项，C=回第 0 条）
         // -----------------------------------------------------------------------------------------
@@ -252,7 +406,7 @@ namespace AlicizaX.UI.NavigationTests
             const float pageWidth = 300f;
             var layoutManager = new PageLayoutManager();
             RecyclerViewFixture target = CreateFixture(layoutManager, new Vector2(pageWidth, ViewportHeight - PaddingY * 2f));
-            AttachScroller(target);
+            AttachScroller<Scroller>(target);
             RecyclerView view = target.View;
             view.Direction = Direction.Horizontal;
             view.Padding = Vector2.zero;
@@ -297,7 +451,7 @@ namespace AlicizaX.UI.NavigationTests
         {
             var layoutManager = new CircleLayoutManager();
             RecyclerViewFixture target = CreateFixture(layoutManager, new Vector2(120f, 120f));
-            AttachScroller(target);
+            AttachScroller<Scroller>(target);
             RecyclerView view = target.View;
             view.Padding = new Vector2(8f, 8f);
             view.Spacing = Vector2.zero;
@@ -344,6 +498,62 @@ namespace AlicizaX.UI.NavigationTests
                 Assert.That(float.IsNaN(position.x) || float.IsNaN(position.y), Is.False, "Circle: 位置出现 NaN。");
                 Assert.That(float.IsInfinity(position.x) || float.IsInfinity(position.y), Is.False, "Circle: 位置出现 Infinity。");
             }
+        }
+
+        [Test]
+        public void CircleWheelScrollAcrossTheSeamKeepsRotatingForward()
+        {
+            RecyclerViewFixture target = CreateFixture(new CircleLayoutManager(), new Vector2(80f, 80f));
+            AttachScroller<CircleScroller>(target);
+            fixture.Bind(new Adapter<ScrollProbeData>(target.View)).SetList(BuildData(10, 0f));
+            scroller.ScrollTo(350f);
+
+            WheelDownContinuously(3, 360f, "Circle");
+        }
+
+        [Test]
+        public void CircleFocusScrollRotatesTheShortWay()
+        {
+            var layoutManager = new CircleLayoutManager();
+            RecyclerViewNavigationController navigation = CreateNavigationList<CircleScroller>(
+                layoutManager, view => new Adapter<NavigationData>(view), 10);
+            RecyclerViewFixture.SetField(navigation, "smoothScroll", true);
+            navigation.SetFocus(0, scroll: false);
+
+            Assert.That(navigation.HandleMove(new AxisEventData(null) { moveDir = MoveDirection.Down }), Is.True);
+
+            // 相邻一项只转一个间隔（36°）；绕远路会反向转 324°。
+            float rotated = TickUntilIdle(360f, 360f, "Circle focus");
+            Assert.That(Mathf.Abs(rotated), Is.EqualTo(36f).Within(0.5f));
+        }
+
+        [Test]
+        public void CircleNavigationRotatesTheFocusedItemToItsIndexPosition()
+        {
+            var layoutManager = new CircleLayoutManager();
+            RecyclerViewNavigationController navigation = CreateNavigationList<CircleScroller>(
+                layoutManager, view => new Adapter<NavigationData>(view), 10);
+
+            navigation.SetFocus(3);
+
+            Assert.That(scroller.Position, Is.EqualTo(scroller.ClampPosition(layoutManager.IndexToPosition(3))).Within(0.01f),
+                "环形布局的焦点滚动必须把目标转到索引位，与视口对齐方式无关。");
+        }
+
+        [TestCase(ScrollAlignment.Start)]
+        [TestCase(ScrollAlignment.Center)]
+        [TestCase(ScrollAlignment.End)]
+        public void CircleAlignedScrollRotatesTheTargetToItsIndexPosition(ScrollAlignment alignment)
+        {
+            var layoutManager = new CircleLayoutManager();
+            RecyclerViewFixture target = CreateFixture(layoutManager, new Vector2(80f, 80f));
+            AttachScroller<CircleScroller>(target);
+            fixture.Bind(new Adapter<ScrollProbeData>(target.View)).SetList(BuildData(10, 0f));
+
+            target.View.ScrollToAligned(3, alignment);
+
+            Assert.That(scroller.Position, Is.EqualTo(scroller.ClampPosition(layoutManager.IndexToPosition(3))).Within(0.01f),
+                "环形布局没有视口对齐，任何对齐方式都应把目标转到索引位。");
         }
     }
 }

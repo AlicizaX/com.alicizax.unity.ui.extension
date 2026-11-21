@@ -49,9 +49,9 @@ namespace AlicizaX.UI.NavigationTests
             return template;
         }
 
-        public Scroller AddScroller()
+        public T AddScroller<T>() where T : Scroller
         {
-            Scroller scroller = root.AddComponent<Scroller>();
+            T scroller = root.AddComponent<T>();
             SetField(View, "scroller", scroller);
             return scroller;
         }

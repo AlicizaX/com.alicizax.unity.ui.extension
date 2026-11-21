@@ -435,6 +435,18 @@ namespace AlicizaX.UI
             wheelTargetPosition = position;
         }
 
+        /// <summary>
+        /// 平移滚动坐标系：位置连同进行中运动的起点与目标一起平移，运动不中断，也不发 OnValueChanged。
+        /// 用于 Loop 重锚这类换到等价坐标的场景；只改位置会让运动继续追旧坐标里的目标，把列表拉回。
+        /// </summary>
+        internal void ShiftPosition(float delta)
+        {
+            position += delta;
+            motionStartPosition += delta;
+            motionTargetPosition += delta;
+            wheelTargetPosition += delta;
+        }
+
         internal void ResetMotion(float position)
         {
             bool wasMoving = motionState != MotionState.Idle;

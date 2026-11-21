@@ -38,15 +38,13 @@ namespace AlicizaX.UI
             return false;
         }
 
+        /// <summary>
+        /// 环形位置是连续角度，没有边界；周期由布局处理（三角函数、数据索引取模）。
+        /// 折回 [0, 360) 会让滚轮目标与插值在 0°/360° 接缝处绕远路反转。
+        /// </summary>
         public override float ClampPosition(float value)
         {
-            if (float.IsNaN(value) || float.IsInfinity(value))
-            {
-                return 0f;
-            }
-
-            value %= 360f;
-            return value < 0f ? value + 360f : value;
+            return value;
         }
 
         protected override float GetOverscroll(float pos)

@@ -894,18 +894,15 @@ namespace AlicizaX.UI
                 scroller.Direction = direction;
                 scroller.ViewSize = layoutManager.ViewportSize;
                 scroller.ContentSize = layoutManager.ContentSize;
-                ClampScrollPositionIfNeeded();
+                // 内容尺寸变化后夹回合法区间；Loop 再锚回中段：SetList / Reset 会把位置留在虚拟区间首圈，且不经过滚动回调。
+                scroller.Position = ClampScrollTarget(scroller.Position);
+                scroller.ShiftPosition(GetLoopReanchorShift(scroller.Position));
             }
 
             viewProvider.PreparePool();
             UpdateScrollerState();
             UpdateScrollbarVisibility();
             UpdateScrollbarValue(scroller != null ? scroller.Position : 0f);
-        }
-
-        private void ClampScrollPositionIfNeeded()
-        {
-            scroller.Position = ClampScrollTarget(scroller.Position);
         }
 
         /// <summary>
@@ -1048,12 +1045,12 @@ namespace AlicizaX.UI
         /// <param name="smooth">是否使用平滑滚动。</param>
         public void ScrollToIndex(int index, bool smooth = false)
         {
-            if (!TryResolveScrollTarget(index, out int layoutIndex, out int dataIndex))
+            if (!TryResolveScrollTarget(index, ScrollAlignment.Start, out float targetPosition, out int dataIndex))
             {
                 return;
             }
 
-            scroller.ScrollTo(layoutManager.IndexToPosition(layoutIndex), smooth);
+            scroller.ScrollTo(targetPosition, smooth);
 
             if (!smooth)
             {
@@ -1115,14 +1112,12 @@ namespace AlicizaX.UI
         /// <param name="duration">平滑滚动时长，单位为秒。</param>
         public void ScrollToAligned(int index, ScrollAlignment alignment, float offset = 0f, bool smooth = false, float duration = 0.3f)
         {
-            if (!TryResolveScrollTarget(index, out int layoutIndex, out int dataIndex))
+            if (!TryResolveScrollTarget(index, alignment, out float targetPosition, out int dataIndex))
             {
                 return;
             }
 
-            float targetPosition = CalculateScrollPositionWithAlignment(layoutIndex, alignment, offset);
-
-
+            targetPosition = scroller.ClampPosition(targetPosition + offset);
             if (duration > 0 && smooth)
             {
                 scroller.ScrollToDuration(targetPosition, duration);
@@ -1141,38 +1136,11 @@ namespace AlicizaX.UI
         }
 
         /// <summary>
-        /// 计算指定索引在目标对齐方式下应滚动到的位置。
+        /// 解析滚动目标：数据索引 → 布局副本 → 按 alignment 对齐的滚动位置（未夹取）。Loop 允许直接传虚拟布局索引（≥ realCount）。
         /// </summary>
-        /// <param name="layoutIndex">目标布局索引。</param>
-        /// <param name="alignment">目标项滚动完成后的对齐方式。</param>
-        /// <param name="offset">在对齐基础上的额外偏移量。</param>
-        /// <returns>计算得到的滚动位置，结果会被限制在合法范围内。</returns>
-        private float CalculateScrollPositionWithAlignment(int layoutIndex, ScrollAlignment alignment, float offset)
+        private bool TryResolveScrollTarget(int index, ScrollAlignment alignment, out float targetPosition, out int dataIndex)
         {
-            float itemSize = layoutManager.GetItemLength(layoutIndex);
-            float viewportLength = direction == Direction.Vertical ? layoutManager.ViewportSize.y : layoutManager.ViewportSize.x;
-
-            // 计算目标项的原始位置，不在此阶段做范围限制。
-            float itemPosition = layoutManager.GetItemStartPosition(layoutIndex);
-
-            float targetPosition = alignment switch
-            {
-                ScrollAlignment.Start => itemPosition,
-                ScrollAlignment.Center => itemPosition - (viewportLength - itemSize) / 2f,
-                ScrollAlignment.End => itemPosition - viewportLength + itemSize,
-                _ => itemPosition
-            };
-
-            // 叠加调用方传入的额外偏移量。
-            targetPosition += offset;
-
-            // 将结果限制在可滚动范围内。
-            return scroller.ClampPosition(targetPosition);
-        }
-
-        private bool TryResolveScrollTarget(int index, out int layoutIndex, out int dataIndex)
-        {
-            layoutIndex = 0;
+            targetPosition = 0f;
             dataIndex = -1;
 
             if (!isValid || scroll == ScrollMode.AlwaysDisable || scroller == null || layoutManager == null || RecyclerViewAdapter == null)
@@ -1193,13 +1161,23 @@ namespace AlicizaX.UI
                 return false;
             }
 
-            layoutIndex = isLoop && index >= realCount ? index : layoutManager.GetLayoutIndex(index);
+            int layoutIndex = index;
+            if (!isLoop || index < realCount)
+            {
+                // 数据有多个副本（Loop、环形）时取滚动距离最短的副本：参照对齐锚点（视口起点 + 对齐偏移），而不是视口起点。
+                // 以视口起点为参照时，居中/尾对齐的目标一旦离起点超过半圈就会选到上一圈的副本，反向滚一整圈。
+                int copy = layoutManager.GetLayoutIndex(index, scroller.Position);
+                float alignmentOffset = layoutManager.GetItemStartPosition(copy) - layoutManager.GetAlignedPosition(copy, alignment);
+                layoutIndex = layoutManager.GetLayoutIndex(index, scroller.Position + alignmentOffset);
+            }
+
             if (!layoutManager.UsesVirtualLayoutRange && (layoutIndex < 0 || layoutIndex >= itemCount))
             {
                 return false;
             }
 
             dataIndex = layoutManager.GetDataIndex(layoutIndex);
+            targetPosition = layoutManager.GetAlignedPosition(layoutIndex, alignment);
             return isLoop || (dataIndex >= 0 && dataIndex < itemCount);
         }
 
@@ -1218,7 +1196,13 @@ namespace AlicizaX.UI
                 return;
             }
 
-            TryReanchorLoopWindow(ref position);
+            float shift = GetLoopReanchorShift(position);
+            if (shift != 0f)
+            {
+                scroller.ShiftPosition(shift);
+                position += shift;
+                PublishVisibleLayout();
+            }
 
             bool fullRefreshed = UpdateVisibleRange();
             layoutManager.UpdateLayout();
@@ -1232,44 +1216,23 @@ namespace AlicizaX.UI
         }
 
         /// <summary>
-        /// Loop 列表滚到虚拟地址空间边缘时，静默跳到中段等价位置，保持 data 连续。
+        /// Loop 列表位于虚拟地址空间首尾一圈时，返回平移到中段同一数据项所需的坐标偏移（整圈的倍数），否则为 0。
+        /// 停在首尾圈时，最近的数据副本可能落在虚拟区间之外，向该方向的滚动与环绕都会失效。
+        /// 非 Loop 适配器的 realCount 等于 itemCount，<see cref="LoopVirtualRange.ShouldReanchor"/> 恒为 false。
         /// 调用点已经用 <see cref="IsReady"/> 保证引用非空，这里不再重复判空。
         /// </summary>
-        private bool TryReanchorLoopWindow(ref float position)
+        private float GetLoopReanchorShift(float position)
         {
-            if (!IsLoopingAdapter())
-            {
-                return false;
-            }
-
             int realCount = RecyclerViewAdapter.GetRealCount();
             int virtualCount = RecyclerViewAdapter.GetItemCount();
             int layoutIndex = layoutManager.PositionToIndex(position);
             if (!LoopVirtualRange.ShouldReanchor(layoutIndex, realCount, virtualCount))
             {
-                return false;
+                return 0f;
             }
 
-            int dataIndex = layoutManager.GetDataIndex(layoutIndex);
-            int targetLayoutIndex = LoopVirtualRange.GetMiddleAnchorLayoutIndex(dataIndex, realCount, virtualCount);
-            if (targetLayoutIndex == layoutIndex)
-            {
-                return false;
-            }
-
-            float itemStart = layoutManager.GetItemStartPosition(layoutIndex);
-            float offsetInItem = position - itemStart;
-            float targetStart = layoutManager.GetItemStartPosition(targetLayoutIndex);
-            float targetPosition = scroller.ClampPosition(targetStart + offsetInItem);
-            if (Mathf.Approximately(targetPosition, position))
-            {
-                return false;
-            }
-
-            scroller.Position = targetPosition;
-            position = targetPosition;
-            PublishVisibleLayout();
-            return true;
+            int targetLayoutIndex = LoopVirtualRange.GetMiddleAnchorLayoutIndex(layoutManager.GetDataIndex(layoutIndex), realCount, virtualCount);
+            return layoutManager.GetItemStartPosition(targetLayoutIndex) - layoutManager.GetItemStartPosition(layoutIndex);
         }
 
         /// <summary>
@@ -2312,7 +2275,7 @@ namespace AlicizaX.UI
             }
             else
             {
-                int layoutIndex = layoutManager.GetLayoutIndex(anchor.DataIndex);
+                int layoutIndex = layoutManager.GetLayoutIndex(anchor.DataIndex, scroller.Position);
                 target = ClampScrollTarget(layoutManager.GetItemStartPosition(layoutIndex) + anchor.ItemOffset);
             }
 

@@ -96,6 +96,8 @@ namespace AlicizaX.UI
         {
         }
 
+        public override bool UsesVirtualItemCount => true;
+
         public override int GetItemCount()
         {
             int realCount = GetRealCount();

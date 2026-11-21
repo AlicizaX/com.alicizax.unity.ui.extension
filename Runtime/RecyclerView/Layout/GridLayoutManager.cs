@@ -1,4 +1,6 @@
+using System;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.Serialization;
 
 namespace AlicizaX.UI
@@ -16,6 +18,8 @@ namespace AlicizaX.UI
         }
 
         public override int Unit => Mathf.Max(1, cellCount);
+
+        public override bool SupportsVirtualItemCount => true;
 
         public override Vector2 CalculateContentSize()
         {
@@ -142,6 +146,56 @@ namespace AlicizaX.UI
         public override float GetItemLength(int index)
         {
             return Mathf.Max(AxisCellLength, 0f);
+        }
+
+        /// <summary>
+        /// 行内移动 ±1、跨行移动 ±Unit。越出行/列是边界；wrap 时跳到同一行/列的另一端，落点不可聚焦仍算边界。
+        /// </summary>
+        public override NavigationMoveResult FindNavigationTarget(
+            int dataIndex, MoveDirection moveDirection, int count, bool wrap, Predicate<int> isFocusable, out int target)
+        {
+            target = -1;
+
+            // 行内/跨行由“移动方向 + 布局方向”决定；不能用 |delta| 判断（Unit == 1 时会把上/下误判成行内移动）。
+            bool stepInsideLine = (moveDirection is MoveDirection.Left or MoveDirection.Right) == (direction == Direction.Vertical);
+            int delta = stepInsideLine ? ForwardSign(moveDirection) : ForwardSign(moveDirection) * Unit;
+
+            int startMajor = dataIndex / Unit;
+            int startMinor = dataIndex % Unit;
+            int candidate = dataIndex + delta;
+            while (candidate >= 0 && candidate < count)
+            {
+                bool leftLine = stepInsideLine ? candidate / Unit != startMajor : candidate % Unit != startMinor;
+                if (leftLine)
+                {
+                    if (!wrap)
+                    {
+                        return NavigationMoveResult.Boundary;
+                    }
+
+                    // 环绕：跨行时跳一整行，行内移动时跳一整列，回到同一行/列的对应位置。
+                    candidate = stepInsideLine
+                        ? candidate + (candidate < dataIndex ? count : -count)
+                        : candidate + delta * (count - 1);
+                    if (candidate < 0 || candidate >= count || !isFocusable(candidate))
+                    {
+                        return NavigationMoveResult.Boundary;
+                    }
+
+                    target = candidate;
+                    return NavigationMoveResult.Moved;
+                }
+
+                if (isFocusable(candidate))
+                {
+                    target = candidate;
+                    return NavigationMoveResult.Moved;
+                }
+
+                candidate += delta;
+            }
+
+            return NavigationMoveResult.Boundary;
         }
 
         public override int GetSnapIndex(float position)

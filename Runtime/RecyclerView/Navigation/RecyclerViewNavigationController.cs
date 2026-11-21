@@ -30,6 +30,7 @@ namespace AlicizaX.UI
         private bool isSelected;                         // 是否为 EventSystem 当前选中对象（基类 hasSelection 为 private）
         private bool cursorMode;                         // 光标模式：手柄，或键鼠类型下的键盘导航
         private Predicate<int> focusFilter;
+        private Predicate<int> isDataIndexFocusable;     // 缓存方法组委托，方向导航每次按键不分配
 
         /// <summary>
         /// 当前导航焦点所在的数据索引；没有焦点时为 -1。离开列表、被压制时保留。
@@ -55,6 +56,8 @@ namespace AlicizaX.UI
             {
                 recyclerView = GetComponent<RecyclerView>();
             }
+
+            isDataIndexFocusable = IsDataIndexFocusable;
         }
 
         protected override void OnEnable()
@@ -201,9 +204,10 @@ namespace AlicizaX.UI
                 return true;
             }
 
-            switch (CalculateMove(eventData.moveDir, count, out int next))
+            bool wrap = wrapNavigation || recyclerView.IsLoopingAdapter();
+            switch (recyclerView.LayoutManager.FindNavigationTarget(focusedDataIndex, eventData.moveDir, count, wrap, isDataIndexFocusable, out int next))
             {
-                case MoveResult.Moved:
+                case NavigationMoveResult.Moved:
                     ApplyFocus(next, true);
                     // 列表内移动没有 EventSystem 选中切换，焦点提示在这里补发（列表根挂了 InputFeedbackObserver 时）。
                     if (TryGetComponent(out InputFeedbackObserver feedback))
@@ -212,7 +216,7 @@ namespace AlicizaX.UI
                     }
 
                     return true;
-                case MoveResult.Boundary:
+                case NavigationMoveResult.Boundary:
                     return false;                          // 放行给 base.OnMove 按 navigation 离开列表
                 default:
                     return true;
@@ -369,14 +373,7 @@ namespace AlicizaX.UI
             focusedDataIndex = dataIndex;
             if (scroll)
             {
-                if (focusAlignment == ScrollAlignment.Start)
-                {
-                    recyclerView.ScrollToIndex(dataIndex, smoothScroll);
-                }
-                else
-                {
-                    recyclerView.ScrollToAligned(dataIndex, focusAlignment, 0f, smoothScroll, smoothScrollDuration);
-                }
+                recyclerView.ScrollToAligned(dataIndex, focusAlignment, 0f, smoothScroll, smoothScrollDuration);
             }
 
             RefreshVisibleNavigationFocus();
@@ -449,108 +446,6 @@ namespace AlicizaX.UI
 
             int realCount = adapter.GetRealCount();
             return realCount > 0 ? realCount : adapter.GetItemCount();
-        }
-
-        #endregion
-
-        #region 移动算法
-
-        private MoveResult CalculateMove(MoveDirection direction, int count, out int next)
-        {
-            LayoutManager layoutManager = recyclerView.LayoutManager;
-            bool circle = layoutManager is CircleLayoutManager;
-            bool wrap = wrapNavigation || circle || recyclerView.IsLoopingAdapter();
-            if (layoutManager is GridLayoutManager)
-            {
-                return CalculateGridMove(direction, count, layoutManager.Unit, wrap, out next);
-            }
-
-            // 环形布局两个轴都映射到 ±1；线性布局只响应主轴，垂直于主轴的方向交给 navigation。
-            bool alongAxis = circle ||
-                             (direction is MoveDirection.Up or MoveDirection.Down) == (recyclerView.Direction == Direction.Vertical);
-            if (!alongAxis)
-            {
-                next = -1;
-                return MoveResult.Boundary;
-            }
-
-            return FindNextFocusable(direction is MoveDirection.Left or MoveDirection.Up ? -1 : 1, count, wrap, out next);
-        }
-
-        private MoveResult FindNextFocusable(int delta, int count, bool wrap, out int next)
-        {
-            for (int step = 1; step < count; step++)
-            {
-                int candidate = focusedDataIndex + delta * step;
-                if ((uint)candidate >= (uint)count)
-                {
-                    if (!wrap)
-                    {
-                        next = -1;
-                        return MoveResult.Boundary;
-                    }
-
-                    candidate = (candidate % count + count) % count;
-                }
-
-                if (IsDataIndexFocusable(candidate))
-                {
-                    next = candidate;
-                    return MoveResult.Moved;
-                }
-            }
-
-            next = -1;
-            return wrap ? MoveResult.Blocked : MoveResult.Boundary;
-        }
-
-        private MoveResult CalculateGridMove(MoveDirection direction, int count, int layoutUnit, bool wrap, out int next)
-        {
-            next = -1;
-            int unit = Mathf.Max(1, layoutUnit);
-            bool vertical = recyclerView.Direction == Direction.Vertical;
-
-            // 行内/跨行由“移动方向 + 布局方向”决定；不能用 |delta| 判断（unit == 1 时会把上/下误判成行内移动）。
-            bool stepInsideLine = (direction is MoveDirection.Left or MoveDirection.Right) == vertical;
-            int sign = direction is MoveDirection.Left or MoveDirection.Up ? -1 : 1;
-            int delta = stepInsideLine ? sign : sign * unit;
-
-            int startMajor = focusedDataIndex / unit;
-            int startMinor = focusedDataIndex % unit;
-            int candidate = focusedDataIndex + delta;
-            while (candidate >= 0 && candidate < count)
-            {
-                bool leftLine = stepInsideLine ? candidate / unit != startMajor : candidate % unit != startMinor;
-                if (leftLine)
-                {
-                    if (!wrap)
-                    {
-                        return MoveResult.Boundary;
-                    }
-
-                    // 环绕：跨行时跳一整行，行内移动时跳一整列，回到同一行/列的对应位置。
-                    candidate = stepInsideLine
-                        ? candidate + (candidate < focusedDataIndex ? count : -count)
-                        : candidate + delta * (count - 1);
-                    if (candidate < 0 || candidate >= count || !IsDataIndexFocusable(candidate))
-                    {
-                        return MoveResult.Boundary;
-                    }
-
-                    next = candidate;
-                    return MoveResult.Moved;
-                }
-
-                if (IsDataIndexFocusable(candidate))
-                {
-                    next = candidate;
-                    return MoveResult.Moved;
-                }
-
-                candidate += delta;
-            }
-
-            return MoveResult.Boundary;
         }
 
         #endregion
@@ -635,13 +530,6 @@ namespace AlicizaX.UI
         }
 
         #endregion
-
-        private enum MoveResult
-        {
-            Moved,
-            Blocked,
-            Boundary
-        }
     }
 }
 #endif

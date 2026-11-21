@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using UnityEngine;
 
 namespace AlicizaX.UI
 {
@@ -55,7 +54,7 @@ namespace AlicizaX.UI
         /// <summary>
         /// 当前业务数据列表；赋值后会同步到适配器并刷新列表。
         /// </summary>
-        public virtual List<TData> Data
+        public List<TData> Data
         {
             get => _datas;
             set => SetData(value);
@@ -317,7 +316,7 @@ namespace AlicizaX.UI
         /// </summary>
         /// <param name="index">目标数据索引。</param>
         /// <param name="smooth">是否使用平滑滚动。</param>
-        public virtual void ScrollToIndex(int index, bool smooth = false)
+        public void ScrollToIndex(int index, bool smooth = false)
         {
             _recyclerView?.ScrollToIndex(index, smooth);
         }
@@ -330,14 +329,13 @@ namespace AlicizaX.UI
         /// <param name="offset">对齐后的附加偏移。</param>
         /// <param name="smooth">是否使用平滑滚动。</param>
         /// <param name="duration">平滑滚动时长，单位为秒。</param>
-        public virtual void ScrollTo(
+        public void ScrollTo(
             int index,
             ScrollAlignment alignment = ScrollAlignment.Start,
             float offset = 0f,
             bool smooth = false,
             float duration = 0.3f)
         {
-            EnsureAlignmentScrollSupported();
             _recyclerView.ScrollToAligned(index, alignment, offset, smooth, duration);
         }
 
@@ -445,71 +443,38 @@ namespace AlicizaX.UI
         }
 
         /// <summary>
-        /// 校验适配器与布局管理器的组合。组合非法是配置错误，直接抛出而不是让后续调用静默失效。
+        /// 校验适配器需求与布局能力是否匹配。组合非法是配置错误，直接抛出而不是让后续调用静默失效。
         /// </summary>
-        private static void ValidateAdapterLayoutCompatibility(IAdapter adapter, LayoutManager layoutManager)
+        private static void ValidateAdapterLayoutCompatibility(TAdapter adapter, LayoutManager layoutManager)
         {
             if (layoutManager == null)
             {
                 throw new ArgumentNullException(nameof(layoutManager), "RecyclerView requires a layout manager before a list can be created.");
             }
 
-            Type adapterType = adapter.GetType();
-            if (IsAdapterType(adapterType, typeof(LoopAdapter<>)))
+            if (adapter.UsesVirtualItemCount && !layoutManager.SupportsVirtualItemCount)
             {
-                if (layoutManager is MixedLayoutManager)
-                {
-                    throw Incompatible(adapterType, layoutManager,
-                        "LoopAdapter cannot be used with MixedLayoutManager because it exposes a virtual item count.");
-                }
-
-                if (layoutManager is CircleLayoutManager)
-                {
-                    throw Incompatible(adapterType, layoutManager,
-                        "LoopAdapter cannot be used with CircleLayoutManager until circle layout uses the real item count.");
-                }
+                throw Incompatible(adapter, layoutManager,
+                    "The adapter exposes a virtual item count, which this layout does not support.");
             }
 
-            if (IsAdapterType(adapterType, typeof(MixedAdapter<>)) && layoutManager is not MixedLayoutManager)
+            if (adapter.UsesMixedTemplateSizes && !layoutManager.SupportsMixedTemplateSizes)
             {
-                throw Incompatible(adapterType, layoutManager,
-                    "MixedAdapter requires MixedLayoutManager so template sizes and item positions stay consistent.");
+                throw Incompatible(adapter, layoutManager,
+                    "The adapter mixes template sizes, so the layout must support mixed template sizes to keep item positions consistent.");
             }
 
             if (layoutManager.VariableItemLengthEnabled && !layoutManager.SupportsVariableItemLength)
             {
-                throw Incompatible(adapterType, layoutManager,
+                throw Incompatible(adapter, layoutManager,
                     "Variable item length is only supported by LinearLayoutManager and MixedLayoutManager.");
             }
         }
 
-        private static bool IsAdapterType(Type type, Type openGenericAdapterType)
-        {
-            while (type != null)
-            {
-                if (type.IsGenericType && type.GetGenericTypeDefinition() == openGenericAdapterType)
-                {
-                    return true;
-                }
-
-                type = type.BaseType;
-            }
-
-            return false;
-        }
-
-        private static InvalidOperationException Incompatible(Type adapterType, LayoutManager layoutManager, string reason)
+        private static InvalidOperationException Incompatible(TAdapter adapter, LayoutManager layoutManager, string reason)
         {
             return new InvalidOperationException(
-                $"RecyclerView adapter/layout combination is invalid. Adapter={adapterType.Name}, Layout={layoutManager.GetType().Name}. {reason}");
-        }
-
-        private void EnsureAlignmentScrollSupported()
-        {
-            if (_recyclerView.LayoutManager is CircleLayoutManager)
-            {
-                throw new NotSupportedException("UGList alignment scrolling is not supported for CircleLayoutManager.");
-            }
+                $"RecyclerView adapter/layout combination is invalid. Adapter={adapter.GetType().Name}, Layout={layoutManager.GetType().Name}. {reason}");
         }
     }
 
@@ -607,12 +572,11 @@ namespace AlicizaX.UI
 
     /// <summary>
     /// 循环 RecyclerView 列表业务封装。
+    /// 虚拟区间锚定（数据设置后与滚动到首尾圈时回到中段）和目标副本解析都由 RecyclerView 负责，这里只组合 LoopAdapter。
     /// </summary>
     /// <typeparam name="TData">列表数据类型。</typeparam>
     public class UGLoopList<TData> : UGListBase<TData, LoopAdapter<TData>> where TData : class, ISimpleViewData
     {
-        private bool _hasLoopAnchor;
-
         /// <summary>
         /// 创建循环 RecyclerView 列表业务封装。
         /// </summary>
@@ -620,138 +584,6 @@ namespace AlicizaX.UI
         public UGLoopList(RecyclerView recyclerView)
             : base(recyclerView, new LoopAdapter<TData>(recyclerView))
         {
-        }
-
-        public override List<TData> Data
-        {
-            get => base.Data;
-            set
-            {
-                bool sameDataSource = ReferenceEquals(base.Data, value);
-                int previousDataIndex = _recyclerView != null ? _recyclerView.ScrollDataIndex : -1;
-
-                if (sameDataSource)
-                {
-                    _adapter.NotifyDataChanged();
-                    if (DataCount <= 0)
-                    {
-                        _hasLoopAnchor = false;
-                        return;
-                    }
-
-                    if (!_hasLoopAnchor)
-                    {
-                        int dataIndex = previousDataIndex >= 0 && previousDataIndex < DataCount ? previousDataIndex : 0;
-                        ScrollToLoopAnchor(dataIndex);
-                    }
-
-                    return;
-                }
-
-                base.Data = value;
-                if (DataCount <= 0)
-                {
-                    _hasLoopAnchor = false;
-                    return;
-                }
-
-                int anchorDataIndex = previousDataIndex >= 0 && previousDataIndex < DataCount ? previousDataIndex : 0;
-                ScrollToLoopAnchor(anchorDataIndex);
-            }
-        }
-
-        public override void ScrollToIndex(int index, bool smooth = false)
-        {
-            base.ScrollToIndex(ResolveLoopIndex(index), smooth);
-        }
-
-        public override void ScrollTo(
-            int index,
-            ScrollAlignment alignment = ScrollAlignment.Start,
-            float offset = 0f,
-            bool smooth = false,
-            float duration = 0.3f)
-        {
-            base.ScrollTo(ResolveLoopIndex(index), alignment, offset, smooth, duration);
-        }
-
-        private void ScrollToLoopAnchor(int realIndex)
-        {
-            int realCount = DataCount;
-            if (realCount <= 0)
-            {
-                return;
-            }
-
-            int virtualCount = _adapter != null ? _adapter.GetItemCount() : 0;
-            int layoutIndex = LoopVirtualRange.GetMiddleAnchorLayoutIndex(realIndex, realCount, virtualCount);
-            base.ScrollTo(layoutIndex, ScrollAlignment.Start, 0f, false, 0.3f);
-            _hasLoopAnchor = true;
-        }
-
-        private int ResolveLoopIndex(int index)
-        {
-            int realCount = DataCount;
-            if (realCount <= 0)
-            {
-                return index;
-            }
-
-            // 业务侧传入 real index；越界则原样交给底层校验
-            if (index < 0 || index >= realCount)
-            {
-                return index;
-            }
-
-            int virtualCount = _adapter != null ? _adapter.GetItemCount() : 0;
-            if (virtualCount <= realCount)
-            {
-                return index;
-            }
-
-            int currentLayoutIndex = GetCurrentLayoutIndex();
-            if (currentLayoutIndex < 0 || LoopVirtualRange.ShouldReanchor(currentLayoutIndex, realCount, virtualCount))
-            {
-                return LoopVirtualRange.GetMiddleAnchorLayoutIndex(index, realCount, virtualCount);
-            }
-
-            return GetNearestLoopIndex(index, currentLayoutIndex, realCount, virtualCount);
-        }
-
-        private int GetCurrentLayoutIndex()
-        {
-            if (_recyclerView?.LayoutManager == null)
-            {
-                return 0;
-            }
-
-            return _recyclerView.LayoutManager.PositionToIndex(_recyclerView.GetScrollPosition());
-        }
-
-        private static int GetNearestLoopIndex(int realIndex, int centerLayoutIndex, int realCount, int virtualCount)
-        {
-            realIndex %= realCount;
-            if (realIndex < 0)
-            {
-                realIndex += realCount;
-            }
-
-            int cycle = Mathf.RoundToInt((centerLayoutIndex - realIndex) / (float)realCount);
-            int candidate = realIndex + cycle * realCount;
-            int previous = candidate - realCount;
-            int next = candidate + realCount;
-
-            if (previous >= 0 && Mathf.Abs(previous - centerLayoutIndex) < Mathf.Abs(candidate - centerLayoutIndex))
-            {
-                candidate = previous;
-            }
-
-            if (next < virtualCount && Mathf.Abs(next - centerLayoutIndex) < Mathf.Abs(candidate - centerLayoutIndex))
-            {
-                candidate = next;
-            }
-
-            return Mathf.Clamp(candidate, 0, virtualCount - 1);
         }
     }
 

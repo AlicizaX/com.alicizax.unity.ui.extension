@@ -75,12 +75,22 @@ namespace AlicizaX.UI.NavigationTests
         private bool Move(MoveDirection direction) => navigation.HandleMove(new AxisEventData(eventSystem) { moveDir = direction });
         private void OnMove(MoveDirection direction) => navigation.OnMove(new AxisEventData(eventSystem) { moveDir = direction });
 
-        /// <summary>边界出口统一由 Selectable.navigation 配置（Explicit + Select On Down）。</summary>
-        private GameObject ConfigureExitDown()
+        /// <summary>边界出口统一由 Selectable.navigation 配置（Explicit + 对应方向的 Select On）。</summary>
+        private GameObject ConfigureExit(MoveDirection direction)
         {
             var exit = new GameObject("exit", typeof(RectTransform), typeof(Button));
             exit.transform.SetParent(eventRoot.transform, false);
-            navigation.navigation = new Navigation { mode = Navigation.Mode.Explicit, selectOnDown = exit.GetComponent<Button>() };
+            Button button = exit.GetComponent<Button>();
+            var config = new Navigation { mode = Navigation.Mode.Explicit };
+            switch (direction)
+            {
+                case MoveDirection.Up: config.selectOnUp = button; break;
+                case MoveDirection.Down: config.selectOnDown = button; break;
+                case MoveDirection.Left: config.selectOnLeft = button; break;
+                case MoveDirection.Right: config.selectOnRight = button; break;
+            }
+
+            navigation.navigation = config;
             return exit;
         }
 
@@ -116,7 +126,7 @@ namespace AlicizaX.UI.NavigationTests
         {
             adapter.Count = count;
             if (grid) Set(list, "layoutManager", new GridLayoutManager());
-            var exit = ConfigureExitDown();
+            var exit = ConfigureExit(MoveDirection.Down);
             navigation.SetFocus(count - 1, false);
             eventSystem.SetSelectedGameObject(root);
             Assert.That(Move(MoveDirection.Down), Is.False, "边界不消费输入，交给 base.OnMove");
@@ -130,7 +140,7 @@ namespace AlicizaX.UI.NavigationTests
         {
             adapter.Count = 2;
             navigation.SetFocusFilter(i => i != 1);
-            var exit = ConfigureExitDown();
+            var exit = ConfigureExit(MoveDirection.Down);
             navigation.SetFocus(0, false);
             eventSystem.SetSelectedGameObject(root);
             Assert.That(Move(MoveDirection.Down), Is.False);
@@ -145,13 +155,27 @@ namespace AlicizaX.UI.NavigationTests
             adapter.Count = 1;
             if (circle) Set(list, "layoutManager", new CircleLayoutManager());
             Set(navigation, "wrapNavigation", true);
-            ConfigureExitDown();
+            ConfigureExit(MoveDirection.Down);
             navigation.SetFocus(0, false);
             eventSystem.SetSelectedGameObject(root);
             Assert.That(Move(MoveDirection.Down), Is.True, "循环列表没有边界，不能离开");
             OnMove(MoveDirection.Down);
             Assert.That(eventSystem.currentSelectedGameObject, Is.SameAs(root));
             Assert.That(navigation.FocusedDataIndex, Is.Zero);
+        }
+
+        [Test]
+        public void CircleCrossAxisMoveLeavesThroughConfiguredExit()
+        {
+            // 竖向环形沿主轴（上/下）旋转；交叉轴与线性列表一样交给 navigation 离开。
+            Set(list, "layoutManager", new CircleLayoutManager());
+            var exit = ConfigureExit(MoveDirection.Right);
+            navigation.SetFocus(1, false);
+            eventSystem.SetSelectedGameObject(root);
+            Assert.That(Move(MoveDirection.Right), Is.False, "交叉轴不消费输入，交给 base.OnMove");
+            OnMove(MoveDirection.Right);
+            Assert.That(eventSystem.currentSelectedGameObject, Is.SameAs(exit));
+            Assert.That(navigation.FocusedDataIndex, Is.EqualTo(1));
         }
 
         [TestCase(false)] [TestCase(true)]

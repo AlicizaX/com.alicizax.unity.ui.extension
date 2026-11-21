@@ -1,4 +1,6 @@
+using System;
 using UnityEngine;
+using UnityEngine.EventSystems;
 
 namespace AlicizaX.UI
 {
@@ -98,6 +100,16 @@ namespace AlicizaX.UI
         /// 当前是否真的启用了变长项。变长协议的判定只在这里定义，RecyclerView/UGList 不再各写一份。
         /// </summary>
         public virtual bool VariableItemLengthEnabled => false;
+
+        /// <summary>
+        /// 能否承载项数为真实数量虚拟倍数的适配器（循环列表）。默认不支持，布局需显式声明。
+        /// </summary>
+        public virtual bool SupportsVirtualItemCount => false;
+
+        /// <summary>
+        /// 能否按模板混排不同尺寸的项。
+        /// </summary>
+        public virtual bool SupportsMixedTemplateSizes => false;
 
         public LayoutManager()
         {
@@ -212,6 +224,76 @@ namespace AlicizaX.UI
 
         public abstract float GetItemLength(int index);
 
+        /// <summary>
+        /// 目标项按 alignment 对齐到视口时的滚动位置（未夹取）。
+        /// </summary>
+        public virtual float GetAlignedPosition(int index, ScrollAlignment alignment)
+        {
+            float itemPosition = GetItemStartPosition(index);
+            float freeLength = AxisViewportLength - GetItemLength(index);
+            return alignment switch
+            {
+                ScrollAlignment.Center => itemPosition - freeLength / 2f,
+                ScrollAlignment.End => itemPosition - freeLength,
+                _ => itemPosition
+            };
+        }
+
+        /// <summary>
+        /// 方向导航：从 dataIndex 沿 moveDirection 找下一个可聚焦的数据索引。
+        /// 默认沿主轴逐项移动；交叉轴返回 <see cref="NavigationMoveResult.Boundary"/>，交给 Selectable.navigation 离开列表。
+        /// </summary>
+        public virtual NavigationMoveResult FindNavigationTarget(
+            int dataIndex, MoveDirection moveDirection, int count, bool wrap, Predicate<int> isFocusable, out int target)
+        {
+            if ((moveDirection is MoveDirection.Up or MoveDirection.Down) != (direction == Direction.Vertical))
+            {
+                target = -1;
+                return NavigationMoveResult.Boundary;
+            }
+
+            return StepToFocusable(dataIndex, ForwardSign(moveDirection), count, wrap, isFocusable, out target);
+        }
+
+        /// <summary>
+        /// 沿 step 逐项寻找可聚焦项：越过首尾时按 wrap 环绕，否则为边界；环绕一圈仍找不到时消费输入但不移动。
+        /// </summary>
+        protected static NavigationMoveResult StepToFocusable(
+            int dataIndex, int step, int count, bool wrap, Predicate<int> isFocusable, out int target)
+        {
+            for (int i = 1; i < count; i++)
+            {
+                int candidate = dataIndex + step * i;
+                if ((uint)candidate >= (uint)count)
+                {
+                    if (!wrap)
+                    {
+                        target = -1;
+                        return NavigationMoveResult.Boundary;
+                    }
+
+                    candidate = WrapIndex(candidate, count);
+                }
+
+                if (isFocusable(candidate))
+                {
+                    target = candidate;
+                    return NavigationMoveResult.Moved;
+                }
+            }
+
+            target = -1;
+            return wrap ? NavigationMoveResult.Blocked : NavigationMoveResult.Boundary;
+        }
+
+        /// <summary>
+        /// 左/上为 -1，右/下为 +1。
+        /// </summary>
+        protected static int ForwardSign(MoveDirection moveDirection)
+        {
+            return moveDirection is MoveDirection.Left or MoveDirection.Up ? -1 : 1;
+        }
+
         public virtual int GetDataIndex(int layoutIndex)
         {
             if (adapter == null)
@@ -229,7 +311,10 @@ namespace AlicizaX.UI
             return itemCount != realCount ? WrapIndex(layoutIndex, realCount) : layoutIndex;
         }
 
-        public virtual int GetLayoutIndex(int dataIndex)
+        /// <summary>
+        /// 数据项在布局中最靠近 nearPosition（滚动坐标）的副本。Loop 的虚拟区间里同一数据有多个副本，其余布局只有一个。
+        /// </summary>
+        public virtual int GetLayoutIndex(int dataIndex, float nearPosition)
         {
             if (adapter == null)
             {
@@ -245,7 +330,7 @@ namespace AlicizaX.UI
 
             dataIndex = WrapIndex(dataIndex, realCount);
             return itemCount != realCount
-                ? GetNearestWrappedLayoutIndex(dataIndex, PositionToIndex(ScrollPosition), realCount)
+                ? GetNearestWrappedLayoutIndex(dataIndex, PositionToIndex(nearPosition), realCount)
                 : dataIndex;
         }
 

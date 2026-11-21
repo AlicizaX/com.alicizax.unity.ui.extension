@@ -211,7 +211,7 @@ namespace AlicizaX.UI.NavigationTests
         {
             var fixture = new RecyclerViewFixture(new Vector2(200f, 400f), new LinearLayoutManager());
             fixture.CreateTemplate<CountingItem>(new Vector2(200f, 32f));
-            Scroller scroller = fixture.AddScroller();
+            Scroller scroller = fixture.AddScroller<Scroller>();
             // fixture 的 root 在构造时就被激活过，Awake 早于 AddScroller；这里补一次事件订阅，
             // 否则 StopMovement 不会回到 RecyclerView，测的就不是真实链路。
             RecyclerViewFixture.CallPrivate(fixture.View, "ConfigureScroller");
@@ -404,14 +404,35 @@ namespace AlicizaX.UI.NavigationTests
             Assert.That(fixture.View.RecyclerViewAdapter, Is.InstanceOf<Adapter<CountingData>>());
         }
 
+        // 兼容校验按“适配器需求 / 布局能力”匹配：列表在绑定前就必须被拒绝，异常不能来自重复绑定。
         [Test]
         public void CreatingLoopListOnCircleLayoutThrowsInsteadOfSilentlyDoingNothing()
         {
             var fixture = new RecyclerViewFixture(new Vector2(200f, 400f), new CircleLayoutManager());
+            Track(fixture.Root);
             fixture.CreateTemplate<CountingItem>(new Vector2(64f, 64f));
-            fixture.Bind(new Adapter<CountingData>(fixture.View));
 
             Assert.Throws<InvalidOperationException>(() => new UGLoopList<CountingData>(fixture.View));
+        }
+
+        [Test]
+        public void CreatingLoopListOnMixedLayoutThrows()
+        {
+            var fixture = new RecyclerViewFixture(new Vector2(200f, 400f), new MixedLayoutManager());
+            Track(fixture.Root);
+            fixture.CreateTemplate<CountingItem>(new Vector2(200f, 32f));
+
+            Assert.Throws<InvalidOperationException>(() => new UGLoopList<CountingData>(fixture.View));
+        }
+
+        [Test]
+        public void CreatingMixedListOnLinearLayoutThrows()
+        {
+            var fixture = new RecyclerViewFixture(new Vector2(200f, 400f), new LinearLayoutManager());
+            Track(fixture.Root);
+            fixture.CreateTemplate<NavigationItem>(new Vector2(200f, 32f));
+
+            Assert.Throws<InvalidOperationException>(() => new UGMixedList<NavigationData>(fixture.View));
         }
 
         [Test]

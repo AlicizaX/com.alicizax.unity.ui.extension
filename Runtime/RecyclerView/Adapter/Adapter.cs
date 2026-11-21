@@ -42,6 +42,16 @@ namespace AlicizaX.UI
         public int DataRevision => dataRevision;
 
         /// <summary>
+        /// 展示数量是否为真实数量的虚拟倍数（循环列表）。布局须 <see cref="LayoutManager.SupportsVirtualItemCount"/>。
+        /// </summary>
+        public virtual bool UsesVirtualItemCount => false;
+
+        /// <summary>
+        /// 是否按模板混排不同尺寸的项。布局须 <see cref="LayoutManager.SupportsMixedTemplateSizes"/>。
+        /// </summary>
+        public virtual bool UsesMixedTemplateSizes => false;
+
+        /// <summary>
         /// 创建普通列表适配器。
         /// </summary>
         /// <param name="recyclerView">要绑定的 RecyclerView 组件。</param>

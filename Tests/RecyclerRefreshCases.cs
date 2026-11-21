@@ -21,7 +21,7 @@ namespace AlicizaX.UI.NavigationTests
             var layoutManager = new LinearLayoutManager();
             fixture = new RecyclerViewFixture(new Vector2(200f, 96f), layoutManager);
             fixture.CreateTemplate<NavigationItem>(new Vector2(200f, 32f));
-            Scroller scroller = fixture.AddScroller();
+            Scroller scroller = fixture.AddScroller<Scroller>();
             var data = new List<NavigationData> { new(), new(), new(), new() };
             var adapter = fixture.Bind(new Adapter<NavigationData>(fixture.View, data));
             adapter.NotifyDataChanged();

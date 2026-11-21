@@ -1,4 +1,6 @@
+using System;
 using UnityEngine;
+using UnityEngine.EventSystems;
 
 namespace AlicizaX.UI
 {
@@ -110,6 +112,23 @@ namespace AlicizaX.UI
             return Mathf.Abs(resolvedIntervalAngle);
         }
 
+        /// <summary>
+        /// 位置是旋转角度，没有视口轴可对齐：任何对齐方式都把目标转到索引位（前位）。
+        /// </summary>
+        public override float GetAlignedPosition(int index, ScrollAlignment alignment)
+        {
+            return IndexToPosition(index);
+        }
+
+        /// <summary>
+        /// 首尾相接，沿主轴恒环绕；交叉轴与线性布局一样交给 Selectable.navigation 离开列表。
+        /// </summary>
+        public override NavigationMoveResult FindNavigationTarget(
+            int dataIndex, MoveDirection moveDirection, int count, bool wrap, Predicate<int> isFocusable, out int target)
+        {
+            return base.FindNavigationTarget(dataIndex, moveDirection, count, true, isFocusable, out target);
+        }
+
         public override int GetSnapIndex(float position)
         {
             if (adapter == null || adapter.GetItemCount() <= 0)
@@ -126,7 +145,10 @@ namespace AlicizaX.UI
             return itemCount > 0 ? WrapIndex(layoutIndex, itemCount) : layoutIndex;
         }
 
-        public override int GetLayoutIndex(int dataIndex)
+        /// <summary>
+        /// 连续角度上每转一圈都有一个副本，取最靠近 nearPosition 的那个。
+        /// </summary>
+        public override int GetLayoutIndex(int dataIndex, float nearPosition)
         {
             int itemCount = adapter != null ? adapter.GetItemCount() : 0;
             if (itemCount <= 0)
@@ -134,7 +156,7 @@ namespace AlicizaX.UI
                 return dataIndex;
             }
 
-            return GetNearestWrappedLayoutIndex(WrapIndex(dataIndex, itemCount), PositionToIndex(ScrollPosition), itemCount);
+            return GetNearestWrappedLayoutIndex(WrapIndex(dataIndex, itemCount), PositionToIndex(nearPosition), itemCount);
         }
 
         public override void DoItemAnimation()

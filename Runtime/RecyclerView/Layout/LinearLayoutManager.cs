@@ -42,6 +42,8 @@ namespace AlicizaX.UI
 
         public override bool VariableItemLengthEnabled => variableItemLength;
 
+        public override bool SupportsVirtualItemCount => true;
+
         public override void Release()
         {
             offsetTable.Release();

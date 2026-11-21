@@ -12,6 +12,8 @@ namespace AlicizaX.UI
         {
         }
 
+        public override bool UsesMixedTemplateSizes => true;
+
         public override int GetTemplateId(int index)
         {
             return index >= 0 && index < list.Count

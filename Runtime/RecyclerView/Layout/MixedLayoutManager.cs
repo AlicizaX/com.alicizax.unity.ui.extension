@@ -42,6 +42,8 @@ namespace AlicizaX.UI
 
         public override bool VariableItemLengthEnabled => variableItemLength;
 
+        public override bool SupportsMixedTemplateSizes => true;
+
         internal override ViewProvider ViewProvider
         {
             get => base.ViewProvider;

@@ -65,7 +65,7 @@ namespace AlicizaX.UI.NavigationTests
 
         private Scroller AttachScroller(RecyclerViewFixture target)
         {
-            scroller = target.AddScroller();
+            scroller = target.AddScroller<Scroller>();
             // fixture 的 root 在构造时激活过，Awake 早于 AddScroller；补一次订阅，测真实链路。
             RecyclerViewFixture.CallPrivate(target.View, "ConfigureScroller");
             return scroller;
